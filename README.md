@@ -1,5 +1,9 @@
 # harness-engineering
 
+[![Version](https://img.shields.io/github/v/release/vinicius91carvalho/harness-engineering?sort=semver&label=version&color=2496ED)](https://github.com/vinicius91carvalho/harness-engineering/releases/latest)
+[![AI Harness Engineering System](https://img.shields.io/badge/AI%20Harness%20Engineering-System-8A2BE2)](https://github.com/vinicius91carvalho/harness-engineering)
+[![Last update](https://img.shields.io/github/release-date/vinicius91carvalho/harness-engineering?label=last%20update&color=2EA44F)](https://github.com/vinicius91carvalho/harness-engineering/releases)
+
 My personal Claude Code workspace, packaged as a plugin marketplace. One command
 sets up a fresh machine with every plugin I use.
 
@@ -110,3 +114,18 @@ It reports a diff and commits nothing unless asked.
 CI (`.github/workflows/ci.yml`) checks JSON validity, shell syntax, the
 `statusline.sh` / `sync-config.sh` selftests, and the skill frontmatter on every
 push and PR.
+
+## Releases
+
+Versions are cut automatically from [Conventional Commits](https://www.conventionalcommits.org)
+on every push to `main` (`.github/workflows/release.yml`): the next semver is
+computed from the commit messages, tagged, and published as a GitHub Release.
+
+The three most recent versions:
+
+[![latest](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.github.com%2Frepos%2Fvinicius91carvalho%2Fharness-engineering%2Freleases&query=%24%5B0%5D.tag_name&label=latest&color=2496ED)](https://github.com/vinicius91carvalho/harness-engineering/releases)
+[![previous](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.github.com%2Frepos%2Fvinicius91carvalho%2Fharness-engineering%2Freleases&query=%24%5B1%5D.tag_name&label=previous&color=8A8A8A)](https://github.com/vinicius91carvalho/harness-engineering/releases)
+[![2 ago](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.github.com%2Frepos%2Fvinicius91carvalho%2Fharness-engineering%2Freleases&query=%24%5B2%5D.tag_name&label=2%20ago&color=8A8A8A)](https://github.com/vinicius91carvalho/harness-engineering/releases)
+
+Full notes for every version are on the
+[Releases page](https://github.com/vinicius91carvalho/harness-engineering/releases).

@@ -22,6 +22,7 @@ the scripts are worse than no docs.
 - `config/home/` — backup of loose user content (`skills/`, `commands/`, `agents/`, `hooks/`, `keybindings.json`, global `CLAUDE.md`) authored directly under `~/.claude`. Populated by `/harness:update-project`, restored by the installer's `restore_home`/`Restore-Home`. Absent until there's something to back up (most setups put everything in plugins).
 - `skills/update-project/SKILL.md` — `/harness:update-project`: a complete backup of the live Claude setup — regenerates `config/settings.json`, reconciles the plugin roster against live `enabledPlugins`, mirrors loose user content into `config/home/`, and reconciles docs.
 - `.github/workflows/ci.yml` — CI: JSON validity, shell syntax, selftests, skill frontmatter.
+- `.github/workflows/release.yml` — on push to `main`, computes the next semver from Conventional Commits, tags it, and publishes a GitHub Release. No bump = no release. Keep commit subjects conventional (`feat:`, `fix:`, `feat!:`/`BREAKING CHANGE:` for majors).
 - `.claude-plugin/plugin.json` — manifest for the `harness` plugin itself.
 - `install.sh` / `install.ps1` — idempotent installers (sh for macOS/Linux/Git Bash/WSL, ps1 for PowerShell). They add the marketplace, install `REQUIRED` plugins unconditionally, prompt per-plugin for `OPTIONAL` ones, and prompt for extras (status line, shared config). They install `jq` if missing.
 - Other `harness` plugin content (commands/agents/hooks) would live in the conventional `commands/`, `agents/`, `hooks/` dirs at the repo root — none exist yet.
