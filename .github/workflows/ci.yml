@@ -1,0 +1,28 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: JSON valid
+        run: jq empty .claude-plugin/marketplace.json .claude-plugin/plugin.json config/settings.json
+
+      - name: Shell syntax
+        run: |
+          sh -n install.sh
+          bash -n scripts/statusline.sh scripts/sync-config.sh
+
+      - name: Selftests
+        run: |
+          bash scripts/statusline.sh --selftest
+          bash scripts/sync-config.sh --selftest
+
+      - name: Skill frontmatter
+        run: |
+          f=skills/update-project/SKILL.md
+          test -f "$f"
+          grep -q '^name:' "$f"
+          grep -q '^description:' "$f"

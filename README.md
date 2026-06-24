@@ -70,8 +70,8 @@ write `~/.claude/settings.json`). Skip the prompts entirely with `--yes`/`--no`.
 
 | Extra | Prompt | Sets | What it does |
 | --- | --- | --- | --- |
-| Status line | _Enable the harness status line?_ | `statusLine` → bundled `scripts/statusline.sh` | Context % + tokens, 5h / 7d rate limits, git branch + worktrees, tmux session. |
-| Remote Control | _Enable Remote Control for all sessions?_ | `remoteControlAtStartup: true` | Every session connects to [Remote Control](https://code.claude.com/docs/en/remote-control) on startup — drive it from the Claude mobile/web app without typing `/remote-control`. |
+| Status line | _Enable the harness status line?_ | `statusLine` → bundled `scripts/statusline.sh` | Two lines: **line 1** model badge + 📁 dir + 🌿 branch (+worktrees); **line 2** context bar + % + tokens, $ session cost, ⏱ countdown to the next 5h window, 5h / 7d rate limits, tmux session. |
+| Shared config | _Apply Vinicius's shared Claude config?_ | merges `config/settings.json` → `model`, `worktree`, `preferredNotifChannel`, `inputNeededNotifEnabled`, `agentPushNotifEnabled`, and `remoteControlAtStartup: true` | Deep-merges my shareable settings into `~/.claude/settings.json` (the file's keys win). Includes [Remote Control](https://code.claude.com/docs/en/remote-control) on startup — drive sessions from the Claude mobile/web app without typing `/remote-control`. Machine-specific keys (status line path, enabled plugins) are excluded. Installs `jq` if missing; skips safely if the file or `jq` is unavailable. |
 
 ### Status line preview
 
@@ -83,6 +83,19 @@ write `~/.claude/settings.json`). Skip the prompts entirely with `--yes`/`--no`.
 "statusLine": {
   "type": "command",
   "command": "bash ~/.claude/plugins/cache/vinicius91carvalho/harness/<version>/scripts/statusline.sh"
-},
-"remoteControlAtStartup": true
+}
 ```
+
+For the shared config, merge the keys in [`config/settings.json`](config/settings.json)
+into your `~/.claude/settings.json` (e.g. `jq -s '.[0] * .[1]' ~/.claude/settings.json config/settings.json`).
+
+## Keeping the config backup in sync
+
+`/harness:update-project` regenerates `config/settings.json` from your live
+`~/.claude/settings.json` (via `scripts/sync-config.sh`, which keeps only the
+shareable subset) and reconciles the docs. It reports a diff and commits nothing
+unless asked.
+
+CI (`.github/workflows/ci.yml`) checks JSON validity, shell syntax, the
+`statusline.sh` / `sync-config.sh` selftests, and the skill frontmatter on every
+push and PR.

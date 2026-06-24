@@ -17,10 +17,13 @@ the scripts are worse than no docs.
 ## Layout
 
 - `.claude-plugin/marketplace.json` — the marketplace: lists every plugin and its source.
-- `scripts/` — standalone scripts bundled with the `harness` plugin (e.g. the status line).
+- `scripts/` — standalone scripts bundled with the `harness` plugin: `statusline.sh` (status line) and `sync-config.sh` (extracts the shareable config subset; `--selftest`).
+- `config/settings.json` — committed shareable subset of `~/.claude/settings.json`, merged in by the installer's "shared config" prompt. Regenerate with `/harness:update-project`.
+- `skills/update-project/SKILL.md` — `/harness:update-project`: regenerates `config/settings.json` from live config and reconciles docs.
+- `.github/workflows/ci.yml` — CI: JSON validity, shell syntax, selftests, skill frontmatter.
 - `.claude-plugin/plugin.json` — manifest for the `harness` plugin itself.
-- `install.sh` / `install.ps1` — idempotent installers (sh for macOS/Linux/Git Bash/WSL, ps1 for PowerShell). They add the marketplace, install `REQUIRED` plugins unconditionally, and prompt per-plugin for `OPTIONAL` ones.
-- `harness` plugin content (commands/skills/agents/hooks) would live in the conventional `commands/`, `skills/`, `agents/`, `hooks/` dirs at the repo root — none exist yet.
+- `install.sh` / `install.ps1` — idempotent installers (sh for macOS/Linux/Git Bash/WSL, ps1 for PowerShell). They add the marketplace, install `REQUIRED` plugins unconditionally, prompt per-plugin for `OPTIONAL` ones, and prompt for extras (status line, shared config). They install `jq` if missing.
+- Other `harness` plugin content (commands/agents/hooks) would live in the conventional `commands/`, `agents/`, `hooks/` dirs at the repo root — none exist yet.
 
 ## Adding a plugin (keep these four in sync)
 

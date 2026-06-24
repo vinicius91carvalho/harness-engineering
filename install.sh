@@ -42,9 +42,23 @@ install_plugin() {
   claude plugin install "$1@$MARKETPLACE_NAME" || echo "   (skipped $1 — already installed or failed)" >&2
 }
 
+# Ensure jq is available, installing it via the first package manager we find.
+# Returns non-zero if jq is missing and can't be installed.
+ensure_jq() {
+  command -v jq >/dev/null 2>&1 && return 0
+  echo "==> jq not found — attempting to install it"
+  if   command -v brew    >/dev/null 2>&1; then brew install jq
+  elif command -v apt-get >/dev/null 2>&1; then sudo apt-get install -y jq
+  elif command -v dnf     >/dev/null 2>&1; then sudo dnf install -y jq
+  elif command -v pacman  >/dev/null 2>&1; then sudo pacman -S --noconfirm jq
+  elif command -v apk     >/dev/null 2>&1; then sudo apk add jq
+  else echo "   (no supported package manager — install jq by hand)" >&2; return 1; fi
+  command -v jq >/dev/null 2>&1
+}
+
 # Point ~/.claude/settings.json at the bundled status line. Idempotent.
 enable_statusline() {
-  command -v jq >/dev/null 2>&1 || { echo "   (jq not found — enable the status line by hand, see README)" >&2; return 1; }
+  ensure_jq || { echo "   (jq required — enable the status line by hand, see README)" >&2; return 1; }
   script=$(ls -dt "$HOME"/.claude/plugins/cache/*/harness/*/scripts/statusline.sh 2>/dev/null | head -n1)
   [ -n "$script" ] || { echo "   (statusline.sh not found — is the harness plugin installed?)" >&2; return 1; }
   settings="$HOME/.claude/settings.json"
@@ -55,15 +69,19 @@ enable_statusline() {
   echo "==> Status line enabled in $settings"
 }
 
-# Set remoteControlAtStartup so Remote Control connects for every session. Idempotent.
-enable_remote_control() {
-  command -v jq >/dev/null 2>&1 || { echo "   (jq not found — set remoteControlAtStartup by hand, see README)" >&2; return 1; }
+# Merge the bundled shareable config into ~/.claude/settings.json (the file's
+# keys win). Fail-safe: a missing config or jq failure logs and returns 0 so it
+# never aborts the installer under `set -e`.
+apply_config() {
+  ensure_jq || { echo "   (jq required — apply the shared config by hand, see README)" >&2; return 0; }
+  cfg=$(ls -dt "$HOME"/.claude/plugins/cache/*/harness/*/config/settings.json 2>/dev/null | head -n1)
+  [ -n "$cfg" ] || { echo "   (shared config not found — is the harness plugin installed?)" >&2; return 0; }
   settings="$HOME/.claude/settings.json"
   mkdir -p "$HOME/.claude"
   [ -f "$settings" ] || echo '{}' > "$settings"
   tmp=$(mktemp)
-  jq '.remoteControlAtStartup = true' "$settings" > "$tmp" && mv "$tmp" "$settings"
-  echo "==> Remote Control enabled for all sessions in $settings"
+  jq -s '.[0] * .[1]' "$settings" "$cfg" > "$tmp" && mv "$tmp" "$settings"
+  echo "==> Shared config merged into $settings"
 }
 
 echo "==> Adding marketplace: $MARKETPLACE"
@@ -77,8 +95,8 @@ if ask "Enable the harness status line (context %, rate limits, git, tmux)?"; th
   enable_statusline
 fi
 
-if ask "Enable Remote Control for all sessions (control sessions from the mobile/web app)?"; then
-  enable_remote_control
+if ask "Apply Vinicius's shared Claude config (model, notifications, Remote Control on startup)?"; then
+  apply_config || true
 fi
 
 for p in $OPTIONAL; do

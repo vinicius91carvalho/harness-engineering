@@ -1,0 +1,10 @@
+{
+  "model": "opus",
+  "worktree": {
+    "baseRef": "fresh"
+  },
+  "preferredNotifChannel": "auto",
+  "remoteControlAtStartup": true,
+  "inputNeededNotifEnabled": true,
+  "agentPushNotifEnabled": true
+}

@@ -39,14 +39,32 @@ function Enable-StatusLine {
   Write-Host "==> Status line enabled in $settings"
 }
 
-# Set remoteControlAtStartup so Remote Control connects for every session. Idempotent.
-function Enable-RemoteControl {
-  $settings = Join-Path $HOME ".claude\settings.json"
-  New-Item -ItemType Directory -Force -Path (Split-Path $settings) | Out-Null
-  $cfg = if (Test-Path $settings) { Get-Content $settings -Raw | ConvertFrom-Json } else { [PSCustomObject]@{} }
-  $cfg | Add-Member -Force -NotePropertyName remoteControlAtStartup -NotePropertyValue $true
-  $cfg | ConvertTo-Json -Depth 10 | Set-Content $settings
-  Write-Host "==> Remote Control enabled for all sessions in $settings"
+# Ensure jq is available, installing via winget/choco/scoop if missing.
+function Ensure-Jq {
+  if (Get-Command jq -ErrorAction SilentlyContinue) { return $true }
+  Write-Host "==> jq not found - attempting to install it"
+  if     (Get-Command winget -ErrorAction SilentlyContinue) { winget install --id jqlang.jq -e --silent }
+  elseif (Get-Command choco  -ErrorAction SilentlyContinue) { choco install jq -y }
+  elseif (Get-Command scoop  -ErrorAction SilentlyContinue) { scoop install jq }
+  else { Write-Warning "no supported package manager - install jq by hand"; return $false }
+  [bool](Get-Command jq -ErrorAction SilentlyContinue)
+}
+
+# Merge the bundled shareable config into ~/.claude/settings.json (the file's keys win).
+# Warns and continues on any failure.
+function Apply-Config {
+  try {
+    $cfgFile = Get-ChildItem (Join-Path $HOME ".claude\plugins\cache\*\harness\*\config\settings.json") -ErrorAction SilentlyContinue |
+               Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if (-not $cfgFile) { Write-Warning "shared config not found - is the harness plugin installed?"; return }
+    $settings = Join-Path $HOME ".claude\settings.json"
+    New-Item -ItemType Directory -Force -Path (Split-Path $settings) | Out-Null
+    $cfg = if (Test-Path $settings) { Get-Content $settings -Raw | ConvertFrom-Json } else { [PSCustomObject]@{} }
+    $shared = Get-Content $cfgFile.FullName -Raw | ConvertFrom-Json
+    foreach ($p in $shared.PSObject.Properties) { $cfg | Add-Member -Force -NotePropertyName $p.Name -NotePropertyValue $p.Value }
+    $cfg | ConvertTo-Json -Depth 10 | Set-Content $settings
+    Write-Host "==> Shared config merged into $settings"
+  } catch { Write-Warning "could not apply shared config: $_" }
 }
 
 Write-Host "==> Adding marketplace: $Marketplace"
@@ -56,7 +74,7 @@ foreach ($p in $Required) { Install-Plugin $p }
 
 if (Ask "Enable the harness status line (context %, rate limits, git, tmux)?") { Enable-StatusLine }
 
-if (Ask "Enable Remote Control for all sessions (control sessions from the mobile/web app)?") { Enable-RemoteControl }
+if (Ask "Apply Vinicius's shared Claude config (model, notifications, Remote Control on startup)?") { Apply-Config }
 
 foreach ($p in $Optional) {
   if (Ask "Install optional plugin '$p'?") { Install-Plugin $p } else { Write-Host "==> Skipping optional: $p" }
