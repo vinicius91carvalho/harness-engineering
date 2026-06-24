@@ -15,6 +15,7 @@
     { "name": "claude-code-setup", "source": { "source": "git-subdir", "url": "https://github.com/anthropics/claude-plugins-official.git", "path": "plugins/claude-code-setup" } },
     { "name": "pyright-lsp", "source": { "source": "git-subdir", "url": "https://github.com/anthropics/claude-plugins-official.git", "path": "plugins/pyright-lsp" } },
     { "name": "hookify", "source": { "source": "git-subdir", "url": "https://github.com/anthropics/claude-plugins-official.git", "path": "plugins/hookify" } },
-    { "name": "rust-analyzer-lsp", "source": { "source": "git-subdir", "url": "https://github.com/anthropics/claude-plugins-official.git", "path": "plugins/rust-analyzer-lsp" } }
+    { "name": "rust-analyzer-lsp", "source": { "source": "git-subdir", "url": "https://github.com/anthropics/claude-plugins-official.git", "path": "plugins/rust-analyzer-lsp" } },
+    { "name": "codex", "source": { "source": "git-subdir", "url": "https://github.com/openai/codex-plugin-cc.git", "path": "plugins/codex" } }
   ]
 }

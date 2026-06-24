@@ -66,6 +66,7 @@ The installer always installs the required plugins and **prompts** for each opti
 | `ralph-loop` | optional | `/ralph-loop:*` | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Self-referential iterative loops (the Ralph Wiggum technique). |
 | `pyright-lsp` | optional | LSP | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Python (Pyright) language server for type checking. |
 | `rust-analyzer-lsp` | optional | LSP | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Rust language server for code intelligence. |
+| `codex` | optional | `/codex:*` | [openai/codex-plugin-cc](https://github.com/openai/codex-plugin-cc) | Delegate tasks and code review to OpenAI Codex from Claude Code — used for adversarial reviews (a second model challenging the diff). Configure with `/codex:setup`; requires an OpenAI account (`codex login`). |
 
 ## Extras
 

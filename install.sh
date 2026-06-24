@@ -7,7 +7,7 @@ set -e
 MARKETPLACE="vinicius91carvalho/harness-engineering"
 MARKETPLACE_NAME="vinicius91carvalho"
 REQUIRED="harness ponytail context7 remember skill-creator claude-md-management claude-code-setup hookify playwright"     # always installed
-OPTIONAL="last30days typescript-lsp ralph-loop pyright-lsp rust-analyzer-lsp"   # prompted for, one by one
+OPTIONAL="last30days typescript-lsp ralph-loop pyright-lsp rust-analyzer-lsp codex"   # prompted for, one by one
 
 # -y/--yes answers yes to every prompt, -n/--no answers no — for non-interactive runs.
 # Pipe usage: curl -sSL .../install.sh | sh -s -- --yes
