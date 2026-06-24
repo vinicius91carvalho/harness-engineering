@@ -1,14 +1,45 @@
 # Install the full harness workspace into a fresh Claude Code setup (native Windows).
 # Usage: irm https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.ps1 | iex
-# -Yes answers yes to every prompt, -No answers no (for non-interactive runs).
-param([switch]$Yes, [switch]$No)
+# -Yes selects every item, -No keeps required only (non-interactive runs).
+# -DryRun walks the checklist and prints what would be installed, changing nothing.
+param([switch]$Yes, [switch]$No, [switch]$DryRun)
 $ErrorActionPreference = "Stop"
 
-# Ask a yes/no question. -Yes/-No short-circuit the prompt.
-function Ask($question) {
-  if ($Yes) { return $true }
-  if ($No)  { return $false }
-  return (Read-Host "$question [y/N]") -match '^[yY]'
+# Arrow-key checkbox multi-select. $items is an array of objects with Type, Key,
+# Label, Checked. Required rows start checked; every row is toggleable. Returns
+# the Keys of checked rows. Falls back to defaults when input is redirected or
+# -Yes/-No is set (-Yes checks everything).
+function Select-Menu([object[]]$items) {
+  if ($Yes) { foreach ($it in $items) { $it.Checked = $true } }
+  if ($Yes -or $No -or [Console]::IsInputRedirected) {
+    return ($items | Where-Object { $_.Checked } | ForEach-Object { $_.Key })
+  }
+  $cursor = 0
+  function Draw {
+    for ($i = 0; $i -lt $items.Count; $i++) {
+      $box = if ($items[$i].Checked) { "[x]" } else { "[ ]" }
+      if ($i -eq $cursor) { Write-Host "> $box $($items[$i].Label)" -ForegroundColor Cyan }
+      else                { Write-Host "  $box $($items[$i].Label)" }
+    }
+  }
+  Write-Host ""
+  Write-Host "Select with Up/Down, toggle with SPACE, confirm with ENTER:" -ForegroundColor Cyan
+  Write-Host ""
+  Draw
+  $done = $false
+  while (-not $done) {
+    $k = [Console]::ReadKey($true)
+    switch ($k.Key) {
+      "UpArrow"   { if ($cursor -gt 0) { $cursor-- } }
+      "DownArrow" { if ($cursor -lt $items.Count - 1) { $cursor++ } }
+      "Spacebar"  { $items[$cursor].Checked = -not $items[$cursor].Checked }
+      "Enter"     { $done = $true }
+    }
+    [Console]::SetCursorPosition(0, [Console]::CursorTop - $items.Count)
+    Draw
+  }
+  Write-Host ""
+  return ($items | Where-Object { $_.Checked } | ForEach-Object { $_.Key })
 }
 
 $Marketplace     = "vinicius91carvalho/harness-engineering"
@@ -22,6 +53,7 @@ if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
 }
 
 function Install-Plugin($name) {
+  if ($DryRun) { Write-Host "   DRY RUN - would install: $name"; return }
   Write-Host "==> Installing: $name@$MarketplaceName"
   try { claude plugin install "$name@$MarketplaceName" } catch { Write-Warning "skipped $name - already installed or failed" }
 }
@@ -79,16 +111,25 @@ function Restore-Home {
 }
 
 Write-Host "==> Adding marketplace: $Marketplace"
-try { claude plugin marketplace add $Marketplace } catch { claude plugin marketplace update $MarketplaceName }
+if (-not $DryRun) { try { claude plugin marketplace add $Marketplace } catch { claude plugin marketplace update $MarketplaceName } }
 
-foreach ($p in $Required) { Install-Plugin $p }
+# Build the checklist: required plugins (pre-checked), optional plugins, then the
+# two extras. Every row is toggleable — requireds are only checked by default.
+$items = @()
+foreach ($p in $Required) { $items += [pscustomobject]@{ Type = "plugin"; Key = $p; Label = "$p (required)"; Checked = $true } }
+foreach ($p in $Optional) { $items += [pscustomobject]@{ Type = "plugin"; Key = $p; Label = $p; Checked = $false } }
+$items += [pscustomobject]@{ Type = "extra"; Key = "statusline";   Label = "status line - context %, rate limits, git, tmux"; Checked = $false }
+$items += [pscustomobject]@{ Type = "extra"; Key = "sharedconfig"; Label = "shared config - model, notifications, Remote Control"; Checked = $false }
 
-if (Ask "Enable the harness status line (context %, rate limits, git, tmux)?") { Enable-StatusLine }
+$selected = Select-Menu $items
 
-if (Ask "Apply Vinicius's shared Claude config (model, notifications, Remote Control on startup)?") { Apply-Config; Restore-Home }
-
-foreach ($p in $Optional) {
-  if (Ask "Install optional plugin '$p'?") { Install-Plugin $p } else { Write-Host "==> Skipping optional: $p" }
+foreach ($sel in $selected) {
+  switch ($sel) {
+    "statusline"   { if ($DryRun) { Write-Host "   DRY RUN - would enable: status line" } else { Enable-StatusLine } }
+    "sharedconfig" { if ($DryRun) { Write-Host "   DRY RUN - would apply: shared config" } else { Apply-Config; Restore-Home } }
+    default        { Install-Plugin $sel }
+  }
 }
 
+if (-not $selected) { Write-Host "==> Nothing selected." }
 Write-Host "==> Done. Restart Claude Code to load everything."

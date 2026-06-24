@@ -9,15 +9,18 @@ MARKETPLACE_NAME="vinicius91carvalho"
 REQUIRED="harness ponytail context7 remember skill-creator claude-md-management claude-code-setup hookify playwright"     # always installed
 OPTIONAL="last30days typescript-lsp ralph-loop pyright-lsp rust-analyzer-lsp codex"   # prompted for, one by one
 
-# -y/--yes answers yes to every prompt, -n/--no answers no — for non-interactive runs.
+# -y/--yes selects every item, -n/--no keeps required only — for non-interactive
+# runs. --dry-run shows what would be installed without touching anything.
 # Pipe usage: curl -sSL .../install.sh | sh -s -- --yes
 ASSUME=""
+DRY=""
 for arg in "$@"; do
   case "$arg" in
     -y|--yes) ASSUME=yes ;;
     -n|--no)  ASSUME=no ;;
-    -h|--help) echo "Usage: install.sh [-y|--yes | -n|--no]"; exit 0 ;;
-    *) echo "Unknown option: $arg (use -y/--yes or -n/--no)" >&2; exit 1 ;;
+    --dry-run) DRY=1 ;;
+    -h|--help) echo "Usage: install.sh [-y|--yes | -n|--no] [--dry-run]"; exit 0 ;;
+    *) echo "Unknown option: $arg (use -y/--yes, -n/--no, or --dry-run)" >&2; exit 1 ;;
   esac
 done
 
@@ -26,20 +29,100 @@ if ! command -v claude >/dev/null 2>&1; then
   exit 1
 fi
 
-# Ask a yes/no question on the terminal. Reads /dev/tty so it works under `curl | sh`
-# (where stdin is the script). $ASSUME short-circuits prompts; no terminal -> default No.
-ask() {
-  [ "$ASSUME" = yes ] && return 0
-  [ "$ASSUME" = no ]  && return 1
-  [ -e /dev/tty ] || return 1
-  printf "%s [y/N] " "$1" > /dev/tty
-  read ans < /dev/tty || return 1
-  case "$ans" in [yY]*) return 0 ;; *) return 1 ;; esac
-}
-
 install_plugin() {
+  [ -n "$DRY" ] && { echo "   DRY RUN — would install: $1"; return 0; }
   echo "==> Installing: $1@$MARKETPLACE_NAME"
   claude plugin install "$1@$MARKETPLACE_NAME" || echo "   (skipped $1 — already installed or failed)" >&2
+}
+
+# Arrow-key checkbox multi-select. Items are "type|key|label|default" lines on
+# stdin; required plugins default checked, all rows toggleable. Prints the keys
+# of checked items, one per line. Reads /dev/tty so it works under `curl | sh`.
+# Falls back to defaults when there's no terminal or $ASSUME is set ($ASSUME=yes
+# checks everything, =no keeps only the pre-checked rows).
+# ponytail: byte-at-a-time arrow decode; swap for a TUI lib only if this proves
+# flaky across terminals.
+select_menu() {
+  items=$(cat)
+  n=$(printf '%s\n' "$items" | wc -l | tr -d ' ')
+
+  # Seed checked state from the default column (4th field).
+  checked=""
+  i=1
+  while [ "$i" -le "$n" ]; do
+    d=$(printf '%s\n' "$items" | sed -n "${i}p" | cut -d'|' -f4)
+    if [ "$ASSUME" = yes ]; then d=1; fi
+    checked="$checked $d"
+    i=$((i + 1))
+  done
+
+  # Non-interactive (flag set, or /dev/tty missing/unopenable): emit defaults
+  # without drawing the menu.
+  if [ -n "$ASSUME" ] || ! { : < /dev/tty; } 2>/dev/null; then
+    i=1
+    for c in $checked; do
+      [ "$c" = 1 ] && printf '%s\n' "$(printf '%s\n' "$items" | sed -n "${i}p" | cut -d'|' -f2)"
+      i=$((i + 1))
+    done
+    return 0
+  fi
+
+  cursor=1
+  saved=$(stty -g < /dev/tty)
+  stty -echo -icanon min 1 < /dev/tty
+  trap 'stty "$saved" < /dev/tty 2>/dev/null' EXIT INT TERM
+
+  draw() {
+    i=1
+    for c in $checked; do
+      line=$(printf '%s\n' "$items" | sed -n "${i}p")
+      label=$(printf '%s\n' "$line" | cut -d'|' -f3)
+      [ "$c" = 1 ] && box="[x]" || box="[ ]"
+      if [ "$i" = "$cursor" ]; then
+        printf '\033[36m> %s %s\033[0m\n' "$box" "$label" > /dev/tty
+      else
+        printf '  %s %s\n' "$box" "$label" > /dev/tty
+      fi
+      i=$((i + 1))
+    done
+  }
+
+  printf '\nSelect with \033[36m↑/↓\033[0m, toggle with \033[36mSPACE\033[0m, confirm with \033[36mENTER\033[0m:\n\n' > /dev/tty
+  draw
+  while :; do
+    key=$(dd if=/dev/tty bs=1 count=1 2>/dev/null)
+    case "$key" in
+      "$(printf '\033')")  # escape sequence — read the next two bytes
+        dd if=/dev/tty bs=1 count=1 2>/dev/null >/dev/null   # '['
+        arrow=$(dd if=/dev/tty bs=1 count=1 2>/dev/null)
+        case "$arrow" in
+          A) [ "$cursor" -gt 1 ] && cursor=$((cursor - 1)) ;;   # up
+          B) [ "$cursor" -lt "$n" ] && cursor=$((cursor + 1)) ;; # down
+        esac ;;
+      " ")  # space — toggle the current row
+        new=""; i=1
+        for c in $checked; do
+          [ "$i" = "$cursor" ] && c=$((1 - c))
+          new="$new $c"; i=$((i + 1))
+        done
+        checked=$new ;;
+      "")  # enter (read returned empty for newline) — confirm
+        break ;;
+      q) checked=$(echo "$checked" | sed 's/[01]/0/g'); break ;;
+    esac
+    printf '\033[%dA' "$n" > /dev/tty   # move cursor back up to redraw in place
+    draw
+  done
+
+  stty "$saved" < /dev/tty 2>/dev/null
+  trap - EXIT INT TERM
+  printf '\n' > /dev/tty
+
+  i=1
+  for c in $checked; do
+    [ "$c" = 1 ] && printf '%s\n' "$(printf '%s\n' "$items" | sed -n "${i}p" | cut -d'|' -f2)"
+    i=$((i + 1))
+  done
 }
 
 # Ensure jq is available, installing it via the first package manager we find.
@@ -96,27 +179,29 @@ restore_home() {
 }
 
 echo "==> Adding marketplace: $MARKETPLACE"
-claude plugin marketplace add "$MARKETPLACE" || claude plugin marketplace update "$MARKETPLACE_NAME"
+[ -n "$DRY" ] || claude plugin marketplace add "$MARKETPLACE" || claude plugin marketplace update "$MARKETPLACE_NAME"
 
-for p in $REQUIRED; do
-  install_plugin "$p"
+# Build the checklist: required plugins (pre-checked), optional plugins, then the
+# two extras. Every row is toggleable — requireds are only checked by default.
+menu_items() {
+  for p in $REQUIRED; do printf 'plugin|%s|%s (required)|1\n' "$p" "$p"; done
+  for p in $OPTIONAL; do printf 'plugin|%s|%s|0\n' "$p" "$p"; done
+  printf 'extra|statusline|status line — context %%%%, rate limits, git, tmux|0\n'
+  printf 'extra|sharedconfig|shared config — model, notifications, Remote Control|0\n'
+}
+
+SELECTED=$(menu_items | select_menu)
+
+for sel in $SELECTED; do
+  case "$sel" in
+    statusline)
+      [ -n "$DRY" ] && echo "   DRY RUN — would enable: status line" || enable_statusline ;;
+    sharedconfig)
+      if [ -n "$DRY" ]; then echo "   DRY RUN — would apply: shared config"; else apply_config || true; restore_home || true; fi ;;
+    *)
+      install_plugin "$sel" ;;
+  esac
 done
 
-if ask "Enable the harness status line (context %, rate limits, git, tmux)?"; then
-  enable_statusline
-fi
-
-if ask "Apply Vinicius's shared Claude config (model, notifications, Remote Control on startup)?"; then
-  apply_config || true
-  restore_home || true
-fi
-
-for p in $OPTIONAL; do
-  if ask "Install optional plugin '$p'?"; then
-    install_plugin "$p"
-  else
-    echo "==> Skipping optional: $p"
-  fi
-done
-
+[ -n "$SELECTED" ] || echo "==> Nothing selected."
 echo "==> Done. Restart Claude Code to load everything."
