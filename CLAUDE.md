@@ -23,7 +23,7 @@ the scripts are worse than no docs.
 - `skills/update-project/SKILL.md` — `/harness:update-project`: a complete backup of the live Claude setup — regenerates `config/settings.json`, reconciles the plugin roster against live `enabledPlugins`, mirrors loose user content into `config/home/`, and reconciles docs.
 - `.github/workflows/ci.yml` — CI: JSON validity, shell syntax, selftests, skill frontmatter.
 - `.github/workflows/release.yml` — on push to `main`, computes the next semver from Conventional Commits, tags it, and publishes a GitHub Release. No bump = no release. Keep commit subjects conventional (`feat:`, `fix:`, `feat!:`/`BREAKING CHANGE:` for majors).
-- `CHANGELOG.md` — human-readable history per version (Keep a Changelog format). Add user-facing changes under `## [Unreleased]`; when a tag is cut, rename that section to the new version and date and add a fresh `[Unreleased]`.
+- `CHANGELOG.md` — generated. `release.yml` prepends each release's notes under `## [Unreleased]` and commits back (`[skip ci]`). Don't hand-edit released sections; conventional commit subjects *are* the changelog. Optionally stage extra prose under `## [Unreleased]` before a release.
 - `.claude-plugin/plugin.json` — manifest for the `harness` plugin itself.
 - `install.sh` / `install.ps1` — idempotent installers (sh for macOS/Linux/Git Bash/WSL, ps1 for PowerShell). They add the marketplace, install `REQUIRED` plugins unconditionally, prompt per-plugin for `OPTIONAL` ones, and prompt for extras (status line, shared config). They install `jq` if missing.
 - Other `harness` plugin content (commands/agents/hooks) would live in the conventional `commands/`, `agents/`, `hooks/` dirs at the repo root — none exist yet.

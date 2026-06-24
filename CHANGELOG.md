@@ -2,15 +2,16 @@
 
 All notable changes to this project are documented here.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-Versions are tagged automatically from [Conventional Commits](https://www.conventionalcommits.org)
-on push to `main` (see `.github/workflows/release.yml`); each tag also gets a
-[GitHub Release](https://github.com/vinicius91carvalho/harness-engineering/releases).
+This file is generated. On push to `main`, `.github/workflows/release.yml` tags
+the next semver from [Conventional Commits](https://www.conventionalcommits.org),
+publishes a [GitHub Release](https://github.com/vinicius91carvalho/harness-engineering/releases),
+and prepends the release's notes below — don't hand-edit released sections. The
+format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-06-24
+## [0.2.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.1.0...v0.2.0) - 2026-06-24
 
 ### Added
 - `codex` plugin (optional) re-exposed from [openai/codex-plugin-cc](https://github.com/openai/codex-plugin-cc),
@@ -21,7 +22,7 @@ on push to `main` (see `.github/workflows/release.yml`); each tag also gets a
 - `/harness:update-project` now asks whether each newly added plugin is required
   or optional instead of guessing, and runs the CI checks locally before finishing.
 
-## [0.1.0] - 2026-06-24
+## 0.1.0 - 2026-06-24
 
 Initial release.
 
@@ -36,7 +37,3 @@ Initial release.
 - `/harness:update-project` skill — full backup of the live Claude Code setup.
 - CI (`ci.yml`) for JSON/shell/selftest/frontmatter validation and semantic
   release (`release.yml`) with version + last-update badges.
-
-[Unreleased]: https://github.com/vinicius91carvalho/harness-engineering/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/vinicius91carvalho/harness-engineering/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/vinicius91carvalho/harness-engineering/releases/tag/v0.1.0
