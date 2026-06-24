@@ -1,0 +1,9 @@
+{
+  "name": "vinicius91carvalho",
+  "owner": { "name": "Vinicius Carvalho" },
+  "plugins": [
+    { "name": "harness", "source": "./" },
+    { "name": "ponytail", "source": { "source": "github", "repo": "DietrichGebert/ponytail" } },
+    { "name": "last30days", "source": { "source": "github", "repo": "mvanhorn/last30days-skill" } } 
+  ]
+}

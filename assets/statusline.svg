@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="46" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13">
+  <rect width="980" height="46" rx="6" fill="#0d1117"/>
+  <text x="16" y="28" xml:space="preserve"><tspan fill="#56b6c2">ctx </tspan><tspan fill="#98c379">42% </tspan><tspan fill="#5c6370">(123kin 45kout / 200k)</tspan><tspan fill="#5c6370">  │  </tspan><tspan fill="#c678dd">5h </tspan><tspan fill="#98c379">18% </tspan><tspan fill="#c678dd">7d </tspan><tspan fill="#e5c07b">71% </tspan><tspan fill="#c678dd">mo </tspan><tspan fill="#e06c75" font-weight="bold">93% </tspan><tspan fill="#5c6370">  │  </tspan><tspan fill="#61afef">⎇ </tspan><tspan fill="#abb2bf">feature-x </tspan><tspan fill="#5c6370">@feature-x </tspan><tspan fill="#5c6370">worktrees(main *feature-x)</tspan><tspan fill="#5c6370">  │  </tspan><tspan fill="#e5c07b">tmux</tspan><tspan fill="#5c6370">:</tspan><tspan fill="#e5c07b">work</tspan></text>
+</svg>
