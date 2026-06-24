@@ -11,6 +11,24 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### [0.2.1](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.2.0...v0.2.1) (2026-06-24)
+
+
+### Bug Fixes
+
+* skip CHANGELOG commit when diff is empty ([ad186af](https://github.com/vinicius91carvalho/harness-engineering/commit/ad186af13cf66ca491ec4ccad37f3303c520d3be))
+
+
+### Continuous Integration
+
+* auto-generate CHANGELOG.md on release ([efb04ac](https://github.com/vinicius91carvalho/harness-engineering/commit/efb04ac5f27681bca5f9ecede374bb4abcbfc92f))
+
+
+### Documentation
+
+* drop manual per-plugin install from README ([603560c](https://github.com/vinicius91carvalho/harness-engineering/commit/603560caacea199174fe2531a24008f77b60b5c8))
+* promote CHANGELOG [Unreleased] to v0.2.0 ([c543a46](https://github.com/vinicius91carvalho/harness-engineering/commit/c543a46d2ba894b5ede8923302a09c807819e752))
+
 ## [0.2.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.1.0...v0.2.0) - 2026-06-24
 
 ### Added
