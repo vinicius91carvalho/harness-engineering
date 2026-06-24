@@ -1,6 +1,6 @@
 #!/bin/sh
 # Install the full harness workspace into a fresh Claude Code setup.
-# Usage: curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/master/install.sh | sh
+# Usage: curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh
 # Works on macOS, Linux, and Windows (Git Bash / WSL).
 set -e
 
@@ -9,14 +9,28 @@ MARKETPLACE_NAME="vinicius91carvalho"
 REQUIRED="harness ponytail"     # always installed
 OPTIONAL="last30days"           # prompted for, one by one
 
+# -y/--yes answers yes to every prompt, -n/--no answers no — for non-interactive runs.
+# Pipe usage: curl -sSL .../install.sh | sh -s -- --yes
+ASSUME=""
+for arg in "$@"; do
+  case "$arg" in
+    -y|--yes) ASSUME=yes ;;
+    -n|--no)  ASSUME=no ;;
+    -h|--help) echo "Usage: install.sh [-y|--yes | -n|--no]"; exit 0 ;;
+    *) echo "Unknown option: $arg (use -y/--yes or -n/--no)" >&2; exit 1 ;;
+  esac
+done
+
 if ! command -v claude >/dev/null 2>&1; then
   echo "Claude Code CLI not found. Install it first: https://claude.com/claude-code" >&2
   exit 1
 fi
 
 # Ask a yes/no question on the terminal. Reads /dev/tty so it works under `curl | sh`
-# (where stdin is the script). No terminal (non-interactive pipe) -> default No.
+# (where stdin is the script). $ASSUME short-circuits prompts; no terminal -> default No.
 ask() {
+  [ "$ASSUME" = yes ] && return 0
+  [ "$ASSUME" = no ]  && return 1
   [ -e /dev/tty ] || return 1
   printf "%s [y/N] " "$1" > /dev/tty
   read ans < /dev/tty || return 1

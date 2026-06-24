@@ -10,17 +10,29 @@ On a new machine with [Claude Code](https://claude.com/claude-code) already inst
 **macOS / Linux / Windows (Git Bash or WSL):**
 
 ```sh
-curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/master/install.sh | sh
+curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
-irm https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/master/install.ps1 | iex
+irm https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.ps1 | iex
 ```
 
 Then restart Claude Code. The script is idempotent — safe to re-run any time to
 pick up new plugins.
+
+Run it non-interactively by answering every prompt up front:
+
+```sh
+curl -sSL .../install.sh | sh -s -- --yes   # or --no
+```
+
+```powershell
+irm .../install.ps1 -OutFile install.ps1; ./install.ps1 -Yes   # or -No
+```
+
+`--yes`/`-Yes` accepts every prompt, `--no`/`-No` declines them all.
 
 ### Manual install
 
@@ -40,38 +52,26 @@ The installer always installs the required plugins and **prompts** for each opti
 | `ponytail` | required | `/ponytail:*` | [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail) | Lazy senior-dev mode — forces the simplest solution that works (YAGNI, stdlib first, no unrequested abstractions). |
 | `last30days` | optional | `/last30days:*` | [mvanhorn/last30days-skill](https://github.com/mvanhorn/last30days-skill) | Surfaces what changed in Claude Code over the last 30 days. |
 
-## Status line
+## Extras
 
-`scripts/statusline.sh` is a standalone status line bundled with the `harness`
-plugin. It shows: context used % + token counts, 5h / 7d rate-limit usage
-(Pro/Max), current branch + worktree, all worktrees (current marked `*`), and
-the tmux session name.
+After the plugins, the installer **prompts** to turn on each of these (they
+write `~/.claude/settings.json`). Skip the prompts entirely with `--yes`/`--no`.
+
+| Extra | Prompt | Sets | What it does |
+| --- | --- | --- | --- |
+| Status line | _Enable the harness status line?_ | `statusLine` → bundled `scripts/statusline.sh` | Context % + tokens, 5h / 7d rate limits, git branch + worktrees, tmux session. |
+| Remote Control | _Enable Remote Control for all sessions?_ | `remoteControlAtStartup: true` | Every session connects to [Remote Control](https://code.claude.com/docs/en/remote-control) on startup — drive it from the Claude mobile/web app without typing `/remote-control`. |
+
+### Status line preview
 
 ![Status line with full parameters](assets/statusline.svg)
 
-The installer offers to enable it for you — answer `y` to the status-line
-prompt and it points `~/.claude/settings.json` at the installed script.
-
-To enable it by hand instead, set this in `~/.claude/settings.json` (point at
-the installed script):
+### Enabling by hand
 
 ```json
 "statusLine": {
   "type": "command",
   "command": "bash ~/.claude/plugins/cache/vinicius91carvalho/harness/<version>/scripts/statusline.sh"
-}
-```
-
-## Remote Control
-
-The installer also offers to **Enable Remote Control for all sessions** — answer
-`y` and it sets `remoteControlAtStartup: true` in `~/.claude/settings.json`, so
-every interactive session connects to [Remote Control](https://code.claude.com/docs/en/remote-control)
-on startup (control sessions from the Claude mobile/web app without typing
-`/remote-control`).
-
-To set it by hand:
-
-```json
+},
 "remoteControlAtStartup": true
 ```
