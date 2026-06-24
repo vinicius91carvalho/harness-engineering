@@ -38,14 +38,6 @@ irm .../install.ps1 -OutFile install.ps1; ./install.ps1 -Yes   # or -No
 
 `--yes`/`-Yes` accepts every prompt, `--no`/`-No` declines them all.
 
-### Manual install
-
-```sh
-claude plugin marketplace add vinicius91carvalho/harness-engineering
-claude plugin install harness@vinicius91carvalho
-claude plugin install ponytail@vinicius91carvalho
-```
-
 ## Plugins
 
 The installer always installs the required plugins and **prompts** for each optional one.
