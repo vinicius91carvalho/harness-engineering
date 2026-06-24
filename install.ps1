@@ -14,7 +14,7 @@ function Ask($question) {
 $Marketplace     = "vinicius91carvalho/harness-engineering"
 $MarketplaceName = "vinicius91carvalho"
 $Required        = @("harness", "ponytail")   # always installed
-$Optional        = @("last30days")            # prompted for, one by one
+$Optional        = @("last30days", "remember", "context7", "skill-creator", "playwright", "claude-md-management", "typescript-lsp", "ralph-loop", "claude-code-setup", "pyright-lsp", "hookify", "rust-analyzer-lsp")   # prompted for, one by one
 
 if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
   Write-Error "Claude Code CLI not found. Install it first: https://claude.com/claude-code"

@@ -6,8 +6,8 @@ set -e
 
 MARKETPLACE="vinicius91carvalho/harness-engineering"
 MARKETPLACE_NAME="vinicius91carvalho"
-REQUIRED="harness ponytail"     # always installed
-OPTIONAL="last30days"           # prompted for, one by one
+REQUIRED="harness ponytail remember"     # always installed
+OPTIONAL="last30days context7 skill-creator playwright claude-md-management typescript-lsp ralph-loop claude-code-setup pyright-lsp hookify rust-analyzer-lsp"   # prompted for, one by one
 
 # -y/--yes answers yes to every prompt, -n/--no answers no — for non-interactive runs.
 # Pipe usage: curl -sSL .../install.sh | sh -s -- --yes
