@@ -6,8 +6,8 @@ set -e
 
 MARKETPLACE="vinicius91carvalho/harness-engineering"
 MARKETPLACE_NAME="vinicius91carvalho"
-REQUIRED="harness ponytail"     # always installed
-OPTIONAL="last30days remember context7 skill-creator playwright claude-md-management typescript-lsp ralph-loop claude-code-setup pyright-lsp hookify rust-analyzer-lsp"   # prompted for, one by one
+REQUIRED="harness ponytail context7 remember skill-creator claude-md-management claude-code-setup hookify playwright"     # always installed
+OPTIONAL="last30days typescript-lsp ralph-loop pyright-lsp rust-analyzer-lsp"   # prompted for, one by one
 
 # -y/--yes answers yes to every prompt, -n/--no answers no — for non-interactive runs.
 # Pipe usage: curl -sSL .../install.sh | sh -s -- --yes
@@ -84,6 +84,17 @@ apply_config() {
   echo "==> Shared config merged into $settings"
 }
 
+# Restore loose user content (skills/commands/agents/hooks, keybindings.json,
+# global CLAUDE.md) that /harness:update-project backed up into config/home/.
+# Guarded: a no-op when nothing was backed up. Existing files are overwritten.
+restore_home() {
+  home=$(ls -dt "$HOME"/.claude/plugins/cache/*/harness/*/config/home 2>/dev/null | head -n1)
+  [ -n "$home" ] && [ -n "$(ls -A "$home" 2>/dev/null)" ] || return 0
+  mkdir -p "$HOME/.claude"
+  cp -R "$home"/. "$HOME/.claude/"
+  echo "==> Restored backed-up user content into $HOME/.claude"
+}
+
 echo "==> Adding marketplace: $MARKETPLACE"
 claude plugin marketplace add "$MARKETPLACE" || claude plugin marketplace update "$MARKETPLACE_NAME"
 
@@ -97,6 +108,7 @@ fi
 
 if ask "Apply Vinicius's shared Claude config (model, notifications, Remote Control on startup)?"; then
   apply_config || true
+  restore_home || true
 fi
 
 for p in $OPTIONAL; do

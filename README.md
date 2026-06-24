@@ -50,17 +50,17 @@ The installer always installs the required plugins and **prompts** for each opti
 | --- | --- | --- | --- | --- |
 | `harness` | required | `/harness:*` | this repo | My own commands, skills, agents, and hooks. |
 | `ponytail` | required | `/ponytail:*` | [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail) | Lazy senior-dev mode — forces the simplest solution that works (YAGNI, stdlib first, no unrequested abstractions). |
+| `context7` | required | MCP server | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Up-to-date, version-specific library docs pulled into context (Upstash Context7). |
+| `remember` | required | `/remember:*` | [Digital-Process-Tools/claude-remember](https://github.com/Digital-Process-Tools/claude-remember) | Saves session state to `.remember/` for clean continuation across sessions. |
+| `skill-creator` | required | `/skill-creator:*` | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Create, improve, and benchmark skills. |
+| `claude-md-management` | required | `/claude-md-management:*` | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Audit and maintain CLAUDE.md files and project memory. |
+| `claude-code-setup` | required | `/claude-code-setup:*` | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Recommends tailored Claude Code automations for a codebase. |
+| `hookify` | required | `/hookify:*` | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Create custom hooks to prevent unwanted behaviors. |
+| `playwright` | required | MCP server | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Browser automation / E2E testing via Microsoft Playwright. |
 | `last30days` | optional | `/last30days:*` | [mvanhorn/last30days-skill](https://github.com/mvanhorn/last30days-skill) | Surfaces what changed in Claude Code over the last 30 days. |
-| `remember` | optional | `/remember:*` | [Digital-Process-Tools/claude-remember](https://github.com/Digital-Process-Tools/claude-remember) | Saves session state to `.remember/` for clean continuation across sessions. |
-| `context7` | optional | MCP server | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Up-to-date, version-specific library docs pulled into context (Upstash Context7). |
-| `skill-creator` | optional | `/skill-creator:*` | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Create, improve, and benchmark skills. |
-| `playwright` | optional | MCP server | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Browser automation / E2E testing via Microsoft Playwright. |
-| `claude-md-management` | optional | `/claude-md-management:*` | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Audit and maintain CLAUDE.md files and project memory. |
 | `typescript-lsp` | optional | LSP | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | TypeScript/JavaScript language server for code intelligence. |
 | `ralph-loop` | optional | `/ralph-loop:*` | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Self-referential iterative loops (the Ralph Wiggum technique). |
-| `claude-code-setup` | optional | `/claude-code-setup:*` | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Recommends tailored Claude Code automations for a codebase. |
 | `pyright-lsp` | optional | LSP | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Python (Pyright) language server for type checking. |
-| `hookify` | optional | `/hookify:*` | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Create custom hooks to prevent unwanted behaviors. |
 | `rust-analyzer-lsp` | optional | LSP | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Rust language server for code intelligence. |
 
 ## Extras
@@ -89,12 +89,23 @@ write `~/.claude/settings.json`). Skip the prompts entirely with `--yes`/`--no`.
 For the shared config, merge the keys in [`config/settings.json`](config/settings.json)
 into your `~/.claude/settings.json` (e.g. `jq -s '.[0] * .[1]' ~/.claude/settings.json config/settings.json`).
 
-## Keeping the config backup in sync
+## Keeping the backup in sync
 
-`/harness:update-project` regenerates `config/settings.json` from your live
-`~/.claude/settings.json` (via `scripts/sync-config.sh`, which keeps only the
-shareable subset) and reconciles the docs. It reports a diff and commits nothing
-unless asked.
+`/harness:update-project` makes this repo a restorable backup of your live
+Claude Code setup. Each run it:
+
+- regenerates `config/settings.json` from `~/.claude/settings.json` (via
+  `scripts/sync-config.sh`, which keeps only the shareable subset);
+- reconciles the **plugin roster** against your live `enabledPlugins` — anything
+  you've enabled gets a marketplace entry, an installer line, and a README row,
+  so a fresh `install.sh` reinstalls it (skills/agents/hooks ride along inside
+  their plugins);
+- mirrors any **loose user content** (`~/.claude/skills`, `commands`, `agents`,
+  `hooks`, `keybindings.json`, global `CLAUDE.md`) into `config/home/`, which the
+  installer's restore step copies back on a fresh machine. Secrets, history, and
+  caches are never copied.
+
+It reports a diff and commits nothing unless asked.
 
 CI (`.github/workflows/ci.yml`) checks JSON validity, shell syntax, the
 `statusline.sh` / `sync-config.sh` selftests, and the skill frontmatter on every

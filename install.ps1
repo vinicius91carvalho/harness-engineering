@@ -13,8 +13,8 @@ function Ask($question) {
 
 $Marketplace     = "vinicius91carvalho/harness-engineering"
 $MarketplaceName = "vinicius91carvalho"
-$Required        = @("harness", "ponytail")   # always installed
-$Optional        = @("last30days", "remember", "context7", "skill-creator", "playwright", "claude-md-management", "typescript-lsp", "ralph-loop", "claude-code-setup", "pyright-lsp", "hookify", "rust-analyzer-lsp")   # prompted for, one by one
+$Required        = @("harness", "ponytail", "context7", "remember", "skill-creator", "claude-md-management", "claude-code-setup", "hookify", "playwright")   # always installed
+$Optional        = @("last30days", "typescript-lsp", "ralph-loop", "pyright-lsp", "rust-analyzer-lsp")   # prompted for, one by one
 
 if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
   Write-Error "Claude Code CLI not found. Install it first: https://claude.com/claude-code"
@@ -67,6 +67,17 @@ function Apply-Config {
   } catch { Write-Warning "could not apply shared config: $_" }
 }
 
+# Restore loose user content (skills/commands/agents/hooks, keybindings.json,
+# global CLAUDE.md) that /harness:update-project backed up into config/home/.
+# A no-op when nothing was backed up. Existing files are overwritten.
+function Restore-Home {
+  $src = Get-ChildItem (Join-Path $HOME ".claude\plugins\cache\*\harness\*\config\home") -Directory -ErrorAction SilentlyContinue |
+         Sort-Object LastWriteTime -Descending | Select-Object -First 1
+  if (-not $src -or -not (Get-ChildItem $src.FullName -Force -ErrorAction SilentlyContinue)) { return }
+  Copy-Item (Join-Path $src.FullName "*") (Join-Path $HOME ".claude") -Recurse -Force
+  Write-Host "==> Restored backed-up user content into $(Join-Path $HOME '.claude')"
+}
+
 Write-Host "==> Adding marketplace: $Marketplace"
 try { claude plugin marketplace add $Marketplace } catch { claude plugin marketplace update $MarketplaceName }
 
@@ -74,7 +85,7 @@ foreach ($p in $Required) { Install-Plugin $p }
 
 if (Ask "Enable the harness status line (context %, rate limits, git, tmux)?") { Enable-StatusLine }
 
-if (Ask "Apply Vinicius's shared Claude config (model, notifications, Remote Control on startup)?") { Apply-Config }
+if (Ask "Apply Vinicius's shared Claude config (model, notifications, Remote Control on startup)?") { Apply-Config; Restore-Home }
 
 foreach ($p in $Optional) {
   if (Ask "Install optional plugin '$p'?") { Install-Plugin $p } else { Write-Host "==> Skipping optional: $p" }
