@@ -10,6 +10,8 @@ on push to `main` (see `.github/workflows/release.yml`); each tag also gets a
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-24
+
 ### Added
 - `codex` plugin (optional) re-exposed from [openai/codex-plugin-cc](https://github.com/openai/codex-plugin-cc),
   wired into the marketplace, both installers, and the README. Used for
@@ -35,5 +37,6 @@ Initial release.
 - CI (`ci.yml`) for JSON/shell/selftest/frontmatter validation and semantic
   release (`release.yml`) with version + last-update badges.
 
-[Unreleased]: https://github.com/vinicius91carvalho/harness-engineering/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/vinicius91carvalho/harness-engineering/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/vinicius91carvalho/harness-engineering/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/vinicius91carvalho/harness-engineering/releases/tag/v0.1.0
