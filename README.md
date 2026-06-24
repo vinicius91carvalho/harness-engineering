@@ -1,46 +1,56 @@
-# harness-engineering
+<p align="center">
+  <img src="assets/banner.svg" alt="harness-engineering" width="660">
+</p>
 
-[![Version](https://img.shields.io/github/v/release/vinicius91carvalho/harness-engineering?sort=semver&label=version&color=2496ED)](https://github.com/vinicius91carvalho/harness-engineering/releases/latest)
-[![AI Harness Engineering System](https://img.shields.io/badge/AI%20Harness%20Engineering-System-8A2BE2)](https://github.com/vinicius91carvalho/harness-engineering)
-[![Last update](https://img.shields.io/github/release-date/vinicius91carvalho/harness-engineering?label=last%20update&color=2EA44F)](https://github.com/vinicius91carvalho/harness-engineering/releases)
+<p align="center">
+  <a href="https://github.com/vinicius91carvalho/harness-engineering/releases/latest"><img alt="Version" src="https://img.shields.io/github/v/release/vinicius91carvalho/harness-engineering?sort=semver&label=version&color=2496ED"></a>
+  <a href="https://github.com/vinicius91carvalho/harness-engineering"><img alt="AI Harness Engineering System" src="https://img.shields.io/badge/AI%20Harness%20Engineering-System-8A2BE2"></a>
+  <a href="https://github.com/vinicius91carvalho/harness-engineering/releases"><img alt="Last update" src="https://img.shields.io/github/release-date/vinicius91carvalho/harness-engineering?label=last%20update&color=2EA44F"></a>
+</p>
 
-My personal Claude Code workspace, packaged as a plugin marketplace. One command
-sets up a fresh machine with every plugin I use.
+<p align="center">
+  <b>A curated Claude Code developer workflow — the best plugins out there, set up with one command.</b>
+</p>
+
+> *"YOU SHOULD NOT PASS!"* — on the bad plugins, the boilerplate, and the 3am pages.
+>
+> *"A wizard is never late, nor is he early — he installs precisely the plugins he means to."*
+>
+> *"All we have to decide is what to do with the config that is given us."*
+
+## About
+
+> *"Not all those who wander are lost."*
+
+`harness-engineering` is my personal Claude Code workspace, packaged as a plugin marketplace. The goal is a batteries-included **developer workflow** assembled from the best Claude Code plugins available — lazy-senior-dev guardrails, up-to-date library docs, session memory, browser automation, language servers, and more — that drops onto a fresh machine with a single command.
+
+It's opinionated but not precious: **feedback, tips, and plugin suggestions are very welcome** — open an [issue](https://github.com/vinicius91carvalho/harness-engineering/issues) or a PR.
 
 ## Setup
 
-On a new machine with [Claude Code](https://claude.com/claude-code) already installed:
+> *"When in doubt, always follow your nose."*
 
-**macOS / Linux / Windows (Git Bash or WSL):**
+On a new machine with [Claude Code](https://claude.com/claude-code) already installed, run:
+
+**macOS / Linux / Windows (Git Bash or WSL)**
 
 ```sh
 curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh
 ```
 
-**Windows (PowerShell):**
+The installer adds the marketplace, then shows an **arrow-key checklist** — ↑/↓ to move, **SPACE** to toggle, **ENTER** to confirm — where you pick everything in a single pass. Required plugins come pre-checked (you can still uncheck them); optional plugins and the two extras start unchecked. Your whole selection is applied at once, and the script is idempotent, so re-run it any time to pick up new plugins. When you're done, restart Claude Code.
 
-```powershell
-irm https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.ps1 | iex
-```
+A few text notes instead of extra commands to copy:
 
-Then restart Claude Code. The script is idempotent — safe to re-run any time to
-pick up new plugins.
-
-Run it non-interactively by answering every prompt up front:
-
-```sh
-curl -sSL .../install.sh | sh -s -- --yes   # or --no
-```
-
-```powershell
-irm .../install.ps1 -OutFile install.ps1; ./install.ps1 -Yes   # or -No
-```
-
-`--yes`/`-Yes` accepts every prompt, `--no`/`-No` declines them all.
+- **Native Windows (PowerShell):** run [`install.ps1`](install.ps1) instead — the same arrow-key checklist, driven natively.
+- **Non-interactive:** the `--yes` flag selects everything and `--no` keeps only the required plugins (PowerShell: `-Yes` / `-No`) — handy for scripted setups.
+- **Preview without installing:** the `--dry-run` flag walks the checklist and prints exactly what *would* be installed, changing nothing on your machine.
 
 ## Plugins
 
-The installer always installs the required plugins and **prompts** for each optional one.
+> *"Some plugins that ship deserve deleting, and some that are deleted deserve shipping — these are the ones worth keeping."*
+
+Everything below is a row in the installer's checklist. Required plugins are pre-checked; optional ones start unchecked. Toggle whatever you want and confirm once.
 
 | Plugin | Required? | Namespace | Source | What it does |
 | --- | --- | --- | --- | --- |
@@ -62,8 +72,9 @@ The installer always installs the required plugins and **prompts** for each opti
 
 ## Extras
 
-After the plugins, the installer **prompts** to turn on each of these (they
-write `~/.claude/settings.json`). Skip the prompts entirely with `--yes`/`--no`.
+> *"Keep it secret. Keep it safe."*
+
+These two appear as their own rows at the bottom of the same checklist (they write `~/.claude/settings.json`). Leave them unchecked to skip, or use `--yes`/`--no` to decide for the whole list at once.
 
 | Extra | Prompt | Sets | What it does |
 | --- | --- | --- | --- |
@@ -83,36 +94,27 @@ write `~/.claude/settings.json`). Skip the prompts entirely with `--yes`/`--no`.
 }
 ```
 
-For the shared config, merge the keys in [`config/settings.json`](config/settings.json)
-into your `~/.claude/settings.json` (e.g. `jq -s '.[0] * .[1]' ~/.claude/settings.json config/settings.json`).
+For the shared config, merge the keys in [`config/settings.json`](config/settings.json) into your `~/.claude/settings.json` (e.g. `jq -s '.[0] * .[1]' ~/.claude/settings.json config/settings.json`).
 
 ## Keeping the backup in sync
 
-`/harness:update-project` makes this repo a restorable backup of your live
-Claude Code setup. Each run it:
+> *"I have no memory of this config — so it is written down, against the dark."*
 
-- regenerates `config/settings.json` from `~/.claude/settings.json` (via
-  `scripts/sync-config.sh`, which keeps only the shareable subset);
-- reconciles the **plugin roster** against your live `enabledPlugins` — anything
-  you've enabled gets a marketplace entry, an installer line, and a README row,
-  so a fresh `install.sh` reinstalls it (skills/agents/hooks ride along inside
-  their plugins);
-- mirrors any **loose user content** (`~/.claude/skills`, `commands`, `agents`,
-  `hooks`, `keybindings.json`, global `CLAUDE.md`) into `config/home/`, which the
-  installer's restore step copies back on a fresh machine. Secrets, history, and
-  caches are never copied.
+`/harness:update-project` makes this repo a restorable backup of your live Claude Code setup. Each run it:
+
+- regenerates `config/settings.json` from `~/.claude/settings.json` (via `scripts/sync-config.sh`, which keeps only the shareable subset);
+- reconciles the **plugin roster** against your live `enabledPlugins` — anything you've enabled gets a marketplace entry, an installer line, and a README row, so a fresh `install.sh` reinstalls it (skills/agents/hooks ride along inside their plugins);
+- mirrors any **loose user content** (`~/.claude/skills`, `commands`, `agents`, `hooks`, `keybindings.json`, global `CLAUDE.md`) into `config/home/`, which the installer's restore step copies back on a fresh machine. Secrets, history, and caches are never copied.
 
 It reports a diff and commits nothing unless asked.
 
-CI (`.github/workflows/ci.yml`) checks JSON validity, shell syntax, the
-`statusline.sh` / `sync-config.sh` selftests, and the skill frontmatter on every
-push and PR.
+CI (`.github/workflows/ci.yml`) checks JSON validity, shell syntax, the `statusline.sh` / `sync-config.sh` selftests, and the skill frontmatter on every push and PR.
 
 ## Releases
 
-Versions are cut automatically from [Conventional Commits](https://www.conventionalcommits.org)
-on every push to `main` (`.github/workflows/release.yml`): the next semver is
-computed from the commit messages, tagged, and published as a GitHub Release.
+> *"The Road goes ever on and on — and so do the version tags."*
+
+Versions are cut automatically from [Conventional Commits](https://www.conventionalcommits.org) on every push to `main` (`.github/workflows/release.yml`): the next semver is computed from the commit messages, tagged, and published as a GitHub Release.
 
 The three most recent versions:
 
@@ -120,5 +122,4 @@ The three most recent versions:
 [![previous](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.github.com%2Frepos%2Fvinicius91carvalho%2Fharness-engineering%2Freleases&query=%24%5B1%5D.tag_name&label=previous&color=8A8A8A)](https://github.com/vinicius91carvalho/harness-engineering/releases)
 [![2 ago](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.github.com%2Frepos%2Fvinicius91carvalho%2Fharness-engineering%2Freleases&query=%24%5B2%5D.tag_name&label=2%20ago&color=8A8A8A)](https://github.com/vinicius91carvalho/harness-engineering/releases)
 
-Full notes for every version are on the
-[Releases page](https://github.com/vinicius91carvalho/harness-engineering/releases).
+Full notes for every version are on the [Releases page](https://github.com/vinicius91carvalho/harness-engineering/releases).
