@@ -24,9 +24,13 @@ the user added under `~/.claude` directly. Each run:
    from this repo: an entry in `.claude-plugin/marketplace.json` (re-exposing the
    upstream repo from `extraKnownMarketplaces`), a name in `install.sh`
    `REQUIRED`/`OPTIONAL` **and** `install.ps1` `$Required`/`$Optional`, and a row
-   in the README Plugins table. Add anything missing; flag any enabled plugin you
-   can't map to a marketplace source. Don't silently drop plugins the user
-   removed — point them out and let them decide.
+   in the README Plugins table. For every plugin you add, **ask the user whether
+   it's required or optional** before writing it — required plugins install
+   unconditionally, optional ones are prompted for. Don't guess; their answer
+   decides which `REQUIRED`/`OPTIONAL` (and `$Required`/`$Optional`) list and the
+   README "Required?" column value it gets. Flag any enabled plugin you can't map
+   to a marketplace source. Don't silently drop plugins the user removed — point
+   them out and let them decide.
 
 3. **Loose user content.** Mirror separately-authored content into `config/home/`
    (the installer's `restore_home`/`Restore-Home` copies it back into `~/.claude`
@@ -47,4 +51,14 @@ the user added under `~/.claude` directly. Each run:
 4. **Reconcile docs.** Bring `README.md`, `CLAUDE.md`, and any bundled scripts in
    line with what changed (the repo's "keep scripts and README in sync" rule).
 
-5. Report the change as a `git diff --stat` summary. Make no commit unless asked.
+5. **Run the tests locally.** Mirror `.github/workflows/ci.yml` so you catch
+   failures before pushing:
+   ```sh
+   jq empty .claude-plugin/marketplace.json .claude-plugin/plugin.json config/settings.json
+   sh -n install.sh && bash -n scripts/statusline.sh scripts/sync-config.sh
+   bash scripts/statusline.sh --selftest && bash scripts/sync-config.sh --selftest
+   grep -q '^name:' skills/update-project/SKILL.md && grep -q '^description:' skills/update-project/SKILL.md
+   ```
+   Report pass/fail; fix anything that fails before finishing.
+
+6. Report the change as a `git diff --stat` summary. Make no commit unless asked.
