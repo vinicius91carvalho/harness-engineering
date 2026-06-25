@@ -11,6 +11,18 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.3.0...v0.4.0) (2026-06-25)
+
+
+### Features
+
+* **mcp:** add MCP server backup and interactive installer step ([0213d07](https://github.com/vinicius91carvalho/harness-engineering/commit/0213d07b8ec2c86e83dd268bb8f22e3218892ae6))
+
+
+### Documentation
+
+* update CHANGELOG for v0.3.0 [skip ci] ([dd428ed](https://github.com/vinicius91carvalho/harness-engineering/commit/dd428edbdae7a468517bcba1d96f835b3b5925ea))
+
 ## [0.3.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.2.1...v0.3.0) (2026-06-24)
 
 
