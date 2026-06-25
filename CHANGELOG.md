@@ -11,6 +11,19 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.2.1...v0.3.0) (2026-06-24)
+
+
+### Features
+
+* **install:** replace per-plugin prompts with arrow-key checklist ([1af951b](https://github.com/vinicius91carvalho/harness-engineering/commit/1af951bfbeb4c7804609f9cf1892c0b31194cf10))
+
+
+### Documentation
+
+* add banner, revamp README, and Gandalf quotes per section ([09361e9](https://github.com/vinicius91carvalho/harness-engineering/commit/09361e9b3ae218b3bbddeb5b5eb85d7874720f71))
+* update CHANGELOG for v0.2.1 [skip ci] ([5b1a313](https://github.com/vinicius91carvalho/harness-engineering/commit/5b1a313a283832965f66d0ccbbf4643b336d0cee))
+
 ### [0.2.1](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.2.0...v0.2.1) (2026-06-24)
 
 
