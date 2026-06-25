@@ -19,20 +19,47 @@ the user added under `~/.claude` directly. Each run:
    add them to the filter in `scripts/sync-config.sh`, the README "Shared config"
    row, and the "Enabling by hand" example.
 
-2. **Plugin roster.** Read `enabledPlugins` and `extraKnownMarketplaces` from
-   `~/.claude/settings.json`. For every enabled plugin, confirm it is reachable
-   from this repo: an entry in `.claude-plugin/marketplace.json` (re-exposing the
-   upstream repo from `extraKnownMarketplaces`), a name in `install.sh`
-   `REQUIRED`/`OPTIONAL` **and** `install.ps1` `$Required`/`$Optional`, and a row
-   in the README Plugins table. For every plugin you add, **ask the user whether
-   it's required or optional** before writing it — required plugins install
-   unconditionally, optional ones are prompted for. Don't guess; their answer
-   decides which `REQUIRED`/`OPTIONAL` (and `$Required`/`$Optional`) list and the
-   README "Required?" column value it gets. Flag any enabled plugin you can't map
-   to a marketplace source. Don't silently drop plugins the user removed — point
-   them out and let them decide.
+2. **Plugin roster — two-way diff.** Build both sets and reconcile in *both*
+   directions; a one-way "is every enabled plugin in the repo?" check misses
+   uninstalls.
+   - **Live set:** names with `true` in `enabledPlugins` (`~/.claude/settings.json`),
+     `@marketplace` suffix stripped. `enabledPlugins` lists only *enabled*
+     plugins and optional ones are legitimately absent — so to confirm a real
+     uninstall, also check it's gone from `~/.claude/plugins/installed_plugins.json`.
+   - **Repo set:** the union of names across `.claude-plugin/marketplace.json`,
+     `install.sh` `REQUIRED`/`OPTIONAL`, `install.ps1` `$Required`/`$Optional`,
+     and the README Plugins table.
 
-3. **Loose user content.** Mirror separately-authored content into `config/home/`
+   **Live ∖ Repo (installs to add):** for each, confirm a `marketplace.json`
+   entry (re-exposing the upstream repo from `extraKnownMarketplaces`), add the
+   name to both installers and a README row. **Ask the user required or optional**
+   before writing — their answer picks the `REQUIRED`/`OPTIONAL`
+   (`$Required`/`$Optional`) list and the README "Required?" value. Flag any you
+   can't map to a marketplace source.
+
+   **Repo ∖ Live (uninstalls to reconcile):** these are plugins removed from the
+   live setup. Point each out and **ask whether to remove it from all four sync
+   points or keep offering it** — the repo doubles as a marketplace others
+   install from, so "I don't use it" ≠ "don't offer it". Never drop one silently;
+   never keep one silently.
+
+3. **MCP servers.** Claude Code stores MCP servers in three places — enumerate all:
+   - **user scope:** `mcpServers` in `~/.claude.json` (cross-project, part of "my setup").
+   - **local scope:** `.projects["<path>"].mcpServers` in `~/.claude.json` (private to one project on this machine).
+   - **project scope:** a checked-in `.mcp.json` in a repo (already version-controlled there; nothing to back up).
+
+   Back up the user-scoped servers — plus any local-scoped ones the user wants
+   kept — into `config/mcp.json` as a sanitized inventory. **Redact every secret**
+   (tokens, API keys, passwords embedded in URLs, `args`, or `env`) to a
+   `${PLACEHOLDER}`; the same trust-boundary rule as step 4 — never commit a live
+   credential. The installer's "MCP servers" row reads this file and prompts for
+   each `${PLACEHOLDER}` at install time (ENTER skips a server), so the
+   placeholder names double as the prompt labels — keep them meaningful
+   (`${BRIGHTDATA_TOKEN}`, not `${X}`). Skip the file entirely if no MCP servers
+   exist. If you add a new server *shape* (stdio with `env`, HTTP headers), sanity
+   check `install_mcps`/`Install-Mcps` still resolve its placeholders.
+
+4. **Loose user content.** Mirror separately-authored content into `config/home/`
    (the installer's `restore_home`/`Restore-Home` copies it back into `~/.claude`
    on a fresh machine), preserving relative paths:
    ```sh
@@ -48,17 +75,17 @@ the user added under `~/.claude` directly. Each run:
    restoring them is manual — the live path is marketplace/version-specific, so
    `restore_home` does not place them.
 
-4. **Reconcile docs.** Bring `README.md`, `CLAUDE.md`, and any bundled scripts in
+5. **Reconcile docs.** Bring `README.md`, `CLAUDE.md`, and any bundled scripts in
    line with what changed (the repo's "keep scripts and README in sync" rule).
 
-5. **Run the tests locally.** Mirror `.github/workflows/ci.yml` so you catch
+6. **Run the tests locally.** Mirror `.github/workflows/ci.yml` so you catch
    failures before pushing:
    ```sh
-   jq empty .claude-plugin/marketplace.json .claude-plugin/plugin.json config/settings.json
+   jq empty .claude-plugin/marketplace.json .claude-plugin/plugin.json config/*.json
    sh -n install.sh && bash -n scripts/statusline.sh scripts/sync-config.sh
    bash scripts/statusline.sh --selftest && bash scripts/sync-config.sh --selftest
    grep -q '^name:' skills/update-project/SKILL.md && grep -q '^description:' skills/update-project/SKILL.md
    ```
    Report pass/fail; fix anything that fails before finishing.
 
-6. Report the change as a `git diff --stat` summary. Make no commit unless asked.
+7. Report the change as a `git diff --stat` summary. Make no commit unless asked.

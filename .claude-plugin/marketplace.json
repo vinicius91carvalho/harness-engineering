@@ -4,7 +4,6 @@
   "plugins": [
     { "name": "harness", "source": "./" },
     { "name": "ponytail", "source": { "source": "github", "repo": "DietrichGebert/ponytail" } },
-    { "name": "last30days", "source": { "source": "github", "repo": "mvanhorn/last30days-skill" } },
     { "name": "remember", "source": { "source": "github", "repo": "Digital-Process-Tools/claude-remember" } },
     { "name": "context7", "source": { "source": "git-subdir", "url": "https://github.com/anthropics/claude-plugins-official.git", "path": "external_plugins/context7" } },
     { "name": "skill-creator", "source": { "source": "git-subdir", "url": "https://github.com/anthropics/claude-plugins-official.git", "path": "plugins/skill-creator" } },

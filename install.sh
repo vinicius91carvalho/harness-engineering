@@ -7,7 +7,7 @@ set -e
 MARKETPLACE="vinicius91carvalho/harness-engineering"
 MARKETPLACE_NAME="vinicius91carvalho"
 REQUIRED="harness ponytail context7 remember skill-creator claude-md-management claude-code-setup hookify playwright"     # always installed
-OPTIONAL="last30days typescript-lsp ralph-loop pyright-lsp rust-analyzer-lsp codex"   # prompted for, one by one
+OPTIONAL="typescript-lsp ralph-loop pyright-lsp rust-analyzer-lsp codex"   # prompted for, one by one
 
 # -y/--yes selects every item, -n/--no keeps required only — for non-interactive
 # runs. --dry-run shows what would be installed without touching anything.
@@ -178,6 +178,43 @@ restore_home() {
   echo "==> Restored backed-up user content into $HOME/.claude"
 }
 
+# Interactively register the MCP servers backed up in config/mcp.json. For each
+# server: ask whether to add it, then prompt (input hidden) for every
+# ${PLACEHOLDER} secret it carries. Empty input skips that server — so a user
+# without the API key/token just presses ENTER and moves on. Runs after the
+# harness plugin is installed, so the inventory is present in the plugin cache.
+# Adds at user scope via `claude mcp add-json`.
+install_mcps() {
+  ensure_jq || { echo "   (jq required — add MCP servers by hand, see README)" >&2; return 0; }
+  cfg=$(ls -dt "$HOME"/.claude/plugins/cache/*/harness/*/config/mcp.json 2>/dev/null | head -n1)
+  [ -n "$cfg" ] || { echo "   (no MCP inventory found — nothing to add)"; return 0; }
+  names=$(jq -r '.mcpServers // {} | keys[]' "$cfg" 2>/dev/null)
+  [ -n "$names" ] || { echo "   (no MCP servers in inventory)"; return 0; }
+  if ! { : < /dev/tty; } 2>/dev/null; then
+    echo "   (no terminal — skipping MCP setup; add them later with 'claude mcp add-json')" >&2
+    return 0
+  fi
+  for name in $names; do
+    type=$(jq -r --arg n "$name" '.mcpServers[$n].type // "stdio"' "$cfg")
+    printf '\nAdd MCP server "%s" (%s)? [y/N] ' "$name" "$type" > /dev/tty
+    read ans < /dev/tty
+    case "$ans" in y|Y|yes|YES) ;; *) echo "   (skipped $name)"; continue ;; esac
+    json=$(jq -c --arg n "$name" '.mcpServers[$n]' "$cfg")
+    skip=
+    for ph in $(printf '%s' "$json" | grep -oE '\$\{[A-Za-z0-9_]+\}' | sort -u); do
+      var=$(printf '%s' "$ph" | sed 's/^\${//; s/}$//')
+      printf '  Value for %s (or ENTER to skip %s): ' "$var" "$name" > /dev/tty
+      sttysv=$(stty -g < /dev/tty); stty -echo < /dev/tty
+      read val < /dev/tty; stty "$sttysv" < /dev/tty; printf '\n' > /dev/tty
+      [ -z "$val" ] && { echo "   (skipped $name — no $var provided)"; skip=1; break; }
+      # ponytail: jq walk+gsub needs jq 1.6+; ensure_jq installs current jq.
+      json=$(printf '%s' "$json" | jq -c --arg v "$val" --arg p "$var" 'walk(if type=="string" then gsub("\\$\\{"+$p+"\\}"; $v) else . end)')
+    done
+    [ -n "$skip" ] && continue
+    claude mcp add-json --scope user "$name" "$json" && echo "==> Added MCP server: $name" || echo "   (failed to add $name)" >&2
+  done
+}
+
 echo "==> Adding marketplace: $MARKETPLACE"
 [ -n "$DRY" ] || claude plugin marketplace add "$MARKETPLACE" || claude plugin marketplace update "$MARKETPLACE_NAME"
 
@@ -188,6 +225,7 @@ menu_items() {
   for p in $OPTIONAL; do printf 'plugin|%s|%s|0\n' "$p" "$p"; done
   printf 'extra|statusline|status line — context %%%%, rate limits, git, tmux|0\n'
   printf 'extra|sharedconfig|shared config — model, notifications, Remote Control|0\n'
+  printf 'extra|mcpservers|MCP servers — pick which, with your API keys|0\n'
 }
 
 SELECTED=$(menu_items | select_menu)
@@ -198,6 +236,8 @@ for sel in $SELECTED; do
       [ -n "$DRY" ] && echo "   DRY RUN — would enable: status line" || enable_statusline ;;
     sharedconfig)
       if [ -n "$DRY" ]; then echo "   DRY RUN — would apply: shared config"; else apply_config || true; restore_home || true; fi ;;
+    mcpservers)
+      if [ -n "$DRY" ]; then echo "   DRY RUN — would prompt for MCP servers"; else install_mcps || true; fi ;;
     *)
       install_plugin "$sel" ;;
   esac

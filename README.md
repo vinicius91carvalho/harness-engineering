@@ -26,6 +26,15 @@
 
 It's opinionated but not precious: **feedback, tips, and plugin suggestions are very welcome** — open an [issue](https://github.com/vinicius91carvalho/harness-engineering/issues) or a PR.
 
+# Why does this project exists?
+
+1) Great models are very expensive (Opus 4.8)
+2) Intend to use good models like Sonnet 4.6 and Opus 4.8 (Advisor=true) only for hard problems, haiku for basic stuff
+3) From "Harness design for long-running application development" by Prithvi Rajasekaran on Anthropic Labs [1]
+> "First is that models tend to lose coherence on lengthy tasks as the context window fills."
+> "When asked to evaluate work they've produced, agents tend to respond by confidently praising the work—even when, to a human observer, the quality is obviously mediocre."
+> "agents still sometimes exhibit poor judgment that impedes their performance while completing the task."
+
 ## Setup
 
 > *"When in doubt, always follow your nose."*
@@ -63,7 +72,6 @@ Everything below is a row in the installer's checklist. Required plugins are pre
 | `claude-code-setup` | required | `/claude-code-setup:*` | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Recommends tailored Claude Code automations for a codebase. |
 | `hookify` | required | `/hookify:*` | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Create custom hooks to prevent unwanted behaviors. |
 | `playwright` | required | MCP server | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Browser automation / E2E testing via Microsoft Playwright. |
-| `last30days` | optional | `/last30days:*` | [mvanhorn/last30days-skill](https://github.com/mvanhorn/last30days-skill) | Surfaces what changed in Claude Code over the last 30 days. |
 | `typescript-lsp` | optional | LSP | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | TypeScript/JavaScript language server for code intelligence. |
 | `ralph-loop` | optional | `/ralph-loop:*` | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Self-referential iterative loops (the Ralph Wiggum technique). |
 | `pyright-lsp` | optional | LSP | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Python (Pyright) language server for type checking. |
@@ -74,12 +82,15 @@ Everything below is a row in the installer's checklist. Required plugins are pre
 
 > *"Keep it secret. Keep it safe."*
 
-These two appear as their own rows at the bottom of the same checklist (they write `~/.claude/settings.json`). Leave them unchecked to skip, or use `--yes`/`--no` to decide for the whole list at once.
+These appear as their own rows at the bottom of the same checklist. Leave them unchecked to skip, or use `--yes`/`--no` to decide for the whole list at once. (Status line and shared config write `~/.claude/settings.json`; MCP servers, if checked, kick off a short per-server prompt after the plugins install.)
 
 | Extra | Prompt | Sets | What it does |
 | --- | --- | --- | --- |
 | Status line | _Enable the harness status line?_ | `statusLine` → bundled `scripts/statusline.sh` | Two lines: **line 1** model badge + 📁 dir + 🌿 branch (+worktrees); **line 2** context bar + % + tokens, $ session cost, ⏱ countdown to the next 5h window, 5h / 7d rate limits, tmux session. |
 | Shared config | _Apply Vinicius's shared Claude config?_ | merges `config/settings.json` → `model`, `worktree`, `preferredNotifChannel`, `inputNeededNotifEnabled`, `agentPushNotifEnabled`, and `remoteControlAtStartup: true` | Deep-merges my shareable settings into `~/.claude/settings.json` (the file's keys win). Includes [Remote Control](https://code.claude.com/docs/en/remote-control) on startup — drive sessions from the Claude mobile/web app without typing `/remote-control`. Machine-specific keys (status line path, enabled plugins) are excluded. Installs `jq` if missing; skips safely if the file or `jq` is unavailable. |
+| MCP servers | _Add MCP server "X"? → value for TOKEN?_ | registers each chosen server at **user** scope via `claude mcp add-json` | Walks the servers in `config/mcp.json` one by one. For each you say yes to, it prompts (input hidden) for any API key/token the server needs. Don't want it, or don't have the key? Press **ENTER** to skip that one and continue. Secrets you type are never stored in the repo. |
+
+`config/mcp.json` is a sanitized inventory of my locally-configured MCP servers (backed up by `/harness:update-project`). Secrets are redacted to `${PLACEHOLDER}`; the installer's **MCP servers** step prompts for the real values at install time. To add one by hand instead: `claude mcp add-json <name> '<json>' --scope user`.
 
 ### Status line preview
 
@@ -123,3 +134,7 @@ The three most recent versions:
 [![2 ago](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.github.com%2Frepos%2Fvinicius91carvalho%2Fharness-engineering%2Freleases&query=%24%5B2%5D.tag_name&label=2%20ago&color=8A8A8A)](https://github.com/vinicius91carvalho/harness-engineering/releases)
 
 Full notes for every version are on the [Releases page](https://github.com/vinicius91carvalho/harness-engineering/releases).
+
+## References
+
+1 - [Harness design for long-running application development](https://www.anthropic.com/engineering/harness-design-long-running-apps) by Prithvi Rajasekaran on Anthropic Labs

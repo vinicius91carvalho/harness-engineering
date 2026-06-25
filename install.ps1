@@ -45,7 +45,7 @@ function Select-Menu([object[]]$items) {
 $Marketplace     = "vinicius91carvalho/harness-engineering"
 $MarketplaceName = "vinicius91carvalho"
 $Required        = @("harness", "ponytail", "context7", "remember", "skill-creator", "claude-md-management", "claude-code-setup", "hookify", "playwright")   # always installed
-$Optional        = @("last30days", "typescript-lsp", "ralph-loop", "pyright-lsp", "rust-analyzer-lsp", "codex")   # prompted for, one by one
+$Optional        = @("typescript-lsp", "ralph-loop", "pyright-lsp", "rust-analyzer-lsp", "codex")   # prompted for, one by one
 
 if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
   Write-Error "Claude Code CLI not found. Install it first: https://claude.com/claude-code"
@@ -110,6 +110,36 @@ function Restore-Home {
   Write-Host "==> Restored backed-up user content into $(Join-Path $HOME '.claude')"
 }
 
+# Interactively register the MCP servers backed up in config/mcp.json. For each
+# server: ask whether to add it, then prompt (input hidden) for every
+# ${PLACEHOLDER} secret. Empty input skips that server, so a user without the key
+# just presses ENTER. Runs after harness is installed (inventory is in the cache).
+function Install-Mcps {
+  if ([Console]::IsInputRedirected) { Write-Host "   (no interactive console - skipping MCP setup; add later with 'claude mcp add-json')"; return }
+  $cfgFile = Get-ChildItem (Join-Path $HOME ".claude\plugins\cache\*\harness\*\config\mcp.json") -ErrorAction SilentlyContinue |
+             Sort-Object LastWriteTime -Descending | Select-Object -First 1
+  if (-not $cfgFile) { Write-Host "   (no MCP inventory found - nothing to add)"; return }
+  $mcp = (Get-Content $cfgFile.FullName -Raw | ConvertFrom-Json).mcpServers
+  if (-not $mcp) { Write-Host "   (no MCP servers in inventory)"; return }
+  foreach ($name in $mcp.PSObject.Properties.Name) {
+    $server = $mcp.$name
+    $type = if ($server.type) { $server.type } else { "stdio" }
+    $ans = Read-Host "`nAdd MCP server `"$name`" ($type)? [y/N]"
+    if ($ans -notmatch '^(y|yes)$') { Write-Host "   (skipped $name)"; continue }
+    $json = $server | ConvertTo-Json -Depth 10 -Compress
+    $phs = [regex]::Matches($json, '\$\{([A-Za-z0-9_]+)\}') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique
+    $skip = $false
+    foreach ($var in $phs) {
+      $sec = Read-Host "  Value for $var (or ENTER to skip $name)" -AsSecureString
+      $val = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec))
+      if ([string]::IsNullOrEmpty($val)) { Write-Host "   (skipped $name - no $var provided)"; $skip = $true; break }
+      $json = $json.Replace('${' + $var + '}', $val)
+    }
+    if ($skip) { continue }
+    try { claude mcp add-json --scope user $name $json; Write-Host "==> Added MCP server: $name" } catch { Write-Warning "failed to add $name" }
+  }
+}
+
 Write-Host "==> Adding marketplace: $Marketplace"
 if (-not $DryRun) { try { claude plugin marketplace add $Marketplace } catch { claude plugin marketplace update $MarketplaceName } }
 
@@ -120,6 +150,7 @@ foreach ($p in $Required) { $items += [pscustomobject]@{ Type = "plugin"; Key = 
 foreach ($p in $Optional) { $items += [pscustomobject]@{ Type = "plugin"; Key = $p; Label = $p; Checked = $false } }
 $items += [pscustomobject]@{ Type = "extra"; Key = "statusline";   Label = "status line - context %, rate limits, git, tmux"; Checked = $false }
 $items += [pscustomobject]@{ Type = "extra"; Key = "sharedconfig"; Label = "shared config - model, notifications, Remote Control"; Checked = $false }
+$items += [pscustomobject]@{ Type = "extra"; Key = "mcpservers";   Label = "MCP servers - pick which, with your API keys"; Checked = $false }
 
 $selected = Select-Menu $items
 
@@ -127,6 +158,7 @@ foreach ($sel in $selected) {
   switch ($sel) {
     "statusline"   { if ($DryRun) { Write-Host "   DRY RUN - would enable: status line" } else { Enable-StatusLine } }
     "sharedconfig" { if ($DryRun) { Write-Host "   DRY RUN - would apply: shared config" } else { Apply-Config; Restore-Home } }
+    "mcpservers"   { if ($DryRun) { Write-Host "   DRY RUN - would prompt for MCP servers" } else { Install-Mcps } }
     default        { Install-Plugin $sel }
   }
 }
