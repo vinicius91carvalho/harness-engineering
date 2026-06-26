@@ -1,0 +1,100 @@
+<project_specification>
+  <!--
+    TEMPLATE. Fill EVERY top-level section below. If the user explicitly does not
+    want a section's content, set its body to `removed` (e.g. <projects>removed</projects>)
+    rather than deleting the section. This file is consumed by /generator and is
+    treated as APPEND-ONLY afterwards: features are never edited, reordered, or removed.
+  -->
+
+  <project_name><!-- short product name --></project_name>
+
+  <overview>
+    <!-- 1-2 paragraphs: what it is, who it's for, the experience to deliver. Be ambitious. -->
+  </overview>
+
+  <technology_stack>
+    <general>
+      <!-- repo style, deployment, conventions (e.g. monorepo, Docker, Conventional Commits) -->
+    </general>
+    <frontend>
+      <framework><!-- e.g. React + Vite --></framework>
+      <styling><!-- e.g. Tailwind --></styling>
+      <state_management></state_management>
+      <routing></routing>
+      <port>Launch the frontend on the PORT env var passed by init.sh (default {frontend_port}).</port>
+      <patterns><!-- e.g. Atomic Design, SOLID --></patterns>
+    </frontend>
+    <backend>
+      <runtime><!-- e.g. Node + Express --></runtime>
+      <database><!-- e.g. SQLite --></database>
+      <port>Launch the backend on the PORT env var passed by init.sh.</port>
+      <patterns><!-- e.g. Clean Architecture, DDD --></patterns>
+    </backend>
+    <communication><!-- REST / SSE / websockets / external APIs --></communication>
+  </technology_stack>
+
+  <prerequisites>
+    <environment_setup>
+      <!-- env vars, secrets (reference, never inline), pre-installed deps, where code lives -->
+    </environment_setup>
+  </prerequisites>
+
+  <core_features>
+    <!--
+      THE SPINE. Group features into clearly named areas. Each area's tag name becomes a
+      `context` the generator builds and parallel /generator sessions claim independently,
+      so keep areas cohesive and reasonably decoupled. Bullet the concrete capabilities.
+    -->
+    <feature_area_name>
+      - capability 1
+      - capability 2
+    </feature_area_name>
+    <!-- add more feature areas... -->
+  </core_features>
+
+  <database_schema>
+    <tables>
+      <table_name>
+        - column, column, column
+      </table_name>
+      <!-- add more tables, or `removed` if no persistence -->
+    </tables>
+  </database_schema>
+
+  <api_endpoints_summary>
+    <!-- group endpoints by area: METHOD /path per line, or `removed` if not applicable -->
+  </api_endpoints_summary>
+
+  <ui_layout>
+    <main_structure><!-- overall layout, breakpoints, persistent chrome --></main_structure>
+    <!-- per-region breakdowns (sidebar, main, panels, modals) -->
+  </ui_layout>
+
+  <design_system>
+    <color_palette><!-- primary, background, surface, text, borders (light + dark) --></color_palette>
+    <typography><!-- font stacks, sizes, weights --></typography>
+    <components><!-- key component styling rules --></components>
+    <animations><!-- transitions, loaders, micro-interactions --></animations>
+  </design_system>
+
+  <key_interactions>
+    <!-- step-by-step narratives of the primary user flows -->
+  </key_interactions>
+
+  <implementation_steps>
+    <step number="1">
+      <title></title>
+      <tasks>
+        -
+      </tasks>
+    </step>
+    <!-- ordered build phases, fundamentals first -->
+  </implementation_steps>
+
+  <success_criteria>
+    <functionality><!-- what must work --></functionality>
+    <user_experience><!-- UX bar --></user_experience>
+    <technical_quality><!-- code/quality bar --></technical_quality>
+    <design_polish><!-- visual bar --></design_polish>
+  </success_criteria>
+</project_specification>
