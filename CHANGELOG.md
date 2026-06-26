@@ -11,6 +11,19 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.4.0...v0.5.0) (2026-06-26)
+
+
+### Features
+
+* **harness:** bundle spec-build-QA pipeline in the plugin ([c577258](https://github.com/vinicius91carvalho/harness-engineering/commit/c57725852004cb95fb06ab519657c7b62856bbe9))
+
+
+### Documentation
+
+* document the pipeline and third-party skill restore ([84f1efb](https://github.com/vinicius91carvalho/harness-engineering/commit/84f1efb2c440c1f159d4fb2e9f81be3c38470e89))
+* update CHANGELOG for v0.4.0 [skip ci] ([23ee159](https://github.com/vinicius91carvalho/harness-engineering/commit/23ee159298ae8d48dcc3c05e19eca6bd9dc11ce6))
+
 ## [0.4.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.3.0...v0.4.0) (2026-06-25)
 
 
