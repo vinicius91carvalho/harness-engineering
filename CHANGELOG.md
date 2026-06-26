@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.6.0...v0.7.0) (2026-06-26)
+
+
+### Features
+
+* add Opencode and Codex plugin compatibility ([c0ed1cc](https://github.com/vinicius91carvalho/harness-engineering/commit/c0ed1cc17e364ed7002effbfeb2fa16ea343ba45))
+
 ## [0.6.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.5.0...v0.6.0) (2026-06-26)
 
 
