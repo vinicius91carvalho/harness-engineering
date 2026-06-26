@@ -4,7 +4,7 @@ This file provides guidance to Opencode, Codex, and other AI coding agents when 
 
 ## What this is
 
-An AI coding **plugin marketplace** plus one in-repo plugin (`harness`). Supports **Claude Code**, **Opencode**, and **Codex**. The repo root *is* the `harness` plugin — `.claude-plugin/plugin.json` (Claude Code), `.codex-plugin/plugin.json` (Codex), and `opencode.json` (Opencode) define it. The marketplace entry uses `source: "./"`. External plugins (`ponytail`, `remember`) are referenced by their GitHub repos in `marketplace.json`, not vendored here.
+An AI coding plugin marketplace plus one in-repo plugin (`harness`) for **Claude Code**, **OpenCode**, and **Codex**. Claude and Codex use their native manifests and marketplace catalogs; OpenCode installs namespaced skills, agents, and commands. `remember` is Claude-only. `codebase-memory-mcp` is an optional MCP/tool integration, never a marketplace plugin.
 
 There is no build, test, or lint step. Changes are validated by installing the marketplace and running the CLI.
 
@@ -21,12 +21,12 @@ the scripts are worse than no docs.
 - `.codex-plugin/plugin.json` — manifest for the `harness` plugin (Codex).
 - `opencode.json` — manifest for the `harness` plugin (Opencode).
 - `.mcp.json` — MCP server configuration for Opencode and Codex.
-- `scripts/` — standalone scripts bundled with the `harness` plugin: `statusline.sh` (status line) and `sync-config.sh` (extracts the shareable config subset; `--selftest`).
+- `scripts/` — bundled helpers: `statusline.sh`, `sync-config.sh`, and `jsonc-normalize.js` (string-safe JSONC normalization used before atomic OpenCode writes).
 - `config/settings.json` — committed shareable subset of `~/.claude/settings.json`, merged in by the installer's "shared config" prompt. Regenerate with `/harness:update-project`.
 - `config/mcp.json` — sanitized inventory of locally-configured MCP servers (user/local scope from `~/.claude.json`), written by `/harness:update-project`. Secrets are redacted to `${PLACEHOLDER}`. The installer's "MCP servers" checklist row walks these one by one, prompts (hidden) for each secret, and registers chosen servers at user scope via `claude mcp add-json`; ENTER on a prompt skips that server. Absent until there's an MCP server to back up.
 - `config/home/` — backup of loose user content (`skills/`, `commands/`, `agents/`, `hooks/`, `keybindings.json`, global `CLAUDE.md`) authored directly under `~/.claude`. Populated by `/harness:update-project`, restored by the installer's `restore_home`/`Restore-Home`. Absent until there's something to back up (most setups put everything in plugins).
 - `skills/update-project/SKILL.md` — `/harness:update-project`: a complete backup of the live Claude setup — regenerates `config/settings.json`, reconciles the plugin roster against live `enabledPlugins`, mirrors loose user content into `config/home/`, and reconciles docs.
-- `skills/planner/`, `skills/generator/`, `skills/evaluator/` + `agents/` (`coding-agent.md`, `initializer.md`, `qa-agent.md`) — the **spec→build→QA pipeline** bundled in the `harness` plugin (auto-discovered, so no marketplace/installer wiring). `generator` ships `claim.sh` (cross-session `flock` coordination) and `orchestrator.workflow.js` (the build loop); both are referenced via `${CLAUDE_PLUGIN_ROOT}/skills/generator/…` so they resolve from the plugin cache. The README "Framework" section documents the flow.
+- `skills/planner/`, `skills/generator/`, `skills/evaluator/` + `agents/` — the portable **spec→build→QA pipeline**. `claim.sh` uses atomic-directory locks; `claim.ps1` provides PowerShell locking; `orchestrator.mjs` adapts to `claude -p`, `codex exec`, and `opencode run` and verifies `feature_list.json`.
 - `.github/workflows/ci.yml` — CI: JSON validity, shell syntax, selftests, skill frontmatter.
 - `.github/workflows/release.yml` — on push to `main`, computes the next semver from Conventional Commits, tags it, publishes a GitHub Release, and (in one `[skip ci]` commit) bumps `.claude-plugin/plugin.json`'s `version` to match and prepends the notes to `CHANGELOG.md`. The plugin version is the install cache key, so that bump is what lets `claude plugin update` reach already-installed machines. No bump = no release. Keep commit subjects conventional (`feat:`, `fix:`, `feat!:`/`BREAKING CHANGE:` for majors).
 - `CHANGELOG.md` — generated. `release.yml` prepends each release's notes under `## [Unreleased]` and commits back (`[skip ci]`). Don't hand-edit released sections; conventional commit subjects *are* the changelog. Optionally stage extra prose under `## [Unreleased]` before a release.

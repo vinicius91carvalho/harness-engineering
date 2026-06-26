@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <b>A curated developer workflow for Claude Code, Opencode, and Codex — the best plugins out there, set up with one command.</b>
+  <b>A curated developer workflow for any AI harness.</b>
 </p>
 
 > *"YOU SHOULD NOT PASS!"* — on the bad plugins, the boilerplate, and the 3am pages.
@@ -22,14 +22,14 @@
 
 > *"Not all those who wander are lost."*
 
-`harness-engineering` is my personal AI coding workspace, packaged as a plugin marketplace. It supports **Claude Code**, **Opencode**, and **Codex**. The goal is a batteries-included **developer workflow** assembled from the best plugins available — lazy-senior-dev guardrails, up-to-date library docs, session memory, browser automation, language servers, and more — that drops onto a fresh machine with a single command.
+`harness-engineering` is a portable workflow and plugin catalog for **Claude Code**, **OpenCode**, and **Codex**. It combines a spec→build→QA pipeline with compatible integrations such as Ponytail and optional local codebase memory.
 
 It's opinionated but not precious: **feedback, tips, and plugin suggestions are very welcome** — open an [issue](https://github.com/vinicius91carvalho/harness-engineering/issues) or a PR.
 
 # Why does this project exists?
 
-1) Great models are very expensive (Opus 4.8)
-2) Intend to use good models like Sonnet 4.6 and Opus 4.8 (Advisor=true) only for hard problems, haiku for basic stuff
+1) Long-running work loses coherence as context fills.
+2) Host and model choices should remain user-controlled rather than pinned by the plugin.
 3) From "Harness design for long-running application development" by Prithvi Rajasekaran on Anthropic Labs [1]
 > "First is that models tend to lose coherence on lengthy tasks as the context window fills."
 > "When asked to evaluate work they've produced, agents tend to respond by confidently praising the work—even when, to a human observer, the quality is obviously mediocre."
@@ -47,13 +47,16 @@ On a new machine with any of the supported CLIs installed ([Claude Code](https:/
 curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh
 ```
 
-> **All tools in this project (skills, agents, commands, MCP servers, status line) work with Claude Code, Opencode, and Codex.** The installer detects every CLI on your machine and lets you choose which to set up — or set them all up at once.
+The installer detects available CLIs. With more than one host, choose with numbers,
+arrow keys, or Enter; non-interactive runs must pass `--cli`. `--yes` and `--no`
+control checklist contents, while `--cli` controls target hosts. Integrations are
+offered only on documented hosts, and repeated runs are idempotent.
 
-The installer detects your available CLIs and shows an **arrow-key checklist** — ↑/↓ to move, **SPACE** to toggle, **ENTER** to confirm — where you pick everything in a single pass. Only `harness` is pre-checked; all other plugins and extras start unchecked. Your whole selection is applied at once, and the script is idempotent, so re-run it any time to pick up new plugins. When you're done, restart your CLI.
+For **native Windows**, run [`install.ps1`](install.ps1). It stages the repository
+when invoked through a pipe, so it does not depend on `$PSScriptRoot`.
 
-For **native Windows (PowerShell)**, run [`install.ps1`](install.ps1) instead — the same arrow-key checklist, driven natively.
-
-See [Installer options](docs/installer.md) for `--yes`, `--no`, `--dry-run`, and scope flags.
+See [Installer behavior](docs/installer/README.md) for `--cli`, `--yes`, `--no`,
+strict dry-run behavior, and Claude-only scope flags.
 
 ## Framework
 
@@ -83,7 +86,7 @@ The `harness` plugin bundles a **Spec → Build → QA pipeline**: an autonomous
   ├─ claim a context ─► own worktree + branch + port
   │     └─ per feature:  coding-agent → implement + UI-verify
   │                      qa-agent     → black-box QA
-  │                      (retry; escalate sonnet→opus at retry 2; stop & ask at retry 3)
+  │                      (verify feature_list.json; stop & ask after retry 3)
   └─ merge gen/<context> ─► main  (serialized)
         │
         ▼
@@ -92,13 +95,17 @@ The `harness` plugin bundles a **Spec → Build → QA pipeline**: an autonomous
 
 `feature_list.json` is the single source of truth: every entry carries `implementation` and `qa` flags, and the pipeline's job is to flip them all to `true`. It's **append-only** — features are never edited or removed, only marked passing, so nothing gets silently dropped.
 
-**Why it holds together:** claims are atomic (a `flock` registry in `.git`), so N sessions self-distribute across feature areas with no two ever building the same thing; each claim gets its own worktree, branch, and port, so files and running servers never collide; merges to `main` are serialized. QA is **independent** — a separate agent verifies each feature through the real UI as a black-box — and a QA defect flips the feature back to unimplemented and re-routes it to coding, with retries escalating to a stronger model before giving up. "Done" means *observably working*, and quality ratchets up instead of degrading.
+**Why it holds together:** portable atomic-directory locks coordinate parallel
+sessions in the shared git directory. Each claim gets a worktree, branch, and
+unique port; merges are serialized. One state machine adapts to `claude -p`,
+`codex exec`, or `opencode run`, preserves the configured model, and verifies both
+coding and QA from `feature_list.json` rather than trusting agent prose.
 
 ## Learning loop
 
 > *"Little by little, one travels far."*
 
-`/harness:learning-loop` is a [hermes-agent](https://github.com/NousResearch/hermes-agent)–style self-improvement loop: **experience → reflect → create artifact → persist → curate**. Run it after a session (or point it at a transcript) and it looks back at what was *re-derived, repeated, or corrected*, then proposes — and on your approval, scaffolds — the Claude Code automation that would have made it cheaper:
+`/harness:learning-loop` is a [hermes-agent](https://github.com/NousResearch/hermes-agent)–style self-improvement loop: **experience → reflect → create artifact → persist → curate**. It uses each host's native question surface and proposes portable automation without forcing a model or hidden memory directory.
 
 | You did this in the session… | …it suggests |
 | --- | --- |
@@ -123,14 +130,16 @@ Invocation is manual by default. For hermes-style autonomy, opt in with a `Stop`
 | --- | --- |
 | [Plugins](docs/plugins.md) | Full list of available plugins with CLI support, namespaces, and descriptions. |
 | [Extras](docs/extras.md) | Status line, shared config, MCP servers — what they do and how to enable by hand. |
-| [Installer options](docs/installer.md) | `--yes`, `--no`, `--dry-run`, scope flags, and how to add new plugins. |
+| [Installer](docs/installer/README.md) | Host selection, checklist flags, dry-run guarantees, and scope. |
+| [Installer contracts](docs/installer/contracts.md) | Native host contracts and maintained integration decisions. |
+| [Installer testing](docs/installer/testing.md) | Automated and authenticated smoke tests. |
 | [Keeping the backup in sync](docs/backup-sync.md) | How `/harness:update-project` backs up your live setup into this repo. |
 
 ## Releases
 
 > *"The Road goes ever on and on — and so do the version tags."*
 
-Versions are cut automatically from [Conventional Commits](https://www.conventionalcommits.org) on every push to `main` (`.github/workflows/release.yml`): the next semver is computed from the commit messages, tagged, published as a GitHub Release, and written back into the plugin manifest (`.claude-plugin/plugin.json`) so `claude plugin update` picks up the new version.
+Versions are cut automatically from [Conventional Commits](https://www.conventionalcommits.org) on every push to `main`. Releases synchronize both Claude and Codex manifest versions.
 
 The three most recent versions:
 

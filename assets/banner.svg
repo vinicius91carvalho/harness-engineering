@@ -275,6 +275,6 @@
     <text x="210" y="104" font-size="46" fill="url(#title)">HARNESS</text>
     <text x="210" y="152" font-size="46" fill="url(#title)">ENGINEERING</text>
   </g>
-  <text x="210" y="186" font-family="'Courier New',monospace" font-size="15" fill="#8b949e">A curated Claude Code developer workflow.</text>
+  <text x="210" y="186" font-family="'Courier New',monospace" font-size="15" fill="#8b949e">A curated developer workflow for any AI harness.</text>
   <text x="210" y="208" font-family="'Courier New',monospace" font-weight="bold" font-size="15" fill="#c9d1d9">YOU SHOULD NOT PASS!</text>
 </svg>

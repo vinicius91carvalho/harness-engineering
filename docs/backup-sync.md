@@ -2,11 +2,16 @@
 
 > *"I have no memory of this config — so it is written down, against the dark."*
 
-`/harness:update-project` makes this repo a restorable backup of your live AI coding setup (Claude Code, Opencode, or Codex). Each run it:
+`/harness:update-project` builds separate sanitized backups for every detected
+host. Claude content goes under `config/home/claude`, Codex under
+`config/home/codex`, and OpenCode under `config/home/opencode`. It preserves only
+user-authored skills, agents, commands, hooks, and instruction files.
 
-- regenerates `config/settings.json` from `~/.claude/settings.json` (via `scripts/sync-config.sh`, which keeps only the shareable subset);
-- reconciles the **plugin roster** against your live `enabledPlugins` — anything you've enabled gets a marketplace entry, an installer line, and a README row, so a fresh `install.sh` reinstalls it (skills/agents/hooks ride along inside their plugins);
-- mirrors any **loose user content** (`~/.claude/skills`, `commands`, `agents`, `hooks`, `keybindings.json`, global `CLAUDE.md`) into `config/home/`, which the installer's restore step copies back on a fresh machine. Secrets, history, and caches are never copied.
+Credentials, tokens, histories, conversations, sessions, caches, logs, indexes,
+telemetry, and installed plugin payloads are excluded. MCP secrets become named
+`${PLACEHOLDER}` values and each host retains its native MCP schema. `remember`
+remains Claude-only and existing `.remember/` data is not touched;
+`codebase-memory-mcp` remains a separately installed MCP/tool integration.
 
 Skills installed by a package manager aren't vendored here — they're reinstalled from source. The ones I use from [Matt Pocock's pack](https://github.com/mattpocock/skills) (symlinked into `~/.claude/skills`) restore with `npx skills@latest add mattpocock/skills`:
 
@@ -21,4 +26,5 @@ Skills installed by a package manager aren't vendored here — they're reinstall
 
 It reports a diff and commits nothing unless asked.
 
-CI (`.github/workflows/ci.yml`) checks JSON validity, shell syntax, the `statusline.sh` / `sync-config.sh` selftests, and the skill frontmatter on every push and PR.
+CI checks JSON/assets, shell syntax, installer behavior, portable orchestration,
+concurrent locking, PowerShell parsing, and bundled script selftests.
