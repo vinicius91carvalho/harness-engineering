@@ -9,9 +9,14 @@ jobs:
 
       - name: JSON valid
         run: |
-          jq empty .claude-plugin/marketplace.json .claude-plugin/plugin.json config/*.json
-          jq empty .codex-plugin/plugin.json opencode.json
-          jq empty opencode.json
+          jq empty .claude-plugin/*.json .codex-plugin/*.json .agents/plugins/marketplace.json config/*.json opencode.json
+
+      - name: Catalog and asset contracts
+        run: |
+          ! jq -e '.plugins[] | select(.name == "codebase-memory-mcp")' .claude-plugin/marketplace.json
+          ! jq -e '.plugins[] | select(.name == "remember")' .agents/plugins/marketplace.json
+          test "$(jq -r .version .claude-plugin/plugin.json)" = "$(jq -r .version .codex-plugin/plugin.json)"
+          for p in $(jq -r '.interface.logo, .interface.screenshots[]' .codex-plugin/plugin.json); do test -f "${p#./}"; done
 
       - name: Shell syntax
         run: |
@@ -20,6 +25,9 @@ jobs:
 
       - name: Selftests
         run: |
+          bash tests/install_test.sh
+          bash tests/orchestrator_test.sh
+          bash tests/claim_test.sh
           bash scripts/statusline.sh --selftest
           bash scripts/sync-config.sh --selftest
 
@@ -29,3 +37,25 @@ jobs:
           test -f "$f"
           grep -q '^name:' "$f"
           grep -q '^description:' "$f"
+
+  portable-shell:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tests/install_test.sh
+      - run: bash tests/orchestrator_test.sh
+      - run: bash tests/claim_test.sh
+
+  powershell:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse PowerShell installer
+        shell: pwsh
+        run: |
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path install.ps1), [ref]$null, [ref]$errors)
+          if ($errors.Count) { $errors | Out-String | Write-Error }
