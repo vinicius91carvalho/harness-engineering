@@ -11,6 +11,30 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.10.0...v0.11.0) (2026-06-26)
+
+
+### Features
+
+* **installer:** support native multi-host installation ([bccb943](https://github.com/vinicius91carvalho/harness-engineering/commit/bccb9434cd3e38534c3de1a5fc111504334a6d62))
+* **workflows:** make spec build and QA portable ([a29e2db](https://github.com/vinicius91carvalho/harness-engineering/commit/a29e2db8a6769c6c502fffd6aa2f6d614aa3f2fd))
+
+
+### Bug Fixes
+
+* **release:** synchronize plugin manifest versions ([62a3626](https://github.com/vinicius91carvalho/harness-engineering/commit/62a36268b573bf118ee5d1461c0e8aec0db4779c))
+* **workflows:** serialize concurrent feature claims ([00572f5](https://github.com/vinicius91carvalho/harness-engineering/commit/00572f5d5331a15293ec5c3533c7d93970ec2e4d))
+
+
+### Continuous Integration
+
+* validate portable installer contracts ([cc9f976](https://github.com/vinicius91carvalho/harness-engineering/commit/cc9f9768a216481a4995027ed3e4180c15a25cae))
+
+
+### Documentation
+
+* describe portable installer and integrations ([7e5121a](https://github.com/vinicius91carvalho/harness-engineering/commit/7e5121a114629dea9b9c3d622142d33f0ecaae35))
+
 ## [0.10.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.9.0...v0.10.0) (2026-06-26)
 
 

@@ -1,6 +1,6 @@
 {
   "name": "harness",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "AI Harness Engineering System - A curated developer workflow with spec→build→QA pipeline, learning loop, and marketplace",
   "author": {
     "name": "Vinicius Carvalho",
@@ -9,7 +9,13 @@
   "homepage": "https://github.com/vinicius91carvalho/harness-engineering",
   "repository": "https://github.com/vinicius91carvalho/harness-engineering",
   "license": "MIT",
-  "keywords": ["harness", "workflow", "spec-build-qa", "learning-loop", "marketplace"],
+  "keywords": [
+    "harness",
+    "workflow",
+    "spec-build-qa",
+    "learning-loop",
+    "marketplace"
+  ],
   "skills": "./skills/",
   "mcpServers": "./.codex-plugin/mcp.json",
   "interface": {
@@ -18,7 +24,12 @@
     "longDescription": "A curated developer workflow system for AI-assisted development. Includes a multi-session spec→build→QA pipeline (planner/generator/evaluator + agents), a Hermes-style learning loop that captures session insights as reusable automation, and a plugin marketplace with one-command setup for Claude Code, Opencode, and Codex.",
     "developerName": "Vinicius Carvalho",
     "category": "Productivity",
-    "capabilities": ["Read", "Write", "Bash", "MCP"],
+    "capabilities": [
+      "Read",
+      "Write",
+      "Bash",
+      "MCP"
+    ],
     "websiteURL": "https://github.com/vinicius91carvalho/harness-engineering",
     "privacyPolicyURL": "https://github.com/vinicius91carvalho/harness-engineering/blob/main/LICENSE",
     "termsOfServiceURL": "https://github.com/vinicius91carvalho/harness-engineering/blob/main/LICENSE",
@@ -29,6 +40,8 @@
     ],
     "brandColor": "#8A2BE2",
     "logo": "./assets/banner.svg",
-    "screenshots": ["./assets/statusline.svg"]
+    "screenshots": [
+      "./assets/statusline.svg"
+    ]
   }
 }
