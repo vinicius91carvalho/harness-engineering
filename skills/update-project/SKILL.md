@@ -27,14 +27,12 @@ the user added under `~/.claude` directly. Each run:
      plugins and optional ones are legitimately absent — so to confirm a real
      uninstall, also check it's gone from `~/.claude/plugins/installed_plugins.json`.
    - **Repo set:** the union of names across `.claude-plugin/marketplace.json`,
-     `install.sh` `REQUIRED`/`OPTIONAL`, `install.ps1` `$Required`/`$Optional`,
+     `install.sh` `OPTIONAL`, `install.ps1` `$Optional`,
      and the README Plugins table.
 
    **Live ∖ Repo (installs to add):** for each, confirm a `marketplace.json`
    entry (re-exposing the upstream repo from `extraKnownMarketplaces`), add the
-   name to both installers and a README row. **Ask the user required or optional**
-   before writing — their answer picks the `REQUIRED`/`OPTIONAL`
-   (`$Required`/`$Optional`) list and the README "Required?" value. Flag any you
+   name to both installers' `OPTIONAL`/`$Optional` and a README row. Flag any you
    can't map to a marketplace source.
 
    **Repo ∖ Live (uninstalls to reconcile):** these are plugins removed from the

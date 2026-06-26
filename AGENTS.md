@@ -1,14 +1,12 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-> **Keep this file in sync with `AGENTS.md`** — they serve the same purpose for different CLIs.
+This file provides guidance to Opencode, Codex, and other AI coding agents when working with code in this repository.
 
 ## What this is
 
 An AI coding **plugin marketplace** plus one in-repo plugin (`harness`). Supports **Claude Code**, **Opencode**, and **Codex**. The repo root *is* the `harness` plugin — `.claude-plugin/plugin.json` (Claude Code), `.codex-plugin/plugin.json` (Codex), and `opencode.json` (Opencode) define it. The marketplace entry uses `source: "./"`. External plugins (`ponytail`, `remember`) are referenced by their GitHub repos in `marketplace.json`, not vendored here.
 
-There is no build, test, or lint step. Changes are validated by installing the marketplace and running Claude Code.
+There is no build, test, or lint step. Changes are validated by installing the marketplace and running the CLI.
 
 ## Always keep scripts and README in sync
 
@@ -33,7 +31,7 @@ the scripts are worse than no docs.
 - `.github/workflows/release.yml` — on push to `main`, computes the next semver from Conventional Commits, tags it, publishes a GitHub Release, and (in one `[skip ci]` commit) bumps `.claude-plugin/plugin.json`'s `version` to match and prepends the notes to `CHANGELOG.md`. The plugin version is the install cache key, so that bump is what lets `claude plugin update` reach already-installed machines. No bump = no release. Keep commit subjects conventional (`feat:`, `fix:`, `feat!:`/`BREAKING CHANGE:` for majors).
 - `CHANGELOG.md` — generated. `release.yml` prepends each release's notes under `## [Unreleased]` and commits back (`[skip ci]`). Don't hand-edit released sections; conventional commit subjects *are* the changelog. Optionally stage extra prose under `## [Unreleased]` before a release.
 - `.claude-plugin/plugin.json` — manifest for the `harness` plugin itself.
-- `install.sh` / `install.ps1` — idempotent installers (sh for macOS/Linux/Git Bash/WSL, ps1 for PowerShell). They add the marketplace, then present a single **arrow-key checklist** (`select_menu` / `Select-Menu`) listing `harness` (pre-checked, but toggleable), all external plugins, and the three extras (status line, shared config, MCP servers); the whole selection is applied in one pass (MCP servers, if checked, run a per-server secret prompt after the plugins install). `--yes`/`-Yes` checks everything, `--no`/`-No` selects only `harness`, and both that fallback and a missing/unopenable `/dev/tty` skip the TUI. `--dry-run`/`-DryRun` walks the checklist and prints what *would* be installed without changing anything (the local repro tool). They install `jq` if missing.
+- `install.sh` / `install.ps1` — idempotent installers (sh for macOS/Linux/Git Bash/WSL, ps1 for PowerShell). They detect all available CLIs, present a single **arrow-key checklist** (`select_menu` / `Select-Menu`) listing `harness` (pre-checked, but toggleable), all external plugins, and extras (status line, shared config, MCP servers); the whole selection is applied in one pass (MCP servers, if checked, run a per-server secret prompt after the plugins install). `--yes`/`-Yes` checks everything, `--no`/`-No` selects only `harness`, and both that fallback and a missing/unopenable `/dev/tty` skip the TUI. `--dry-run`/`-DryRun` walks the checklist and prints what *would* be installed without changing anything (the local repro tool). They install `jq` if missing.
 - `agents/` exists (pipeline agents above); other `harness` plugin content (`commands/`, `hooks/`) would live in the conventional repo-root dirs — none exist yet.
 
 ## Adding a plugin (keep these four in sync)
