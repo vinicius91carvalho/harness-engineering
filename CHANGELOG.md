@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### [0.7.1](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.7.0...v0.7.1) (2026-06-26)
+
+
+### Bug Fixes
+
+* **opencode:** add skills.paths to load harness skills ([feb0744](https://github.com/vinicius91carvalho/harness-engineering/commit/feb0744415d73d4261b89ed7541f6d99b770a65e))
+
 ## [0.7.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.6.0...v0.7.0) (2026-06-26)
 
 
