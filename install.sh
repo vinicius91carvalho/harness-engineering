@@ -9,16 +9,62 @@ MARKETPLACE_NAME="vinicius91carvalho"
 REQUIRED="harness ponytail context7 remember skill-creator claude-md-management claude-code-setup hookify playwright"
 OPTIONAL="typescript-lsp ralph-loop pyright-lsp rust-analyzer-lsp codex"
 
+# CLI support per plugin (space-separated list of supported CLIs)
+# Only plugins that list the detected CLI will be offered.
+plugin_clis() {
+  case "$1" in
+    harness)              echo "claude opencode codex" ;;
+    ponytail)             echo "claude opencode" ;;
+    context7)             echo "claude" ;;
+    remember)             echo "claude" ;;
+    skill-creator)        echo "claude" ;;
+    claude-md-management) echo "claude" ;;
+    claude-code-setup)    echo "claude" ;;
+    hookify)              echo "claude" ;;
+    playwright)           echo "claude" ;;
+    typescript-lsp)       echo "claude" ;;
+    ralph-loop)           echo "claude" ;;
+    pyright-lsp)          echo "claude" ;;
+    rust-analyzer-lsp)    echo "claude" ;;
+    codex)                echo "claude" ;;
+  esac
+}
+
+plugin_supported() {
+  local plugin="$1" cli="$2"
+  for c in $(plugin_clis "$plugin"); do
+    [ "$c" = "$cli" ] && return 0
+  done
+  return 1
+}
+
 ASSUME=""
 DRY=""
+SCOPE=""
 for arg in "$@"; do
   case "$arg" in
     -y|--yes) ASSUME=yes ;;
     -n|--no)  ASSUME=no ;;
     --dry-run) DRY=1 ;;
-    -h|--help) echo "Usage: install.sh [-y|--yes | -n|--no] [--dry-run]"; exit 0 ;;
-    *) echo "Unknown option: $arg (use -y/--yes, -n/--no, or --dry-run)" >&2; exit 1 ;;
+    --scope)  ;; # handled below
+    --scope=*) SCOPE="${arg#*=}" ;;
+    -h|--help) echo "Usage: install.sh [-y|--yes | -n|--no] [--dry-run] [--scope=user|project|local]"; exit 0 ;;
+    --user)    SCOPE=user ;;
+    --project) SCOPE=project ;;
+    --local)   SCOPE=local ;;
+    *) echo "Unknown option: $arg (use -y/--yes, -n/--no, --dry-run, or --scope=user|project|local)" >&2; exit 1 ;;
   esac
+done
+
+# Handle --scope value from next argument
+i=1
+for arg in "$@"; do
+  if [ "$arg" = "--scope" ]; then
+    next=$((i + 1))
+    SCOPE=$(eval "echo \${$next}")
+    break
+  fi
+  i=$((i + 1))
 done
 
 # Detect available CLIs
@@ -41,8 +87,8 @@ install_plugin() {
   [ -n "$DRY" ] && { echo "   DRY RUN — would install: $1"; return 0; }
   case "$CLI" in
     claude)
-      echo "==> Installing: $1@$MARKETPLACE_NAME"
-      claude plugin install "$1@$MARKETPLACE_NAME" || echo "   (skipped $1 — already installed or failed)" >&2
+      echo "==> Installing: $1@$MARKETPLACE_NAME (--scope $SCOPE)"
+      claude plugin install "$1@$MARKETPLACE_NAME" --scope "$SCOPE" || echo "   (skipped $1 — already installed or failed)" >&2
       ;;
     codex)
       echo "==> Codex: $1 (ensure .codex-plugin/plugin.json is present)"
@@ -130,6 +176,71 @@ select_menu() {
     [ "$c" = 1 ] && printf '%s\n' "$(printf '%s\n' "$items" | sed -n "${i}p" | cut -d'|' -f2)"
     i=$((i + 1))
   done
+}
+
+select_scope() {
+  if [ -n "$SCOPE" ]; then
+    echo "$SCOPE"
+    return 0
+  fi
+
+  if [ "$ASSUME" = yes ]; then
+    echo "user"
+    return 0
+  fi
+
+  if ! { : < /dev/tty; } 2>/dev/null; then
+    echo "user"
+    return 0
+  fi
+
+  printf '\nInstallation scope:\n' > /dev/tty
+  printf '  \033[36m1\033[0m) \033[1muser\033[0m    — available across all projects\n' > /dev/tty
+  printf '  \033[36m2\033[0m) \033[1mproject\033[0m — only in the current directory (.claude-plugin/)\n' > /dev/tty
+  printf '  \033[36m3\033[0m) \033[1mlocal\033[0m   — only in the current directory (private, not shared)\n' > /dev/tty
+  printf '\nSelect scope [1-3] (default: 1): ' > /dev/tty
+
+  cursor=1
+  saved=$(stty -g < /dev/tty)
+  stty -echo -icanon min 1 < /dev/tty
+  trap 'stty "$saved" < /dev/tty 2>/dev/null' EXIT INT TERM
+
+  while :; do
+    key=$(dd if=/dev/tty bs=1 count=1 2>/dev/null)
+    case "$key" in
+      "$(printf '\033')")
+        dd if=/dev/tty bs=1 count=1 2>/dev/null >/dev/null
+        arrow=$(dd if=/dev/tty bs=1 count=1 2>/dev/null)
+        case "$arrow" in
+          A) [ "$cursor" -gt 1 ] && cursor=$((cursor - 1)) ;;
+          B) [ "$cursor" -lt 3 ] && cursor=$((cursor + 1)) ;;
+        esac ;;
+      "1") cursor=1; break ;;
+      "2") cursor=2; break ;;
+      "3") cursor=3; break ;;
+      "") break ;;
+    esac
+    printf '\033[3A' > /dev/tty
+    i=1
+    while [ "$i" -le 3 ]; do
+      if [ "$i" = "$cursor" ]; then
+        printf '\033[36m> [%s]\033[0m\n' "$i" > /dev/tty
+      else
+        printf '  [%s]\n' "$i" > /dev/tty
+      fi
+      i=$((i + 1))
+    done
+  done
+
+  stty "$saved" < /dev/tty 2>/dev/null
+  trap - EXIT INT TERM
+  printf '\n' > /dev/tty
+
+  case "$cursor" in
+    1) echo "user" ;;
+    2) echo "project" ;;
+    3) echo "local" ;;
+  esac
 }
 
 ensure_jq() {
@@ -233,12 +344,33 @@ if [ "$CLI" = "claude" ]; then
   [ -n "$DRY" ] || claude plugin marketplace add "$MARKETPLACE" || claude plugin marketplace update "$MARKETPLACE_NAME"
 fi
 
+# Select installation scope for Claude Code
+if [ "$CLI" = "claude" ]; then
+  SCOPE=$(select_scope)
+  echo "==> Installation scope: $SCOPE"
+fi
+
 menu_items() {
-  for p in $REQUIRED; do printf 'plugin|%s|%s (required)|1\n' "$p" "$p"; done
-  for p in $OPTIONAL; do printf 'plugin|%s|%s|0\n' "$p" "$p"; done
-  printf 'extra|statusline|status line — context %%%%, rate limits, git, tmux|0\n'
-  printf 'extra|sharedconfig|shared config — model, notifications, Remote Control|0\n'
-  printf 'extra|mcpservers|MCP servers — pick which, with your API keys|0\n'
+  for p in $REQUIRED; do
+    if plugin_supported "$p" "$CLI"; then
+      printf 'plugin|%s|%s (required)|1\n' "$p" "$p"
+    else
+      echo "   (skipped $p — not supported by $CLI)" >&2
+    fi
+  done
+  for p in $OPTIONAL; do
+    if plugin_supported "$p" "$CLI"; then
+      printf 'plugin|%s|%s|0\n' "$p" "$p"
+    fi
+  done
+  if [ "$CLI" = "claude" ]; then
+    printf 'extra|statusline|status line — context %%%%, rate limits, git, tmux|0\n'
+    printf 'extra|sharedconfig|shared config — model, notifications, Remote Control|0\n'
+    printf 'extra|mcpservers|MCP servers — pick which, with your API keys|0\n'
+  elif [ "$CLI" = "opencode" ]; then
+    printf 'extra|statusline|status line — context %%%%, rate limits, git, tmux|0\n'
+    printf 'extra|mcpservers|MCP servers — pick which, with your API keys|0\n'
+  fi
 }
 
 SELECTED=$(menu_items | select_menu)

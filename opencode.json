@@ -44,9 +44,7 @@
       "template": "Run the update-project skill to back up the live setup into the harness repo. Regenerate config/settings.json, reconcile the plugin roster against live enabledPlugins, mirror loose user content into config/home/, and reconcile docs."
     }
   },
-  "plugin": [
-    "./"
-  ],
+  "plugin": [],
   "mcp": {
     "playwright": {
       "type": "local",

@@ -2,7 +2,7 @@
 # Usage: irm https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.ps1 | iex
 # -Yes selects every item, -No keeps required only (non-interactive runs).
 # -DryRun walks the checklist and prints what would be installed, changing nothing.
-param([switch]$Yes, [switch]$No, [switch]$DryRun)
+param([switch]$Yes, [switch]$No, [switch]$DryRun, [ValidateSet("user","project","local")]$Scope)
 $ErrorActionPreference = "Stop"
 
 function Select-Menu([object[]]$items) {
@@ -38,10 +38,68 @@ function Select-Menu([object[]]$items) {
   return ($items | Where-Object { $_.Checked } | ForEach-Object { $_.Key })
 }
 
+function Select-Scope {
+  if ($Scope) { return $Scope }
+  if ($Yes) { return "user" }
+  if ([Console]::IsInputRedirected) { return "user" }
+
+  $scopes = @(
+    @{ Key = "user";    Label = "user    — available across all projects" }
+    @{ Key = "project"; Label = "project — only in the current directory (.claude-plugin/)" }
+    @{ Key = "local";   Label = "local   — only in the current directory (private, not shared)" }
+  )
+
+  Write-Host ""
+  Write-Host "Installation scope:" -ForegroundColor Cyan
+  for ($i = 0; $i -lt $scopes.Count; $i++) {
+    $num = $i + 1
+    Write-Host "  $num) $($scopes[$i].Label)"
+  }
+  Write-Host ""
+  Write-Host "Select scope [1-3] (default: 1): " -NoNewline -ForegroundColor Cyan
+
+  $cursor = 0
+  $done = $false
+  while (-not $done) {
+    $k = [Console]::ReadKey($true)
+    switch ($k.KeyChar) {
+      '1' { $cursor = 0; $done = $true }
+      '2' { $cursor = 1; $done = $true }
+      '3' { $cursor = 2; $done = $true }
+      "`n" { $done = $true }
+      "`r" { $done = $true }
+    }
+  }
+  Write-Host ""
+  return $scopes[$cursor].Key
+}
+
 $Marketplace     = "vinicius91carvalho/harness-engineering"
 $MarketplaceName = "vinicius91carvalho"
 $Required        = @("harness", "ponytail", "context7", "remember", "skill-creator", "claude-md-management", "claude-code-setup", "hookify", "playwright")
 $Optional        = @("typescript-lsp", "ralph-loop", "pyright-lsp", "rust-analyzer-lsp", "codex")
+
+# CLI support per plugin (space-separated list of supported CLIs)
+$PluginClis = @{
+  "harness"              = @("claude", "opencode", "codex")
+  "ponytail"             = @("claude", "opencode")
+  "context7"             = @("claude")
+  "remember"             = @("claude")
+  "skill-creator"        = @("claude")
+  "claude-md-management" = @("claude")
+  "claude-code-setup"    = @("claude")
+  "hookify"              = @("claude")
+  "playwright"           = @("claude")
+  "typescript-lsp"       = @("claude")
+  "ralph-loop"           = @("claude")
+  "pyright-lsp"          = @("claude")
+  "rust-analyzer-lsp"    = @("claude")
+  "codex"                = @("claude")
+}
+
+function Test-PluginSupported([string]$plugin, [string]$cli) {
+  return $PluginClis.ContainsKey($plugin) -and $PluginClis[$plugin] -contains $cli
+}
 
 # Detect available CLIs
 $CLI = $null
@@ -63,8 +121,8 @@ function Install-Plugin($name) {
   if ($DryRun) { Write-Host "   DRY RUN - would install: $name"; return }
   switch ($CLI) {
     "claude" {
-      Write-Host "==> Installing: $name@$MarketplaceName"
-      try { claude plugin install "$name@$MarketplaceName" } catch { Write-Warning "skipped $name - already installed or failed" }
+      Write-Host "==> Installing: $name@$MarketplaceName (--scope $selectedScope)"
+      try { claude plugin install "$name@$MarketplaceName" --scope $selectedScope } catch { Write-Warning "skipped $name - already installed or failed" }
     }
     "codex" {
       Write-Host "==> Codex: $name (ensure .codex-plugin/plugin.json is present)"
@@ -175,12 +233,33 @@ if ($CLI -eq "claude") {
   if (-not $DryRun) { try { claude plugin marketplace add $Marketplace } catch { claude plugin marketplace update $MarketplaceName } }
 }
 
+# Select installation scope for Claude Code
+if ($CLI -eq "claude") {
+  $selectedScope = Select-Scope
+  Write-Host "==> Installation scope: $selectedScope"
+}
+
 $items = @()
-foreach ($p in $Required) { $items += [pscustomobject]@{ Type = "plugin"; Key = $p; Label = "$p (required)"; Checked = $true } }
-foreach ($p in $Optional) { $items += [pscustomobject]@{ Type = "plugin"; Key = $p; Label = $p; Checked = $false } }
-$items += [pscustomobject]@{ Type = "extra"; Key = "statusline";   Label = "status line - context %, rate limits, git, tmux"; Checked = $false }
-$items += [pscustomobject]@{ Type = "extra"; Key = "sharedconfig"; Label = "shared config - model, notifications, Remote Control"; Checked = $false }
-$items += [pscustomobject]@{ Type = "extra"; Key = "mcpservers";   Label = "MCP servers - pick which, with your API keys"; Checked = $false }
+foreach ($p in $Required) {
+  if (Test-PluginSupported $p $CLI) {
+    $items += [pscustomobject]@{ Type = "plugin"; Key = $p; Label = "$p (required)"; Checked = $true }
+  } else {
+    Write-Host "   (skipped $p - not supported by $CLI)"
+  }
+}
+foreach ($p in $Optional) {
+  if (Test-PluginSupported $p $CLI) {
+    $items += [pscustomobject]@{ Type = "plugin"; Key = $p; Label = $p; Checked = $false }
+  }
+}
+if ($CLI -eq "claude") {
+  $items += [pscustomobject]@{ Type = "extra"; Key = "statusline";   Label = "status line - context %, rate limits, git, tmux"; Checked = $false }
+  $items += [pscustomobject]@{ Type = "extra"; Key = "sharedconfig"; Label = "shared config - model, notifications, Remote Control"; Checked = $false }
+  $items += [pscustomobject]@{ Type = "extra"; Key = "mcpservers";   Label = "MCP servers - pick which, with your API keys"; Checked = $false }
+} elseif ($CLI -eq "opencode") {
+  $items += [pscustomobject]@{ Type = "extra"; Key = "statusline";   Label = "status line - context %, rate limits, git, tmux"; Checked = $false }
+  $items += [pscustomobject]@{ Type = "extra"; Key = "mcpservers";   Label = "MCP servers - pick which, with your API keys"; Checked = $false }
+}
 
 $selected = Select-Menu $items
 
