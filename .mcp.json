@@ -5,9 +5,9 @@
       "url": "https://mcp.brightdata.com/sse?token=${BRIGHTDATA_TOKEN}"
     },
     "playwright": {
-      "type": "local",
-      "command": ["npx", "-y", "@playwright/mcp"],
-      "enabled": true
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp"]
     }
   }
 }

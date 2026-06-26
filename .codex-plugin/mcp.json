@@ -1,0 +1,9 @@
+{
+  "brightdata": {
+    "url": "https://mcp.brightdata.com/sse?token=${BRIGHTDATA_TOKEN}"
+  },
+  "playwright": {
+    "command": "npx",
+    "args": ["-y", "@playwright/mcp"]
+  }
+}

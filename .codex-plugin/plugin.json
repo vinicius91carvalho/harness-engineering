@@ -1,6 +1,6 @@
 {
   "name": "harness",
-  "version": "0.5.0",
+  "version": "0.9.0",
   "description": "AI Harness Engineering System - A curated developer workflow with spec→build→QA pipeline, learning loop, and marketplace",
   "author": {
     "name": "Vinicius Carvalho",
@@ -11,7 +11,7 @@
   "license": "MIT",
   "keywords": ["harness", "workflow", "spec-build-qa", "learning-loop", "marketplace"],
   "skills": "./skills/",
-  "mcpServers": "./.mcp.json",
+  "mcpServers": "./.codex-plugin/mcp.json",
   "interface": {
     "displayName": "Harness Engineering",
     "shortDescription": "Spec→Build→QA pipeline + learning loop + plugin marketplace",
@@ -28,7 +28,6 @@
       "Run /harness:learning-loop to capture what you learned this session"
     ],
     "brandColor": "#8A2BE2",
-    "composerIcon": "./assets/icon.png",
     "logo": "./assets/banner.svg",
     "screenshots": ["./assets/statusline.svg"]
   }
