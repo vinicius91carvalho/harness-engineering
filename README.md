@@ -47,22 +47,13 @@ On a new machine with any of the supported CLIs installed ([Claude Code](https:/
 curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh
 ```
 
-The installer detects your available CLI and shows an **arrow-key checklist** — ↑/↓ to move, **SPACE** to toggle, **ENTER** to confirm — where you pick everything in a single pass. Required plugins come pre-checked (you can still uncheck them); optional plugins and the two extras start unchecked. Your whole selection is applied at once, and the script is idempotent, so re-run it any time to pick up new plugins. When you're done, restart your CLI.
+> **All tools in this project (skills, agents, commands, MCP servers, status line) work with Claude Code, Opencode, and Codex.** The installer detects every CLI on your machine and lets you choose which to set up — or set them all up at once.
 
-The installer prompts for **installation scope** before the checklist:
+The installer detects your available CLIs and shows an **arrow-key checklist** — ↑/↓ to move, **SPACE** to toggle, **ENTER** to confirm — where you pick everything in a single pass. Only `harness` is pre-checked; all other plugins and extras start unchecked. Your whole selection is applied at once, and the script is idempotent, so re-run it any time to pick up new plugins. When you're done, restart your CLI.
 
-| Scope | Description |
-| --- | --- |
-| `user` | Available across all projects (default) |
-| `project` | Only in the current directory (`.claude-plugin/` for Claude Code, `.codex-plugin/` for Codex, `opencode.json` for OpenCode) |
-| `local` | Only in the current directory (private, not shared) |
+For **native Windows (PowerShell)**, run [`install.ps1`](install.ps1) instead — the same arrow-key checklist, driven natively.
 
-A few text notes instead of extra commands to copy:
-
-- **Native Windows (PowerShell):** run [`install.ps1`](install.ps1) instead — the same arrow-key checklist, driven natively.
-- **Non-interactive:** the `--yes` flag selects everything and `--no` keeps only the required plugins (PowerShell: `-Yes` / `-No`) — handy for scripted setups. You can also pass `--scope=user|project|local` (PowerShell: `-Scope user|project|local`) to skip the scope prompt.
-- **Preview without installing:** the `--dry-run` flag walks the checklist and prints exactly what *would* be installed, changing nothing on your machine.
-- **CLI selection:** the installer auto-detects which CLI is available. If you have multiple, it picks the first found (claude > codex > opencode).
+See [Installer options](docs/installer.md) for `--yes`, `--no`, `--dry-run`, and scope flags.
 
 ## Framework
 
@@ -126,95 +117,14 @@ Invocation is manual by default. For hermes-style autonomy, opt in with a `Stop`
   "command": "echo 'Run /harness:learning-loop to capture what you learned this session.'" }]}]
 ```
 
-## Plugins
+## Docs
 
-> *"Some plugins that ship deserve deleting, and some that are deleted deserve shipping — these are the ones worth keeping."*
-
-Everything below is a row in the installer's checklist. Required plugins are pre-checked; optional ones start unchecked. Toggle whatever you want and confirm once. The installer only shows plugins compatible with your detected CLI.
-
-| Plugin | Required? | CLI Support | Namespace | Source | What it does |
-| --- | --- | --- | --- | --- | --- |
-| `harness` | required | claude, opencode, codex | `/harness:*` | this repo | My own skills, agents, and scripts — the [spec→build→QA pipeline](#framework) (`planner`/`generator`/`evaluator` + agents), the [learning loop](#learning-loop), `/harness:update-project`, and the status line. |
-| `ponytail` | required | claude, opencode | `/ponytail:*` | [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail) | Lazy senior-dev mode — forces the simplest solution that works (YAGNI, stdlib first, no unrequested abstractions). |
-| `context7` | required | claude | MCP server | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Up-to-date, version-specific library docs pulled into context (Upstash Context7). |
-| `remember` | required | claude | `/remember:*` | [Digital-Process-Tools/claude-remember](https://github.com/Digital-Process-Tools/claude-remember) | Saves session state to `.remember/` for clean continuation across sessions. |
-| `skill-creator` | required | claude | `/skill-creator:*` | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Create, improve, and benchmark skills. |
-| `claude-md-management` | required | claude | `/claude-md-management:*` | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Audit and maintain CLAUDE.md files and project memory. |
-| `claude-code-setup` | required | claude | `/claude-code-setup:*` | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Recommends tailored Claude Code automations for a codebase. |
-| `hookify` | required | claude | `/hookify:*` | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Create custom hooks to prevent unwanted behaviors. |
-| `playwright` | required | claude | MCP server | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Browser automation / E2E testing via Microsoft Playwright. |
-| `typescript-lsp` | optional | claude | LSP | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | TypeScript/JavaScript language server for code intelligence. |
-| `ralph-loop` | optional | claude | `/ralph-loop:*` | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Self-referential iterative loops (the Ralph Wiggum technique). |
-| `pyright-lsp` | optional | claude | LSP | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Python (Pyright) language server for type checking. |
-| `rust-analyzer-lsp` | optional | claude | LSP | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Rust language server for code intelligence. |
-| `codex` | optional | claude | `/codex:*` | [openai/codex-plugin-cc](https://github.com/openai/codex-plugin-cc) | Delegate tasks and code review to OpenAI Codex from Claude Code — used for adversarial reviews (a second model challenging the diff). Configure with `/codex:setup`; requires an OpenAI account (`codex login`). |
-
-## Extras
-
-> *"Keep it secret. Keep it safe."*
-
-These appear as their own rows at the bottom of the same checklist. Leave them unchecked to skip, or use `--yes`/`--no` to decide for the whole list at once. (Status line and shared config write `~/.claude/settings.json`; MCP servers, if checked, kick off a short per-server prompt after the plugins install.)
-
-| Extra | Prompt | Sets | What it does |
-| --- | --- | --- | --- |
-| Status line | _Enable the harness status line?_ | `statusLine` → bundled `scripts/statusline.sh` | Two lines: **line 1** model badge + 📁 dir + 🌿 branch (+worktrees); **line 2** context bar + % + tokens, $ session cost, ⏱ countdown to the next 5h window, 5h / 7d rate limits, tmux session. |
-| Shared config | _Apply Vinicius's shared Claude config?_ | merges `config/settings.json` → `model`, `worktree`, `preferredNotifChannel`, `inputNeededNotifEnabled`, `agentPushNotifEnabled`, and `remoteControlAtStartup: true` | Deep-merges my shareable settings into `~/.claude/settings.json` (the file's keys win). Includes [Remote Control](https://code.claude.com/docs/en/remote-control) on startup — drive sessions from the Claude mobile/web app without typing `/remote-control`. Machine-specific keys (status line path, enabled plugins) are excluded. Installs `jq` if missing; skips safely if the file or `jq` is unavailable. |
-| MCP servers | _Add MCP server "X"? → value for TOKEN?_ | registers each chosen server at **user** scope via `claude mcp add-json` | Walks the servers in `config/mcp.json` one by one. For each you say yes to, it prompts (input hidden) for any API key/token the server needs. Don't want it, or don't have the key? Press **ENTER** to skip that one and continue. Secrets you type are never stored in the repo. |
-
-`config/mcp.json` is a sanitized inventory of my locally-configured MCP servers (backed up by `/harness:update-project`). Secrets are redacted to `${PLACEHOLDER}`; the installer's **MCP servers** step prompts for the real values at install time. To add one by hand instead: `claude mcp add-json <name> '<json>' --scope user`.
-
-### Status line preview
-
-![Status line with full parameters](assets/statusline.svg)
-
-### Enabling by hand
-
-**Claude Code:**
-```json
-"statusLine": {
-  "type": "command",
-  "command": "bash ~/.claude/plugins/cache/vinicius91carvalho/harness/<version>/scripts/statusline.sh"
-}
-```
-
-**Opencode:** add to your `opencode.json`:
-```json
-{
-  "plugin": ["./"]
-}
-```
-
-**Codex:** ensure `.codex-plugin/plugin.json` exists (it does — shipped with this repo).
-
-For the shared config, merge the keys in [`config/settings.json`](config/settings.json) into your CLI's config file:
-- Claude Code: `~/.claude/settings.json`
-- Opencode: `opencode.json`
-- Codex: `.codex-plugin/plugin.json`
-
-## Keeping the backup in sync
-
-> *"I have no memory of this config — so it is written down, against the dark."*
-
-`/harness:update-project` makes this repo a restorable backup of your live AI coding setup (Claude Code, Opencode, or Codex). Each run it:
-
-- regenerates `config/settings.json` from `~/.claude/settings.json` (via `scripts/sync-config.sh`, which keeps only the shareable subset);
-- reconciles the **plugin roster** against your live `enabledPlugins` — anything you've enabled gets a marketplace entry, an installer line, and a README row, so a fresh `install.sh` reinstalls it (skills/agents/hooks ride along inside their plugins);
-- mirrors any **loose user content** (`~/.claude/skills`, `commands`, `agents`, `hooks`, `keybindings.json`, global `CLAUDE.md`) into `config/home/`, which the installer's restore step copies back on a fresh machine. Secrets, history, and caches are never copied.
-
-Skills installed by a package manager aren't vendored here — they're reinstalled from source. The ones I use from [Matt Pocock's pack](https://github.com/mattpocock/skills) (symlinked into `~/.claude/skills`) restore with `npx skills@latest add mattpocock/skills`:
-
-- `design-an-interface` — generate several radically different interface/API designs in parallel.
-- `domain-modeling` — build and sharpen a project's domain model / ubiquitous language.
-- `grilling` — a relentless interview that stress-tests a plan or design before building.
-- `grill-with-docs` — grilling that also writes ADRs and a glossary as it goes.
-- `improve-codebase-architecture` — scan for deepening opportunities, report them, then grill the one you pick.
-- `prototype` — build a throwaway prototype to flesh out a design.
-- `tdd` — test-driven development (red-green-refactor, integration tests).
-- `teach` — teach a new skill or concept within the workspace.
-
-It reports a diff and commits nothing unless asked.
-
-CI (`.github/workflows/ci.yml`) checks JSON validity, shell syntax, the `statusline.sh` / `sync-config.sh` selftests, and the skill frontmatter on every push and PR.
+| Doc | What's in it |
+| --- | --- |
+| [Plugins](docs/plugins.md) | Full list of available plugins with CLI support, namespaces, and descriptions. |
+| [Extras](docs/extras.md) | Status line, shared config, MCP servers — what they do and how to enable by hand. |
+| [Installer options](docs/installer.md) | `--yes`, `--no`, `--dry-run`, scope flags, and how to add new plugins. |
+| [Keeping the backup in sync](docs/backup-sync.md) | How `/harness:update-project` backs up your live setup into this repo. |
 
 ## Releases
 
