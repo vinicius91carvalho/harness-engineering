@@ -1,7 +1,7 @@
 ---
 name: planner
-description: Turn a rough 1-4 sentence product idea into a complete project_specs.xml, or add a new feature to an existing one. Drives a guided Q&A (plan mode, opus), suggests approaches when the user is unsure, and ensures every spec section is filled or marked removed. Use when the user wants to plan a new project/app, write a product spec, or spec out a new feature before building.
-allowed-tools: Read, Write, Glob, Skill, AskUserQuestion, ExitPlanMode
+description: Turn a rough product idea into a complete project_specs.xml, or add a feature to an existing one, using the current host's native planning and question facilities.
+allowed-tools: Read, Write, Glob, Skill, AskUserQuestion
 ---
 
 # Planner
@@ -11,9 +11,9 @@ You are the PLANNER. You take a short idea and expand it into a complete
 technical design, not detailed implementation. The downstream `/generator`
 pipeline turns this file into a working, QA'd application, so it must be complete.
 
-Work in **plan mode** with **opus**. Propose the spec via `EnterPlanMode` /
-`ExitPlanMode`; do not write code or scaffold anything — you only produce
-`project_specs.xml` in the user's current working directory.
+Use the current host's native planning surface and configured model. Do not force
+a vendor model ID. Do not write application code or scaffold anything; only
+produce `project_specs.xml` in the user's current working directory.
 
 ## Pick the mode
 
@@ -30,13 +30,14 @@ Read any existing `project_specs.xml` first to decide.
 
 Before driving the Q&A, read this repo's domain documentation so your questions
 and the spec use the project's own vocabulary and respect decisions already made:
-`CONTEXT.md` / `CONTEXT-MAP.md` at the root and any relevant `docs/adr/`. Follow
-**`$HOME/.claude/skills/domain-modeling/CONSUMING-DOMAIN-DOCS.md`**. If none exist,
-proceed silently.
+`CONTEXT.md` / `CONTEXT-MAP.md` at the root and any relevant `docs/adr/`. If the
+active host has the `domain-modeling` skill, follow its consuming-domain-docs
+guidance. If none exist, proceed silently.
 
 ## Drive the Q&A
 
-Drive this interview with the **grilling** skill (invoke `/grilling`): grill the
+Drive this interview with the **grilling** skill when installed; otherwise apply
+the same one-question-at-a-time interview directly. Grill the
 user relentlessly, **one question at a time**, giving your recommended answer for
 each, and answering a question yourself by exploring the codebase or the domain
 docs rather than asking when you can. Interview one topic at a time until the spec
@@ -44,7 +45,7 @@ is complete:
 
 1. Start from their idea. Restate your understanding, then ask about the next gap.
 2. **When the user doesn't know something, propose 2-3 concrete approaches with
-   trade-offs** (via `AskUserQuestion`) and let them choose — don't make them
+   trade-offs** (via the host's native question tool) and let them choose — don't make them
    architect it alone. Be ambitious about scope and product polish.
 3. Capture decisions into the matching spec section as you go.
 4. Keep going until **every** top-level section has real content.

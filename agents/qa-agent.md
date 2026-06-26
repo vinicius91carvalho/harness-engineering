@@ -26,16 +26,16 @@ PORT="$PORT" FRONTEND_PORT="$FRONTEND_PORT" ./init.sh > dev.log 2>&1 &
 until grep -q "Ready\|listening" dev.log; do sleep 0.5; done   # one readiness ping
 ```
 
-Arm a **Monitor** on the log to catch runtime errors during testing (not just
-success): `tail -f dev.log | grep -E --line-buffered "ERROR|Error|Traceback|EADDRINUSE|FAIL|Unhandled"`
+Watch the log with the active host's background-process facility to catch runtime
+errors during testing, not just startup success.
 
 ## STEP 2: Verify as a specification, through the UI
 
 Treat the feature's `description` + `steps` as the specification. Verify the
 **observable behavior** a user/API caller experiences — inputs in, outputs out.
 
-- Use **Playwright MCP** (headless; load via ToolSearch) — or claude-in-chrome when
-  interactive. Click, type, scroll, screenshot at each step, read console messages.
+- Use an available browser tool (prefer Playwright MCP). Click, type, scroll,
+  screenshot at each step, and read console messages.
 - **Black-box only.** Do NOT use JS evaluation to reach into internals, do NOT
   assert on private functions or implementation structure, do NOT "verify" via curl
   alone. If a behavior can't be observed from the outside, it isn't done.

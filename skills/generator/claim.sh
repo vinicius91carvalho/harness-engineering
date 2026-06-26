@@ -4,33 +4,47 @@
 # All shared state lives under the repo's single shared .git (so every worktree
 # sees the same registry):
 #   .git/generator-claims.json     map: context -> {branch,worktree,port,session,status,started}
-#   .git/generator.lock            flock target for claims-file mutations (brief, in-process)
+#   .git/generator-state.lock.d    atomic mkdir lock for claims-file mutations
 #   .git/generator-merge.lock.d    mkdir-mutex for serializing merges (spans skill steps)
 #
-# Requires: bash, git, jq, flock.  ponytail: jq is the one external dep; init.sh installs it.
+# Requires: bash, git, jq. Atomic directory locks work on Linux, macOS, and Git Bash.
 set -euo pipefail
 
 BASE_PORT="${GEN_BASE_PORT:-5170}"
 
 die() { echo "claim.sh: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing dependency: $1"; }
-need git; need jq; need flock
+need git; need jq
 
 gitdir()  { local d; d="$(git -C "$1" rev-parse --git-common-dir)"; case "$d" in /*) printf '%s' "$d";; *) printf '%s/%s' "$1" "$d";; esac; }  # absolute shared .git
 claims()  { echo "$(gitdir "$1")/generator-claims.json"; }
-lockf()   { echo "$(gitdir "$1")/generator.lock"; }
+stateld() { echo "$(gitdir "$1")/generator-state.lock.d"; }
 mergeld() { echo "$(gitdir "$1")/generator-merge.lock.d"; }
 sani()    { printf '%s' "$1" | tr -c 'a-zA-Z0-9_-' '_'; }
 
 read_claims() { local f; f="$(claims "$1")"; [ -s "$f" ] && cat "$f" || echo '{}'; }
 
+acquire_state_lock() {
+  local repo="$1" ld owner tries=0; ld="$(stateld "$repo")"
+  while ! mkdir "$ld" 2>/dev/null; do
+    owner="$(cat "$ld/owner" 2>/dev/null || true)"
+    if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
+      rm -f "$ld/owner"; rmdir "$ld" 2>/dev/null || true
+      continue
+    fi
+    tries=$((tries + 1)); [ "$tries" -lt 300 ] || die "timed out waiting for state lock: $ld"
+    sleep 0.1
+  done
+  echo "$$" > "$ld/owner"
+}
+release_state_lock() { local ld; ld="$(stateld "$1")"; rm -f "$ld/owner"; rmdir "$ld" 2>/dev/null || true; }
+
 # ---- select-claim <repo> <mode> <selector> <session> -----------------------
 # Picks the next eligible context, creates its worktree+branch, records the claim,
 # prints {context,worktree,port,featureIds}. Prints NOTHING when there's no work.
-select_claim() {
+select_claim() (
   local repo="$1" mode="$2" selector="${3:-}" session="${4:-$$}"
-  local lock; lock="$(lockf "$repo")"; : > "$lock" 2>/dev/null || true
-  exec 9>"$lock"; flock -x 9            # released when this process exits
+  acquire_state_lock "$repo"; trap 'release_state_lock "$repo"' EXIT
 
   local fl; fl="$(git -C "$repo" show main:feature_list.json 2>/dev/null || echo '')"
   [ -z "$fl" ] && return 0             # not scaffolded yet -> nothing to claim
@@ -90,12 +104,12 @@ select_claim() {
 
   jq -cn --arg c "$ctx" --arg w "$wt" --argjson p "$port" --argjson ids "$ids" \
      '{context:$c, worktree:$w, port:$p, featureIds:$ids}'
-}
+)
 
 # ---- release <repo> <context> ----------------------------------------------
-release() {
-  local repo="$1" ctx="$2" lock; lock="$(lockf "$repo")"
-  exec 9>"$lock"; flock -x 9
+release() (
+  local repo="$1" ctx="$2"
+  acquire_state_lock "$repo"; trap 'release_state_lock "$repo"' EXIT
   local wt branch
   wt="$(jq -r --arg c "$ctx" '.[$c].worktree // empty' <<<"$(read_claims "$repo")")"
   branch="$(jq -r --arg c "$ctx" '.[$c].branch // empty' <<<"$(read_claims "$repo")")"
@@ -103,7 +117,7 @@ release() {
   [ -n "$branch" ] && git -C "$repo" branch -D "$branch" 2>/dev/null || true
   jq --arg c "$ctx" 'del(.[$c])' <<<"$(read_claims "$repo")" > "$(claims "$repo")"
   echo "released $ctx"
-}
+)
 
 # ---- merge-acquire <repo> <session> ----------------------------------------
 # Serializes merges across sessions (mkdir mutex survives across skill steps).
@@ -113,7 +127,10 @@ merge_acquire() {
   if ! mkdir "$ld" 2>/dev/null; then
     # stale-lock check: holder session no longer running?
     local holder; holder="$(cat "$ld/owner" 2>/dev/null || echo)"
-    if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then rmdir "$ld" 2>/dev/null || rm -rf "$ld"; mkdir "$ld" 2>/dev/null || { echo "BUSY"; return 1; }; else echo "BUSY"; return 1; fi
+    if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
+      rm -f "$ld/owner"; rmdir "$ld" 2>/dev/null || true
+      mkdir "$ld" 2>/dev/null || { echo "BUSY"; return 1; }
+    else echo "BUSY"; return 1; fi
   fi
   echo "$session" > "$ld/owner"
   # integration dir = whichever worktree has main checked out, else create one
@@ -141,7 +158,7 @@ merge_do() {
 }
 
 # ---- merge-release <repo> --------------------------------------------------
-merge_release() { rm -rf "$(mergeld "$1")"; echo "merge-lock released"; }
+merge_release() { local ld; ld="$(mergeld "$1")"; rm -f "$ld/owner"; rmdir "$ld" 2>/dev/null || true; echo "merge-lock released"; }
 
 # ---- list <repo> -----------------------------------------------------------
 list_claims() {

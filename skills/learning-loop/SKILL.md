@@ -1,14 +1,14 @@
 ---
 name: learning-loop
 description: |
-  Reflect on a coding session and turn what just happened into durable Claude Code
+  Reflect on a coding session and turn what happened into durable harness
   improvements — suggest (and, with approval, scaffold) skills, hooks, subagents,
-  slash commands, MCP servers, memory entries, and CLAUDE.md fixes, then persist
+  commands, MCP servers, memory entries, and host instruction fixes, then persist
   what was learned so the assistant grows across sessions. This is a hermes-agent
   style learning loop. Use it whenever the user says "what did we learn", "reflect
   on this session", "run the learning loop", "retrospective", "capture this as a
   skill", "what should I automate", "suggest skills/hooks/agents", "improve my
-  Claude setup", or asks to review a session transcript for reusable patterns —
+  harness setup", or asks to review a session transcript for reusable patterns —
   and proactively at the end of a long or repetitive task, even if they don't use
   those exact words.
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash, Skill, AskUserQuestion
@@ -19,7 +19,7 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Bash, Skill, AskUserQuestion
 You are the LEARNING LOOP. Inspired by the hermes-agent's closed loop
 (**experience → reflect → create artifact → persist → curate**), your job is to
 look back at a session, notice what was *re-derived, repeated, or corrected*, and
-convert those moments into Claude Code automations so the next session is cheaper
+convert those moments into portable automations so the next session is cheaper
 and smarter. A session that solves a problem and forgets it has wasted the lesson.
 
 The whole point is leverage: a procedure done twice by hand becomes a skill done
@@ -37,12 +37,10 @@ Decide what you're reflecting *on*:
 
 - **Default:** the current conversation. It's already in your context — read back
   over what the user asked, what you did, where you stumbled, and what they corrected.
-- **A provided transcript / file:** if the user points you at a transcript, log
-  file, or `.remember/` buffer, read that instead (or in addition).
-- **Continuity:** glance at the project's existing memory (the memory directory
-  referenced in your session, typically `~/.claude/projects/<slug>/memory/`, plus
-  its `MEMORY.md` index) and any `.remember/` notes, so you build on prior learnings
-  instead of re-proposing things already captured.
+- **A provided transcript / file:** if the user points you at one, read it.
+- **Continuity:** use the current host's documented memory/instruction surface and
+  `codebase-memory-mcp` when configured. Never inspect credentials, histories,
+  caches, or session databases.
 
 If there's barely any session to reflect on (a couple of trivial exchanges), say so
 and stop — there's nothing worth automating yet. Manufacturing findings from a thin
@@ -108,7 +106,8 @@ Considered but skipped: <thing that happened once> — below the recurrence bar.
 The "Considered but skipped" line matters: it shows the user you looked and chose
 restraint, and it surfaces borderline calls they can overrule.
 
-Then ask, via `AskUserQuestion` (multi-select), **which findings to act on**. Never
+Then ask via the current host's native question facility (`AskUserQuestion`,
+`request_user_input`, or OpenCode `question`) **which findings to act on**. Never
 scaffold without explicit approval — creating files, editing CLAUDE.md, or
 registering hooks are changes the user owns.
 
@@ -119,24 +118,23 @@ recipe for that type. In short:
 
 - **skill** → invoke `/skill-creator` with a tight intent derived from the evidence.
 - **hook** → invoke `/hookify` describing the behavior to prevent.
-- **agent** → write `agents/<name>.md` (project scope) or `~/.claude/agents/<name>.md`
-  (user scope), with `name`/`description`/`tools` frontmatter.
+- **agent** → use Claude Markdown, Codex TOML, or OpenCode Markdown for the active host.
 - **command** → write a command `.md` file.
 - **memory entry** → write `<slug>.md` into the memory directory using the exact
   memory format (frontmatter + body), then add the one-line pointer to `MEMORY.md`.
   Check for an existing entry covering the same fact and **update it instead of
   duplicating**.
-- **CLAUDE.md addition** → propose a focused `Edit` to the project's CLAUDE.md.
-- **MCP server** → print the `claude mcp add-json …` command for the user to run;
+- **instruction addition** → propose a focused edit to `AGENTS.md` or `CLAUDE.md`.
+- **MCP server** → print the active host's native MCP command for the user to run;
   never run it yourself with secrets inline.
 
 ## Step 5 — Persist the loop's own learning (always)
 
 Even if the user declines every artifact, capture **at least one memory entry**
-recording the most useful durable thing from this session — that's what makes the
-assistant "grow with you" rather than starting cold every time. Use the project
-memory directory and the standard format. If no memory system is available, fall
-back to the `remember` plugin or a short note in `.remember/`.
+recording the most useful durable thing from this session, but only after the user
+approves that write. Use the current host's documented project memory surface or
+`codebase-memory-mcp`. If neither is available, report the finding without creating
+an ad-hoc hidden data directory.
 
 ## Step 6 — Curate on write (lightweight)
 

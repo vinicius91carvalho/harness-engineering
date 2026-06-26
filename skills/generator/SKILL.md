@@ -1,7 +1,7 @@
 ---
 name: generator
-description: Autonomously build a spec'd project from feature_list.json — claim a feature context, build it in an isolated git worktree (coding→QA loop with retries and model escalation), then merge back to main. Safe to run in several sessions at once; each claims a different context. Use when the user wants to implement/build features for a project that has a project_specs.xml (or already a feature_list.json).
-allowed-tools: Bash, Workflow, Agent, AskUserQuestion, Read
+description: Build a spec'd project from feature_list.json using isolated worktrees, portable host adapters, independent QA, and up to three verified attempts.
+allowed-tools: Bash, Agent, AskUserQuestion, Read
 ---
 
 # Generator
@@ -11,8 +11,10 @@ keep collisions impossible by claiming a `context` and working in its own git
 **worktree** on its own **port**, then merging back to `main`. You only ever change
 `feature_list.json` flags *through* the agents you spawn.
 
-Let `REPO` = the project root (the dir containing `project_specs.xml` /
-`feature_list.json`). Let `GEN=${CLAUDE_PLUGIN_ROOT}/skills/generator`.
+Let `REPO` be the project root and `GEN` be this skill's directory. Plugin hosts
+expose it through `CLAUDE_PLUGIN_ROOT` (Claude), `PLUGIN_ROOT` (Codex), or the
+installed `harness-generator` skill directory (OpenCode). Set `HOST` to the host
+running this skill: `claude`, `codex`, or `opencode`.
 
 ## Step 1 — Ensure the project is scaffolded (once)
 
@@ -37,7 +39,8 @@ If `NEEDS_INIT`, scaffold before building:
 
 ## Step 2 — Choose the mode
 
-Ask the user with `AskUserQuestion`:
+Use the current host's native question facility (Claude `AskUserQuestion`, Codex
+`request_user_input`, or OpenCode `question`) to ask:
 - **1 task** — one feature `id` → `mode=task selector=<id>`.
 - **A set** — one `context` group → `mode=feature selector=<context>`.
 - **All** — every remaining context → `mode=all`. This session keeps claiming
@@ -53,18 +56,15 @@ bash "$GEN/claim.sh" select-claim "$REPO" "$MODE" "$SELECTOR" $$
   created the worktree + `gen/<context>` branch. Read the `description` for each id
   from `feature_list.json` to build the `features` array.
 
-**a. Build (Workflow).** Launch the inner loop:
+**a. Build (portable state machine).** Invoke the same runner on every host:
+```bash
+node "$GEN/orchestrator.mjs" --host "$HOST" --workdir "$WORKTREE" \
+  --port "$PORT" --mode "$MODE" --features "$COMMA_SEPARATED_IDS"
 ```
-Workflow({
-  scriptPath: "$GEN/orchestrator.workflow.js",
-  args: { workdir: <worktree>, port: <port>, mode: <MODE>,
-          features: [ {id, context, description}, ... ] }
-})
-```
-Watch it in `/workflows`. It implements each feature with `coding-agent`, QA's with
-`qa-agent`, retries on failure, escalates sonnet→opus at retry 2, and reports any
-`stuck` features (hit retry 3). If it returns `stuck` features, **stop and ask the
-user** how to proceed for those before merging.
+It uses `claude -p`, `codex exec`, or `opencode run`, preserving the user's
+configured model. It verifies both coding and QA against `feature_list.json` and
+retries at most three times. If its JSON result contains `stuck`, stop and ask the
+user how to proceed before merging.
 
 **b. Merge (serialized).** Once the context's features pass:
 ```bash

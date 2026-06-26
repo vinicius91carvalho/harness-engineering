@@ -49,7 +49,6 @@ return a digest rather than dumping everything into the main context.
 name: <kebab-name>
 description: <when to use this agent — be specific about triggers>
 tools: Read, Grep, Glob, Bash   # optional; omit to inherit all
-model: sonnet                    # optional
 ---
 
 <system prompt: the agent's role, method, and what it should return>
