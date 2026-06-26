@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <b>A curated Claude Code developer workflow — the best plugins out there, set up with one command.</b>
+  <b>A curated developer workflow for Claude Code, Opencode, and Codex — the best plugins out there, set up with one command.</b>
 </p>
 
 > *"YOU SHOULD NOT PASS!"* — on the bad plugins, the boilerplate, and the 3am pages.
@@ -22,7 +22,7 @@
 
 > *"Not all those who wander are lost."*
 
-`harness-engineering` is my personal Claude Code workspace, packaged as a plugin marketplace. The goal is a batteries-included **developer workflow** assembled from the best Claude Code plugins available — lazy-senior-dev guardrails, up-to-date library docs, session memory, browser automation, language servers, and more — that drops onto a fresh machine with a single command.
+`harness-engineering` is my personal AI coding workspace, packaged as a plugin marketplace. It supports **Claude Code**, **Opencode**, and **Codex**. The goal is a batteries-included **developer workflow** assembled from the best plugins available — lazy-senior-dev guardrails, up-to-date library docs, session memory, browser automation, language servers, and more — that drops onto a fresh machine with a single command.
 
 It's opinionated but not precious: **feedback, tips, and plugin suggestions are very welcome** — open an [issue](https://github.com/vinicius91carvalho/harness-engineering/issues) or a PR.
 
@@ -39,7 +39,7 @@ It's opinionated but not precious: **feedback, tips, and plugin suggestions are 
 
 > *"When in doubt, always follow your nose."*
 
-On a new machine with [Claude Code](https://claude.com/claude-code) already installed, run:
+On a new machine with any of the supported CLIs installed ([Claude Code](https://claude.com/claude-code), [Opencode](https://opencode.ai), or [Codex](https://github.com/openai/codex)), run:
 
 **macOS / Linux / Windows (Git Bash or WSL)**
 
@@ -47,13 +47,14 @@ On a new machine with [Claude Code](https://claude.com/claude-code) already inst
 curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh
 ```
 
-The installer adds the marketplace, then shows an **arrow-key checklist** — ↑/↓ to move, **SPACE** to toggle, **ENTER** to confirm — where you pick everything in a single pass. Required plugins come pre-checked (you can still uncheck them); optional plugins and the two extras start unchecked. Your whole selection is applied at once, and the script is idempotent, so re-run it any time to pick up new plugins. When you're done, restart Claude Code.
+The installer detects your available CLI and shows an **arrow-key checklist** — ↑/↓ to move, **SPACE** to toggle, **ENTER** to confirm — where you pick everything in a single pass. Required plugins come pre-checked (you can still uncheck them); optional plugins and the two extras start unchecked. Your whole selection is applied at once, and the script is idempotent, so re-run it any time to pick up new plugins. When you're done, restart your CLI.
 
 A few text notes instead of extra commands to copy:
 
 - **Native Windows (PowerShell):** run [`install.ps1`](install.ps1) instead — the same arrow-key checklist, driven natively.
 - **Non-interactive:** the `--yes` flag selects everything and `--no` keeps only the required plugins (PowerShell: `-Yes` / `-No`) — handy for scripted setups.
 - **Preview without installing:** the `--dry-run` flag walks the checklist and prints exactly what *would* be installed, changing nothing on your machine.
+- **CLI selection:** the installer auto-detects which CLI is available. If you have multiple, it picks the first found (claude > codex > opencode).
 
 ## Framework
 
@@ -160,6 +161,7 @@ These appear as their own rows at the bottom of the same checklist. Leave them u
 
 ### Enabling by hand
 
+**Claude Code:**
 ```json
 "statusLine": {
   "type": "command",
@@ -167,13 +169,25 @@ These appear as their own rows at the bottom of the same checklist. Leave them u
 }
 ```
 
-For the shared config, merge the keys in [`config/settings.json`](config/settings.json) into your `~/.claude/settings.json` (e.g. `jq -s '.[0] * .[1]' ~/.claude/settings.json config/settings.json`).
+**Opencode:** add to your `opencode.json`:
+```json
+{
+  "plugin": ["./"]
+}
+```
+
+**Codex:** ensure `.codex-plugin/plugin.json` exists (it does — shipped with this repo).
+
+For the shared config, merge the keys in [`config/settings.json`](config/settings.json) into your CLI's config file:
+- Claude Code: `~/.claude/settings.json`
+- Opencode: `opencode.json`
+- Codex: `.codex-plugin/plugin.json`
 
 ## Keeping the backup in sync
 
 > *"I have no memory of this config — so it is written down, against the dark."*
 
-`/harness:update-project` makes this repo a restorable backup of your live Claude Code setup. Each run it:
+`/harness:update-project` makes this repo a restorable backup of your live AI coding setup (Claude Code, Opencode, or Codex). Each run it:
 
 - regenerates `config/settings.json` from `~/.claude/settings.json` (via `scripts/sync-config.sh`, which keeps only the shareable subset);
 - reconciles the **plugin roster** against your live `enabledPlugins` — anything you've enabled gets a marketplace entry, an installer line, and a README row, so a fresh `install.sh` reinstalls it (skills/agents/hooks ride along inside their plugins);

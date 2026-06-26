@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A Claude Code **plugin marketplace** plus one in-repo plugin (`harness`). The repo root *is* the `harness` plugin — `.claude-plugin/plugin.json` defines it and the marketplace entry uses `source: "./"`. External plugins (`ponytail`, `remember`) are referenced by their GitHub repos in `marketplace.json`, not vendored here.
+An AI coding **plugin marketplace** plus one in-repo plugin (`harness`). Supports **Claude Code**, **Opencode**, and **Codex**. The repo root *is* the `harness` plugin — `.claude-plugin/plugin.json` (Claude Code), `.codex-plugin/plugin.json` (Codex), and `opencode.json` (Opencode) define it. The marketplace entry uses `source: "./"`. External plugins (`ponytail`, `remember`) are referenced by their GitHub repos in `marketplace.json`, not vendored here.
 
 There is no build, test, or lint step. Changes are validated by installing the marketplace and running Claude Code.
 
@@ -17,6 +17,10 @@ the scripts are worse than no docs.
 ## Layout
 
 - `.claude-plugin/marketplace.json` — the marketplace: lists every plugin and its source.
+- `.claude-plugin/plugin.json` — manifest for the `harness` plugin (Claude Code).
+- `.codex-plugin/plugin.json` — manifest for the `harness` plugin (Codex).
+- `opencode.json` — manifest for the `harness` plugin (Opencode).
+- `.mcp.json` — MCP server configuration for Opencode and Codex.
 - `scripts/` — standalone scripts bundled with the `harness` plugin: `statusline.sh` (status line) and `sync-config.sh` (extracts the shareable config subset; `--selftest`).
 - `config/settings.json` — committed shareable subset of `~/.claude/settings.json`, merged in by the installer's "shared config" prompt. Regenerate with `/harness:update-project`.
 - `config/mcp.json` — sanitized inventory of locally-configured MCP servers (user/local scope from `~/.claude.json`), written by `/harness:update-project`. Secrets are redacted to `${PLACEHOLDER}`. The installer's "MCP servers" checklist row walks these one by one, prompts (hidden) for each secret, and registers chosen servers at user scope via `claude mcp add-json`; ENTER on a prompt skips that server. Absent until there's an MCP server to back up.
@@ -45,3 +49,5 @@ claude plugin install <name>@vinicius91carvalho
 ```
 
 The marketplace name is `vinicius91carvalho` (from `marketplace.json`'s `name`), distinct from the repo slug `vinicius91carvalho/harness-engineering` used to *add* the marketplace.
+
+For Opencode and Codex, the plugin is discovered via `opencode.json` and `.codex-plugin/plugin.json` respectively — no marketplace update needed.
