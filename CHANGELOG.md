@@ -11,6 +11,18 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.8.0...v0.9.0) (2026-06-26)
+
+
+### Features
+
+* add codebase-memory-mcp plugin, remove OpenCode plugins, update install scripts ([dac9da5](https://github.com/vinicius91carvalho/harness-engineering/commit/dac9da5e5ce8a83a195e1f3414b7dbe4a058d399))
+
+
+### Documentation
+
+* clarify installation scope applies to all CLIs ([9b77d93](https://github.com/vinicius91carvalho/harness-engineering/commit/9b77d93a74838f66cf25da67d39e8a508717bc9d))
+
 ## [0.8.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.7.1...v0.8.0) (2026-06-26)
 
 
