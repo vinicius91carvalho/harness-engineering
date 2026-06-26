@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.7.1...v0.8.0) (2026-06-26)
+
+
+### Features
+
+* add codebase-memory-mcp plugin to marketplace ([085e86f](https://github.com/vinicius91carvalho/harness-engineering/commit/085e86fbea298479688141544bdc09186de8a8d9))
+
 ### [0.7.1](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.7.0...v0.7.1) (2026-06-26)
 
 
