@@ -24,5 +24,5 @@ wait "$p1"; wait "$p2"
 
 jq -s -e 'length == 2 and (map(.context) | unique | length) == 2 and (map(.port) | unique | length) == 2' \
   "$TMP/one.json" "$TMP/two.json" >/dev/null
-test ! -d "$TMP/repo/.git/generator-state.lock.d"
+test ! -d "$TMP/repo/.git/harness-locks/generator-state"
 echo 'ok - atomic directory claims assign distinct contexts and ports'
