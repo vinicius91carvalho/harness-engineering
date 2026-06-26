@@ -55,6 +55,45 @@ A few text notes instead of extra commands to copy:
 - **Non-interactive:** the `--yes` flag selects everything and `--no` keeps only the required plugins (PowerShell: `-Yes` / `-No`) — handy for scripted setups.
 - **Preview without installing:** the `--dry-run` flag walks the checklist and prints exactly what *would* be installed, changing nothing on your machine.
 
+## Framework
+
+> *"It's the job that's never started as takes longest to finish."*
+
+The `harness` plugin bundles a **Spec → Build → QA pipeline**: an autonomous, multi-session workflow that turns a 1–4 sentence idea into a complete spec, scaffolds the project, then implements and independently QA's every feature — looping until each one is both built *and* verified. Build sessions can run **in parallel**, each isolated in its own git worktree. Inspired by Anthropic's [Harness design for long-running application development](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents).
+
+### Components
+
+| Invoke | Type | Role |
+| --- | --- | --- |
+| `/harness:planner` | skill | Guided Q&A that expands an idea into a complete `project_specs.xml` (plan mode). Two modes: **New Project** and **Feature**. |
+| `/harness:generator` | skill | The orchestrator. Claims a feature area, builds it in an isolated worktree (coding→QA loop), merges back to `main`. Run it in several sessions at once. |
+| `/harness:evaluator` | skill | Independent QA-only sweep over already-implemented features. |
+| `initializer` | agent | Scaffolds the project once: `feature_list.json`, `init.sh`, structure, first commit. Idempotent. |
+| `coding-agent` | agent | Implements **one** feature in a given worktree/port, verifies it through the real UI, writes spec-style tests. |
+| `qa-agent` | agent | Independently QA's **one** feature as a black-box specification. |
+
+### Flow
+
+```
+/harness:planner ─► project_specs.xml ─► (human review)
+        │
+        ▼
+/harness:generator   (new session, ×N in parallel)
+  ├─ first run: initializer scaffolds main (feature_list.json, init.sh, git)
+  ├─ claim a context ─► own worktree + branch + port
+  │     └─ per feature:  coding-agent → implement + UI-verify
+  │                      qa-agent     → black-box QA
+  │                      (retry; escalate sonnet→opus at retry 2; stop & ask at retry 3)
+  └─ merge gen/<context> ─► main  (serialized)
+        │
+        ▼
+/harness:evaluator   (optional) ─► independent QA sweep across everything
+```
+
+`feature_list.json` is the single source of truth: every entry carries `implementation` and `qa` flags, and the pipeline's job is to flip them all to `true`. It's **append-only** — features are never edited or removed, only marked passing, so nothing gets silently dropped.
+
+**Why it holds together:** claims are atomic (a `flock` registry in `.git`), so N sessions self-distribute across feature areas with no two ever building the same thing; each claim gets its own worktree, branch, and port, so files and running servers never collide; merges to `main` are serialized. QA is **independent** — a separate agent verifies each feature through the real UI as a black-box — and a QA defect flips the feature back to unimplemented and re-routes it to coding, with retries escalating to a stronger model before giving up. "Done" means *observably working*, and quality ratchets up instead of degrading.
+
 ## Plugins
 
 > *"Some plugins that ship deserve deleting, and some that are deleted deserve shipping — these are the ones worth keeping."*
@@ -63,7 +102,7 @@ Everything below is a row in the installer's checklist. Required plugins are pre
 
 | Plugin | Required? | Namespace | Source | What it does |
 | --- | --- | --- | --- | --- |
-| `harness` | required | `/harness:*` | this repo | My own commands, skills, agents, and hooks. |
+| `harness` | required | `/harness:*` | this repo | My own skills, agents, and scripts — the [spec→build→QA pipeline](#framework) (`planner`/`generator`/`evaluator` + agents), `/harness:update-project`, and the status line. |
 | `ponytail` | required | `/ponytail:*` | [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail) | Lazy senior-dev mode — forces the simplest solution that works (YAGNI, stdlib first, no unrequested abstractions). |
 | `context7` | required | MCP server | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Up-to-date, version-specific library docs pulled into context (Upstash Context7). |
 | `remember` | required | `/remember:*` | [Digital-Process-Tools/claude-remember](https://github.com/Digital-Process-Tools/claude-remember) | Saves session state to `.remember/` for clean continuation across sessions. |
@@ -116,6 +155,17 @@ For the shared config, merge the keys in [`config/settings.json`](config/setting
 - regenerates `config/settings.json` from `~/.claude/settings.json` (via `scripts/sync-config.sh`, which keeps only the shareable subset);
 - reconciles the **plugin roster** against your live `enabledPlugins` — anything you've enabled gets a marketplace entry, an installer line, and a README row, so a fresh `install.sh` reinstalls it (skills/agents/hooks ride along inside their plugins);
 - mirrors any **loose user content** (`~/.claude/skills`, `commands`, `agents`, `hooks`, `keybindings.json`, global `CLAUDE.md`) into `config/home/`, which the installer's restore step copies back on a fresh machine. Secrets, history, and caches are never copied.
+
+Skills installed by a package manager aren't vendored here — they're reinstalled from source. The ones I use from [Matt Pocock's pack](https://github.com/mattpocock/skills) (symlinked into `~/.claude/skills`) restore with `npx skills@latest add mattpocock/skills`:
+
+- `design-an-interface` — generate several radically different interface/API designs in parallel.
+- `domain-modeling` — build and sharpen a project's domain model / ubiquitous language.
+- `grilling` — a relentless interview that stress-tests a plan or design before building.
+- `grill-with-docs` — grilling that also writes ADRs and a glossary as it goes.
+- `improve-codebase-architecture` — scan for deepening opportunities, report them, then grill the one you pick.
+- `prototype` — build a throwaway prototype to flesh out a design.
+- `tdd` — test-driven development (red-green-refactor, integration tests).
+- `teach` — teach a new skill or concept within the workspace.
 
 It reports a diff and commits nothing unless asked.
 
