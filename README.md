@@ -175,7 +175,7 @@ CI (`.github/workflows/ci.yml`) checks JSON validity, shell syntax, the `statusl
 
 > *"The Road goes ever on and on — and so do the version tags."*
 
-Versions are cut automatically from [Conventional Commits](https://www.conventionalcommits.org) on every push to `main` (`.github/workflows/release.yml`): the next semver is computed from the commit messages, tagged, and published as a GitHub Release.
+Versions are cut automatically from [Conventional Commits](https://www.conventionalcommits.org) on every push to `main` (`.github/workflows/release.yml`): the next semver is computed from the commit messages, tagged, published as a GitHub Release, and written back into the plugin manifest (`.claude-plugin/plugin.json`) so `claude plugin update` picks up the new version.
 
 The three most recent versions:
 
