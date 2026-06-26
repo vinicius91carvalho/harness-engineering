@@ -6,11 +6,11 @@ set -e
 
 MARKETPLACE="vinicius91carvalho/harness-engineering"
 MARKETPLACE_NAME="vinicius91carvalho"
-REQUIRED="harness ponytail context7 remember skill-creator claude-md-management claude-code-setup hookify playwright"
-OPTIONAL="typescript-lsp ralph-loop pyright-lsp rust-analyzer-lsp codex"
+REQUIRED="harness"
+OPTIONAL="ponytail context7 remember skill-creator claude-md-management claude-code-setup hookify playwright typescript-lsp ralph-loop pyright-lsp rust-analyzer-lsp codex"
+REPO_URL="https://github.com/vinicius91carvalho/harness-engineering.git"
+TEMP_REPO=""
 
-# CLI support per plugin (space-separated list of supported CLIs)
-# Only plugins that list the detected CLI will be offered.
 plugin_clis() {
   case "$1" in
     harness)              echo "claude opencode codex" ;;
@@ -67,13 +67,15 @@ for arg in "$@"; do
   i=$((i + 1))
 done
 
-# Detect available CLIs
-CLI=""
-if command -v claude >/dev/null 2>&1; then CLI="claude"; fi
-if command -v codex >/dev/null 2>&1; then CLI="codex"; fi
-if command -v opencode >/dev/null 2>&1; then CLI="opencode"; fi
+# ── Detect ALL available CLIs ────────────────────────────────────────────────
+detected_clis=""
+if command -v claude   >/dev/null 2>&1; then detected_clis="$detected_clis claude"; fi
+if command -v codex    >/dev/null 2>&1; then detected_clis="$detected_clis codex"; fi
+if command -v opencode >/dev/null 2>&1; then detected_clis="$detected_clis opencode"; fi
 
-if [ -z "$CLI" ]; then
+detected_clis=$(echo "$detected_clis" | xargs)  # trim whitespace
+
+if [ -z "$detected_clis" ]; then
   echo "No supported CLI found. Install one of: Claude Code, Opencode, or Codex." >&2
   echo "  Claude Code:  https://claude.com/claude-code" >&2
   echo "  Opencode:     https://opencode.ai" >&2
@@ -81,24 +83,200 @@ if [ -z "$CLI" ]; then
   exit 1
 fi
 
-echo "==> Detected CLI: $CLI"
+# ── Let user pick which CLI to install for ───────────────────────────────────
+select_cli() {
+  cli_count=0
+  for c in $detected_clis; do cli_count=$((cli_count + 1)); done
 
-install_plugin() {
-  [ -n "$DRY" ] && { echo "   DRY RUN — would install: $1"; return 0; }
-  case "$CLI" in
-    claude)
-      echo "==> Installing: $1@$MARKETPLACE_NAME (--scope $SCOPE)"
-      claude plugin install "$1@$MARKETPLACE_NAME" --scope "$SCOPE" || echo "   (skipped $1 — already installed or failed)" >&2
-      ;;
-    codex)
-      echo "==> Codex: $1 (ensure .codex-plugin/plugin.json is present)"
-      ;;
-    opencode)
-      echo "==> Opencode: $1 (ensure opencode.json references this plugin)"
-      ;;
-  esac
+  if [ "$cli_count" -eq 1 ]; then
+    CLI="$detected_clis"
+    echo "==> Detected CLI: $CLI"
+    return 0
+  fi
+
+  if [ "$ASSUME" = yes ] || [ "$ASSUME" = no ]; then
+    CLI="$detected_clis"
+    echo "==> Detected CLIs:$detected_clis"
+    echo "==> Installing for all detected CLIs"
+    return 0
+  fi
+
+  if ! { : < /dev/tty; } 2>/dev/null; then
+    CLI=$(echo "$detected_clis" | awk '{print $1}')
+    echo "==> Detected CLIs:$detected_clis (non-interactive, using: $CLI)"
+    return 0
+  fi
+
+  printf '\nDetected CLIs:\n' > /dev/tty
+  idx=1
+  for c in $detected_clis; do
+    printf '  \033[36m%d\033[0m) %s\n' "$idx" "$c" > /dev/tty
+    idx=$((idx + 1))
+  done
+  printf '  \033[36m%d\033[0m) all (install for every detected CLI)\n' "$idx" > /dev/tty
+  total=$idx
+  printf '\nSelect CLI [1-%d] (default: 1): ' "$total" > /dev/tty
+
+  cursor=1
+  saved=$(stty -g < /dev/tty)
+  stty -echo -icanon min 1 < /dev/tty
+  trap 'stty "$saved" < /dev/tty 2>/dev/null' EXIT INT TERM
+
+  while :; do
+    key=$(dd if=/dev/tty bs=1 count=1 2>/dev/null)
+    case "$key" in
+      "$(printf '\033')")
+        dd if=/dev/tty bs=1 count=1 2>/dev/null >/dev/null
+        arrow=$(dd if=/dev/tty bs=1 count=1 2>/dev/null)
+        case "$arrow" in
+          A) [ "$cursor" -gt 1 ] && cursor=$((cursor - 1)) ;;
+          B) [ "$cursor" -lt "$total" ] && cursor=$((cursor + 1)) ;;
+        esac ;;
+      "") break ;;
+    esac
+    printf '\033[%dA' "$total" > /dev/tty
+    idx=1
+    for c in $detected_clis; do
+      if [ "$idx" = "$cursor" ]; then
+        printf '\033[36m> [%s]\033[0m %s\n' "$idx" "$c" > /dev/tty
+      else
+        printf '  [%s] %s\n' "$idx" "$c" > /dev/tty
+      fi
+      idx=$((idx + 1))
+    done
+    if [ "$cursor" = "$total" ]; then
+      printf '\033[36m> [%s]\033[0m all\n' "$total" > /dev/tty
+    else
+      printf '  [%s] all\n' "$total" > /dev/tty
+    fi
+  done
+
+  stty "$saved" < /dev/tty 2>/dev/null
+  trap - EXIT INT TERM
+  printf '\n' > /dev/tty
+
+  if [ "$cursor" = "$total" ]; then
+    CLI="$detected_clis"
+    echo "==> Installing for all detected CLIs"
+  else
+    CLI=$(echo "$detected_clis" | awk -v n="$cursor" '{print $n}')
+    echo "==> Detected CLI: $CLI"
+  fi
 }
 
+select_cli
+
+# ── Plugin installation ──────────────────────────────────────────────────────
+install_plugin() {
+  [ -n "$DRY" ] && { echo "   DRY RUN — would install: $1"; return 0; }
+  for cli in $CLI; do
+    case "$cli" in
+      claude)
+        echo "==> Installing: $1@$MARKETPLACE_NAME (--scope $SCOPE)"
+        claude plugin install "$1@$MARKETPLACE_NAME" --scope "$SCOPE" || echo "   (skipped $1 — already installed or failed)" >&2
+        ;;
+      codex)
+        echo "==> Installing: $1 for Codex"
+        install_codex_plugin "$1"
+        ;;
+      opencode)
+        echo "==> Installing: $1 for Opencode"
+        install_opencode_plugin "$1"
+        ;;
+    esac
+  done
+}
+
+install_opencode_plugin() {
+  local plugin_name="$1"
+  mkdir -p "$HOME/.config/opencode"
+  local user_cfg="$HOME/.config/opencode/opencode.jsonc"
+  local repo_cfg="$MARKETPLACE_DIR/opencode.json"
+
+  if [ ! -f "$repo_cfg" ]; then
+    echo "   (opencode.json not found in repo — skipping opencode config for $plugin_name)" >&2
+    return 0
+  fi
+
+  if [ ! -f "$user_cfg" ]; then
+    echo '{}' > "$user_cfg"
+    echo "==> Created $user_cfg"
+  fi
+
+  local harness_agents harness_commands harness_mcp
+  harness_agents=$(jq -r '.agent // empty' "$repo_cfg" 2>/dev/null)
+  harness_commands=$(jq -r '.command // empty' "$repo_cfg" 2>/dev/null)
+  harness_mcp=$(jq -r '.mcp // empty' "$repo_cfg" 2>/dev/null)
+
+  # Strip JSONC comments and trailing commas, then deep-merge with user config
+  local tmp=$(mktemp)
+  jq --argjson ha "${harness_agents:-{}}" \
+     --argjson hc "${harness_commands:-{}}" \
+     --argjson hm "${harness_mcp:-{}}" \
+     '
+     # Merge skills.paths (append harness paths, dedupe)
+     .skills = (.skills // {}) |
+     .skills.paths = (
+       ((.skills.paths // []) + ["./skills"] | unique)
+     ) |
+     # Merge agents (only add missing ones)
+     .agent = (.agent // {}) |
+     .agent = (.agent | to_entries |
+       map({(.key): .value}) | add // {}) |
+     .agent = (.agent * $ha) |
+     # Merge commands (only add missing ones)
+     .command = (.command // {}) |
+     .command = (.command | to_entries |
+       map({(.key): .value}) | add // {}) |
+     .command = (.command * $hc) |
+     # Merge MCP servers (only add missing ones)
+     .mcp = ((.mcp // {}) * $hm) |
+     # Concatenate instructions (append AGENTS.md if missing)
+     .instructions = (
+       (.instructions // []) as $existing |
+       if ($existing | map(. | test("AGENTS\\.md$")) | any)
+       then $existing
+       else $existing + ["AGENTS.md"]
+       end
+     )
+     ' "$user_cfg" > "$tmp" && mv "$tmp" "$user_cfg"
+
+  echo "==> Updated opencode config: $user_cfg"
+}
+
+install_codex_plugin() {
+  local plugin_name="$1"
+  local codex_cfg=".codex-plugin/plugin.json"
+  local repo_cfg="$MARKETPLACE_DIR/.codex-plugin/plugin.json"
+
+  if [ ! -f "$repo_cfg" ]; then
+    echo "   (codex plugin.json not found in repo — skipping codex config for $plugin_name)" >&2
+    return 0
+  fi
+
+  mkdir -p .codex-plugin
+
+  if [ ! -f "$codex_cfg" ]; then
+    cp "$repo_cfg" "$codex_cfg"
+    echo "==> Created $codex_cfg"
+    return 0
+  fi
+
+  # Merge agent/command blocks from the harness plugin's opencode.json
+  local repo_opencode="$MARKETPLACE_DIR/opencode.json"
+  if [ -f "$repo_opencode" ]; then
+    local tmp=$(mktemp)
+    jq --argjson ha "$(jq '.agent // {}' "$repo_opencode" 2>/dev/null)" \
+       --argjson hc "$(jq '.command // {}' "$repo_opencode" 2>/dev/null)" '
+       .agent = ((.agent // {}) * $ha) |
+       .command = ((.command // {}) * $hc)
+    ' "$codex_cfg" > "$tmp" && mv "$tmp" "$codex_cfg"
+  fi
+
+  echo "==> Updated codex config: $codex_cfg"
+}
+
+# ── Interactive checklist ────────────────────────────────────────────────────
 select_menu() {
   items=$(cat)
   n=$(printf '%s\n' "$items" | wc -l | tr -d ' ')
@@ -255,105 +433,338 @@ ensure_jq() {
   command -v jq >/dev/null 2>&1
 }
 
+# ── Helper: find harness repo file in plugin cache or MARKETPLACE_DIR ────────
+harness_file() {
+  # $1 = relative path inside the harness plugin (e.g. config/settings.json)
+  # First try the Claude plugin cache, then fall back to MARKETPLACE_DIR
+  local cached
+  cached=$(ls -dt "$HOME"/.claude/plugins/cache/*/harness/*/config 2>/dev/null | head -n1)
+  if [ -n "$cached" ] && [ -f "$cached/$1" ]; then
+    echo "$cached/$1"
+  elif [ -n "$MARKETPLACE_DIR" ] && [ -f "$MARKETPLACE_DIR/$1" ]; then
+    echo "$MARKETPLACE_DIR/$1"
+  fi
+}
+
+# ── Status line ──────────────────────────────────────────────────────────────
 enable_statusline() {
   ensure_jq || { echo "   (jq required — enable the status line by hand, see README)" >&2; return 1; }
-  if [ "$CLI" = "claude" ]; then
-    script=$(ls -dt "$HOME"/.claude/plugins/cache/*/harness/*/scripts/statusline.sh 2>/dev/null | head -n1)
-    [ -n "$script" ] || { echo "   (statusline.sh not found — is the harness plugin installed?)" >&2; return 1; }
-    settings="$HOME/.claude/settings.json"
-    mkdir -p "$HOME/.claude"
-    [ -f "$settings" ] || echo '{}' > "$settings"
-    tmp=$(mktemp)
-    jq --arg cmd "bash $script" '.statusLine = {type:"command", command:$cmd}' "$settings" > "$tmp" && mv "$tmp" "$settings"
-    echo "==> Status line enabled in $settings"
-  else
-    echo "   (status line: add scripts/statusline.sh path to your CLI config manually)"
-  fi
+
+  for cli in $CLI; do
+    case "$cli" in
+      claude)
+        script=$(ls -dt "$HOME"/.claude/plugins/cache/*/harness/*/scripts/statusline.sh 2>/dev/null | head -n1)
+        [ -n "$script" ] || script="$MARKETPLACE_DIR/scripts/statusline.sh"
+        [ -n "$script" ] && [ -f "$script" ] || { echo "   (statusline.sh not found — is the harness plugin installed?)" >&2; continue; }
+        settings="$HOME/.claude/settings.json"
+        mkdir -p "$HOME/.claude"
+        [ -f "$settings" ] || echo '{}' > "$settings"
+        tmp=$(mktemp)
+        jq --arg cmd "bash $script" '.statusLine = {type:"command", command:$cmd}' "$settings" > "$tmp" && mv "$tmp" "$settings"
+        echo "==> Status line enabled in $settings"
+        ;;
+      opencode)
+        script="$MARKETPLACE_DIR/scripts/statusline.sh"
+        [ -n "$script" ] && [ -f "$script" ] || { echo "   (statusline.sh not found)" >&2; continue; }
+        mkdir -p "$HOME/.config/opencode"
+        user_cfg="$HOME/.config/opencode/opencode.jsonc"
+        [ -f "$user_cfg" ] || echo '{}' > "$user_cfg"
+        # Strip JSONC comments and trailing commas, add statusLine, re-serialize
+        tmp=$(mktemp)
+        sed -e 's|//.*$||g' -e 's|/\*.*\*/||g' -e 's|,[[:space:]]*}|}|g' -e 's|,[[:space:]]*\]|]|g' "$user_cfg" \
+          | jq --arg cmd "bash $script" '.statusLine = {type:"command", command:$cmd}' > "$tmp" \
+          && mv "$tmp" "$user_cfg"
+        echo "==> Status line enabled in $user_cfg"
+        ;;
+      codex)
+        echo "   (status line for Codex: not yet supported — configure manually)"
+        ;;
+    esac
+  done
 }
 
+# ── Shared config ────────────────────────────────────────────────────────────
 apply_config() {
   ensure_jq || { echo "   (jq required — apply the shared config by hand, see README)" >&2; return 0; }
-  if [ "$CLI" = "claude" ]; then
-    cfg=$(ls -dt "$HOME"/.claude/plugins/cache/*/harness/*/config/settings.json 2>/dev/null | head -n1)
-    [ -n "$cfg" ] || { echo "   (shared config not found — is the harness plugin installed?)" >&2; return 0; }
-    settings="$HOME/.claude/settings.json"
-    mkdir -p "$HOME/.claude"
-    [ -f "$settings" ] || echo '{}' > "$settings"
-    tmp=$(mktemp)
-    jq -s '.[0] * .[1]' "$settings" "$cfg" > "$tmp" && mv "$tmp" "$settings"
-    echo "==> Shared config merged into $settings"
-  else
-    echo "   (shared config: apply config/settings.json keys to your CLI config manually)"
-  fi
+
+  for cli in $CLI; do
+    case "$cli" in
+      claude)
+        cfg=$(harness_file "config/settings.json")
+        [ -n "$cfg" ] || { echo "   (shared config not found — is the harness plugin installed?)" >&2; continue; }
+        settings="$HOME/.claude/settings.json"
+        mkdir -p "$HOME/.claude"
+        [ -f "$settings" ] || echo '{}' > "$settings"
+        tmp=$(mktemp)
+        jq -s '.[0] * .[1]' "$settings" "$cfg" > "$tmp" && mv "$tmp" "$settings"
+        echo "==> Shared config merged into $settings"
+        ;;
+      opencode)
+        cfg=$(harness_file "config/settings.json")
+        [ -n "$cfg" ] || { echo "   (shared config not found)" >&2; continue; }
+        mkdir -p "$HOME/.config/opencode"
+        user_cfg="$HOME/.config/opencode/opencode.jsonc"
+        [ -f "$user_cfg" ] || echo '{}' > "$user_cfg"
+        tmp=$(mktemp)
+        # Strip JSONC, then deep-merge
+        sed -e 's|//.*$||g' -e 's|/\*.*\*/||g' -e 's|,[[:space:]]*}|}|g' -e 's|,[[:space:]]*\]|]|g' "$user_cfg" \
+          | jq -s '.[0] * .[1]' - "$cfg" > "$tmp" \
+          && mv "$tmp" "$user_cfg"
+        echo "==> Shared config merged into $user_cfg"
+        ;;
+      codex)
+        cfg=$(harness_file "config/settings.json")
+        [ -n "$cfg" ] || { echo "   (shared config not found)" >&2; continue; }
+        codex_cfg=".codex-plugin/plugin.json"
+        [ -f "$codex_cfg" ] || { echo "   (no .codex-plugin/plugin.json — skipping shared config)" >&2; continue; }
+        tmp=$(mktemp)
+        jq -s '.[0] * .[1]' "$codex_cfg" "$cfg" > "$tmp" && mv "$tmp" "$codex_cfg"
+        echo "==> Shared config merged into $codex_cfg"
+        ;;
+    esac
+  done
 }
 
+# ── Restore home content ─────────────────────────────────────────────────────
 restore_home() {
-  if [ "$CLI" = "claude" ]; then
-    home=$(ls -dt "$HOME"/.claude/plugins/cache/*/harness/*/config/home 2>/dev/null | head -n1)
-    [ -n "$home" ] && [ -n "$(ls -A "$home" 2>/dev/null)" ] || return 0
-    mkdir -p "$HOME/.claude"
-    cp -R "$home"/. "$HOME/.claude/"
-    echo "==> Restored backed-up user content into $HOME/.claude"
-  fi
+  for cli in $CLI; do
+    case "$cli" in
+      claude)
+        home=$(ls -dt "$HOME"/.claude/plugins/cache/*/harness/*/config/home 2>/dev/null | head -n1)
+        [ -n "$home" ] && [ -n "$(ls -A "$home" 2>/dev/null)" ] || continue
+        mkdir -p "$HOME/.claude"
+        cp -R "$home"/. "$HOME/.claude/"
+        echo "==> Restored backed-up user content into $HOME/.claude"
+        ;;
+      opencode)
+        home_dir=$(harness_file "config/home")
+        [ -n "$home_dir" ] && [ -d "$home_dir" ] && [ -n "$(ls -A "$home_dir" 2>/dev/null)" ] || continue
+        mkdir -p "$HOME/.config/opencode"
+        cp -R "$home_dir"/. "$HOME/.config/opencode/"
+        echo "==> Restored backed-up user content into $HOME/.config/opencode"
+        ;;
+    esac
+  done
 }
 
+# ── MCP servers ──────────────────────────────────────────────────────────────
 install_mcps() {
   ensure_jq || { echo "   (jq required — add MCP servers by hand, see README)" >&2; return 0; }
-  cfg=$(ls -dt "$HOME"/.claude/plugins/cache/*/harness/*/config/mcp.json 2>/dev/null | head -n1)
+  cfg=$(harness_file "config/mcp.json")
   [ -n "$cfg" ] || { echo "   (no MCP inventory found — nothing to add)"; return 0; }
   names=$(jq -r '.mcpServers // {} | keys[]' "$cfg" 2>/dev/null)
   [ -n "$names" ] || { echo "   (no MCP servers in inventory)"; return 0; }
 
-  if [ "$CLI" = "claude" ]; then
-    if ! { : < /dev/tty; } 2>/dev/null; then
-      echo "   (no terminal — skipping MCP setup; add them later with 'claude mcp add-json')" >&2
-      return 0
-    fi
-    for name in $names; do
-      type=$(jq -r --arg n "$name" '.mcpServers[$n].type // "stdio"' "$cfg")
-      printf '\nAdd MCP server "%s" (%s)? [y/N] ' "$name" "$type" > /dev/tty
-      read ans < /dev/tty
-      case "$ans" in y|Y|yes|YES) ;; *) echo "   (skipped $name)"; continue ;; esac
-      json=$(jq -c --arg n "$name" '.mcpServers[$n]' "$cfg")
-      skip=
-      for ph in $(printf '%s' "$json" | grep -oE '\$\{[A-Za-z0-9_]+\}' | sort -u); do
-        var=$(printf '%s' "$ph" | sed 's/^\${//; s/}$//')
-        printf '  Value for %s (or ENTER to skip %s): ' "$var" "$name" > /dev/tty
-        sttysv=$(stty -g < /dev/tty); stty -echo < /dev/tty
-        read val < /dev/tty; stty "$sttysv" < /dev/tty; printf '\n' > /dev/tty
-        [ -z "$val" ] && { echo "   (skipped $name — no $var provided)"; skip=1; break; }
-        json=$(printf '%s' "$json" | jq -c --arg v "$val" --arg p "$var" 'walk(if type=="string" then gsub("\\$\\{"+$p+"\\}"; $v) else . end)')
-      done
-      [ -n "$skip" ] && continue
-      claude mcp add-json --scope user "$name" "$json" && echo "==> Added MCP server: $name" || echo "   (failed to add $name)" >&2
-    done
-  else
-    # For opencode/codex, create .mcp.json at project root
-    if [ ! -f .mcp.json ]; then
-      jq '{mcpServers: .mcpServers}' "$cfg" > .mcp.json
-      echo "==> Created .mcp.json with MCP server inventory"
-    else
-      echo "   (.mcp.json already exists — merge manually if needed)"
-    fi
+  for cli in $CLI; do
+    case "$cli" in
+      claude)
+        if ! { : < /dev/tty; } 2>/dev/null; then
+          echo "   (no terminal — skipping MCP setup; add them later with 'claude mcp add-json')" >&2
+          continue
+        fi
+        for name in $names; do
+          type=$(jq -r --arg n "$name" '.mcpServers[$n].type // "stdio"' "$cfg")
+          printf '\nAdd MCP server "%s" (%s)? [y/N] ' "$name" "$type" > /dev/tty
+          read ans < /dev/tty
+          case "$ans" in y|Y|yes|YES) ;; *) echo "   (skipped $name)"; continue ;; esac
+          json=$(jq -c --arg n "$name" '.mcpServers[$n]' "$cfg")
+          skip=
+          for ph in $(printf '%s' "$json" | grep -oE '\$\{[A-Za-z0-9_]+\}' | sort -u); do
+            var=$(printf '%s' "$ph" | sed 's/^\${//; s/}$//')
+            printf '  Value for %s (or ENTER to skip %s): ' "$var" "$name" > /dev/tty
+            sttysv=$(stty -g < /dev/tty); stty -echo < /dev/tty
+            read val < /dev/tty; stty "$sttysv" < /dev/tty; printf '\n' > /dev/tty
+            [ -z "$val" ] && { echo "   (skipped $name — no $var provided)"; skip=1; break; }
+            json=$(printf '%s' "$json" | jq -c --arg v "$val" --arg p "$var" 'walk(if type=="string" then gsub("\\$\\{"+$p+"\\}"; $v) else . end)')
+          done
+          [ -n "$skip" ] && continue
+          claude mcp add-json --scope user "$name" "$json" && echo "==> Added MCP server: $name" || echo "   (failed to add $name)" >&2
+        done
+        ;;
+      opencode|codex)
+        # Per-server interactive prompt for opencode/codex
+        if ! { : < /dev/tty; } 2>/dev/null; then
+          echo "   (no terminal — adding MCP servers without unresolved secrets)" >&2
+          # Only include servers whose values have no ${...} placeholders
+          filtered=$(jq '{mcpServers: (.mcpServers // {} | to_entries | map(select(.value | [.. | strings | test("\\$\\{")] | any | not)) | from_entries)}' "$cfg" 2>/dev/null)
+          has_servers=$(echo "$filtered" | jq '.mcpServers | length' 2>/dev/null)
+          if [ "${has_servers:-0}" -gt 0 ]; then
+            if [ -f .mcp.json ]; then
+              tmp=$(mktemp)
+              jq -s '.[0] * .[1] | .mcpServers = ((.[0].mcpServers // {}) * (.[1].mcpServers // {}))' .mcp.json "$filtered" > "$tmp" \
+                && mv "$tmp" .mcp.json
+            else
+              echo "$filtered" > .mcp.json
+            fi
+            echo "==> Added MCP servers to .mcp.json (servers needing secrets were skipped)"
+          else
+            echo "   (all MCP servers need secrets — none added; configure manually)"
+          fi
+          continue
+        fi
+
+        # Build merged MCP servers from prompt
+        merged_mcp="{}"
+        for name in $names; do
+          type=$(jq -r --arg n "$name" '.mcpServers[$n].type // "stdio"' "$cfg")
+          printf '\nAdd MCP server "%s" (%s)? [y/N] ' "$name" "$type" > /dev/tty
+          read ans < /dev/tty
+          case "$ans" in y|Y|yes|YES) ;; *) echo "   (skipped $name)"; continue ;; esac
+          json=$(jq -c --arg n "$name" '.mcpServers[$n]' "$cfg")
+          skip=
+          for ph in $(printf '%s' "$json" | grep -oE '\$\{[A-Za-z0-9_]+\}' | sort -u); do
+            var=$(printf '%s' "$ph" | sed 's/^\${//; s/}$//')
+            printf '  Value for %s (or ENTER to skip %s): ' "$var" "$name" > /dev/tty
+            sttysv=$(stty -g < /dev/tty); stty -echo < /dev/tty
+            read val < /dev/tty; stty "$sttysv" < /dev/tty; printf '\n' > /dev/tty
+            [ -z "$val" ] && { echo "   (skipped $name — no $var provided)"; skip=1; break; }
+            json=$(printf '%s' "$json" | jq -c --arg v "$val" --arg p "$var" 'walk(if type=="string" then gsub("\\$\\{"+$p+"\\}"; $v) else . end)')
+          done
+          [ -n "$skip" ] && continue
+          merged_mcp=$(printf '%s %s' "$merged_mcp" "$json" | jq -s '.[0] * {mcpServers: {(.[1] | keys[0]): (.[1] | to_entries[0].value // {})}}')
+          echo "==> Selected MCP server: $name"
+        done
+
+        # Write/update .mcp.json at project root
+        tmp=$(mktemp)
+        if [ ! -f .mcp.json ]; then
+          echo "$merged_mcp" | jq '{mcpServers: .mcpServers}' > .mcp.json
+          echo "==> Created .mcp.json with selected MCP servers"
+        else
+          jq -s '.[0] * .[1] | .mcpServers = ((.[0].mcpServers // {}) * (.[1].mcpServers // {}))' .mcp.json "$merged_mcp" > "$tmp" \
+            && mv "$tmp" .mcp.json
+          echo "==> Updated .mcp.json with selected MCP servers"
+        fi
+
+        # For opencode: also write MCP config into opencode.json
+        if [ "$cli" = "opencode" ]; then
+          mkdir -p "$HOME/.config/opencode"
+          oc_cfg="$HOME/.config/opencode/opencode.jsonc"
+          [ -f "$oc_cfg" ] || echo '{}' > "$oc_cfg"
+          oc_tmp=$(mktemp)
+          # Strip JSONC, merge MCP servers, re-serialize
+          sed -e 's|//.*$||g' -e 's|/\*.*\*/||g' -e 's|,[[:space:]]*}|}|g' -e 's|,[[:space:]]*\]|]|g' "$oc_cfg" \
+            | jq --argjson mc "$(echo "$merged_mcp" | jq '.mcpServers')" '
+              .mcp = ((.mcp // {}) * $mc)
+            ' > "$oc_tmp" && mv "$oc_tmp" "$oc_cfg"
+          echo "==> MCP servers configured in $oc_cfg"
+        fi
+        ;;
+    esac
+  done
+}
+
+# ── Post-install: opencode ───────────────────────────────────────────────────
+post_install_opencode() {
+  ensure_jq || return 0
+  [ -n "$MARKETPLACE_DIR" ] || return 0
+
+  mkdir -p "$HOME/.config/opencode"
+  local user_cfg="$HOME/.config/opencode/opencode.jsonc"
+  local repo_cfg="$MARKETPLACE_DIR/opencode.json"
+
+  [ -f "$repo_cfg" ] || return 0
+  [ -f "$user_cfg" ] || echo '{}' > "$user_cfg"
+
+  local ha hc hm
+  ha=$(jq '.agent // {}' "$repo_cfg" 2>/dev/null)
+  hc=$(jq '.command // {}' "$repo_cfg" 2>/dev/null)
+  hm=$(jq '.mcp // {}' "$repo_cfg" 2>/dev/null)
+
+  local tmp=$(mktemp)
+  jq --argjson ha "$ha" --argjson hc "$hc" --argjson hm "$hm" '
+    .skills = (.skills // {}) |
+    .skills.paths = (
+      ((.skills.paths // []) + ["./skills"] | unique)
+    ) |
+    .agent = ((.agent // {}) * $ha) |
+    .command = ((.command // {}) * $hc) |
+    .mcp = ((.mcp // {}) * $hm) |
+    .instructions = (
+      (.instructions // []) as $existing |
+      if ($existing | map(. | test("AGENTS\\.md$")) | any)
+      then $existing
+      else $existing + ["AGENTS.md"]
+      end
+    )
+  ' "$user_cfg" > "$tmp" && mv "$tmp" "$user_cfg"
+
+  echo "==> Opencode post-install: skills/agents/commands/mcp configured in $user_cfg"
+}
+
+# ── Post-install: codex ──────────────────────────────────────────────────────
+post_install_codex() {
+  ensure_jq || return 0
+  [ -n "$MARKETPLACE_DIR" ] || return 0
+
+  local codex_cfg=".codex-plugin/plugin.json"
+  local repo_cfg="$MARKETPLACE_DIR/.codex-plugin/plugin.json"
+  local repo_opencode="$MARKETPLACE_DIR/opencode.json"
+
+  [ -f "$repo_cfg" ] || return 0
+
+  mkdir -p .codex-plugin
+
+  if [ ! -f "$codex_cfg" ]; then
+    cp "$repo_cfg" "$codex_cfg"
+    echo "==> Created $codex_cfg"
+  fi
+
+  if [ -f "$repo_opencode" ]; then
+    local tmp=$(mktemp)
+    jq --argjson ha "$(jq '.agent // {}' "$repo_opencode" 2>/dev/null)" \
+       --argjson hc "$(jq '.command // {}' "$repo_opencode" 2>/dev/null)" '
+       .agent = ((.agent // {}) * $ha) |
+       .command = ((.command // {}) * $hc)
+    ' "$codex_cfg" > "$tmp" && mv "$tmp" "$codex_cfg"
+    echo "==> Codex post-install: agents/commands configured in $codex_cfg"
   fi
 }
 
-# Add marketplace for Claude Code
-if [ "$CLI" = "claude" ]; then
+# ── Clone harness repo (source of truth for config files) ────────────────────
+clone_repo() {
+  if [ -d ".claude-plugin/marketplace.json" ] || [ -f "opencode.json" ] || [ -d ".codex-plugin" ]; then
+    MARKETPLACE_DIR="$(pwd)"
+    echo "==> Using local repo: $MARKETPLACE_DIR"
+    return 0
+  fi
+
+  TEMP_REPO=$(mktemp -d)
+  echo "==> Cloning harness-engineering repo for config files..."
+  git clone --depth 1 "$REPO_URL" "$TEMP_REPO/harness-engineering" 2>/dev/null \
+    || { echo "   (git clone failed — some setup steps will be skipped)" >&2; return 0; }
+  MARKETPLACE_DIR="$TEMP_REPO/harness-engineering"
+  echo "==> Repo cloned to $MARKETPLACE_DIR"
+}
+
+cleanup() {
+  [ -n "$TEMP_REPO" ] && [ -d "$TEMP_REPO" ] && rm -rf "$TEMP_REPO"
+}
+trap cleanup EXIT
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+# Clone repo (or detect local repo) for config files
+clone_repo
+
+# Add marketplace for Claude Code (only for first CLI in list)
+first_cli=$(echo "$CLI" | awk '{print $1}')
+if [ "$first_cli" = "claude" ]; then
   echo "==> Adding marketplace: $MARKETPLACE"
   [ -n "$DRY" ] || claude plugin marketplace add "$MARKETPLACE" || claude plugin marketplace update "$MARKETPLACE_NAME"
 fi
 
-# Select installation scope for Claude Code
-if [ "$CLI" = "claude" ]; then
+# Select installation scope (only for Claude Code)
+if [ "$first_cli" = "claude" ]; then
   SCOPE=$(select_scope)
   echo "==> Installation scope: $SCOPE"
 fi
 
+# Build checklist menu
 menu_items() {
   for p in $REQUIRED; do
     if plugin_supported "$p" "$CLI"; then
-      printf 'plugin|%s|%s (required)|1\n' "$p" "$p"
+      printf 'plugin|%s|%s|1\n' "$p" "$p"
     else
       echo "   (skipped $p — not supported by $CLI)" >&2
     fi
@@ -363,12 +774,25 @@ menu_items() {
       printf 'plugin|%s|%s|0\n' "$p" "$p"
     fi
   done
-  if [ "$CLI" = "claude" ]; then
+  # Extras depend on which CLIs are being installed
+  has_claude=0; has_opencode=0; has_codex=0
+  for c in $CLI; do
+    case "$c" in
+      claude)   has_claude=1 ;;
+      opencode) has_opencode=1 ;;
+      codex)    has_codex=1 ;;
+    esac
+  done
+  if [ "$has_claude" = 1 ]; then
     printf 'extra|statusline|status line — context %%%%, rate limits, git, tmux|0\n'
     printf 'extra|sharedconfig|shared config — model, notifications, Remote Control|0\n'
     printf 'extra|mcpservers|MCP servers — pick which, with your API keys|0\n'
-  elif [ "$CLI" = "opencode" ]; then
+  fi
+  if [ "$has_opencode" = 1 ]; then
     printf 'extra|statusline|status line — context %%%%, rate limits, git, tmux|0\n'
+    printf 'extra|mcpservers|MCP servers — pick which, with your API keys|0\n'
+  fi
+  if [ "$has_codex" = 1 ]; then
     printf 'extra|mcpservers|MCP servers — pick which, with your API keys|0\n'
   fi
 }
@@ -388,5 +812,13 @@ for sel in $SELECTED; do
   esac
 done
 
+# Post-install: configure opencode and codex after plugins are installed
+for cli in $CLI; do
+  case "$cli" in
+    opencode) post_install_opencode ;;
+    codex)    post_install_codex ;;
+  esac
+done
+
 [ -n "$SELECTED" ] || echo "==> Nothing selected."
-echo "==> Done. Restart $CLI to load everything."
+echo "==> Done. Restart your CLI to load everything."
