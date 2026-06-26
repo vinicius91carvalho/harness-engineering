@@ -11,6 +11,20 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.9.0...v0.10.0) (2026-06-26)
+
+
+### Features
+
+* add playwright MCP server to config ([6fbebc2](https://github.com/vinicius91carvalho/harness-engineering/commit/6fbebc200256e929f95d41c45e4d24afd1cfe3a7))
+* make external plugins optional in installer ([bbfd469](https://github.com/vinicius91carvalho/harness-engineering/commit/bbfd4693f198edd6d27c3da3d9b27aae2a0fe67a))
+
+
+### Documentation
+
+* move plugins, extras, installer options, and backup sync to docs/ ([b239ede](https://github.com/vinicius91carvalho/harness-engineering/commit/b239ede13b0b751f470481afcdf2d2fdd8398499))
+* update agent and skill instructions for optional plugins ([700c28c](https://github.com/vinicius91carvalho/harness-engineering/commit/700c28c00fbc5752edf0cdc2e6ba1c796048ed95))
+
 ## [0.9.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.8.0...v0.9.0) (2026-06-26)
 
 
