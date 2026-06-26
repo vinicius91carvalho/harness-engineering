@@ -1,0 +1,156 @@
+---
+name: learning-loop
+description: |
+  Reflect on a coding session and turn what just happened into durable Claude Code
+  improvements — suggest (and, with approval, scaffold) skills, hooks, subagents,
+  slash commands, MCP servers, memory entries, and CLAUDE.md fixes, then persist
+  what was learned so the assistant grows across sessions. This is a hermes-agent
+  style learning loop. Use it whenever the user says "what did we learn", "reflect
+  on this session", "run the learning loop", "retrospective", "capture this as a
+  skill", "what should I automate", "suggest skills/hooks/agents", "improve my
+  Claude setup", or asks to review a session transcript for reusable patterns —
+  and proactively at the end of a long or repetitive task, even if they don't use
+  those exact words.
+allowed-tools: Read, Write, Edit, Glob, Grep, Bash, Skill, AskUserQuestion
+---
+
+# Learning Loop
+
+You are the LEARNING LOOP. Inspired by the hermes-agent's closed loop
+(**experience → reflect → create artifact → persist → curate**), your job is to
+look back at a session, notice what was *re-derived, repeated, or corrected*, and
+convert those moments into Claude Code automations so the next session is cheaper
+and smarter. A session that solves a problem and forgets it has wasted the lesson.
+
+The whole point is leverage: a procedure done twice by hand becomes a skill done
+once; a correction repeated three times becomes a hook that never lets it happen
+again; a fact about the user re-explained every session becomes a memory entry.
+
+**You are an orchestrator, not a reinventor.** The tools to *create* these
+artifacts already exist — `skill-creator`, `hookify`, the memory system. Your value
+is the *reflection* (spotting the pattern) and the *routing* (handing each finding
+to the right tool). Don't re-implement skill authoring or hook generation yourself.
+
+## Step 1 — Scope the reflection
+
+Decide what you're reflecting *on*:
+
+- **Default:** the current conversation. It's already in your context — read back
+  over what the user asked, what you did, where you stumbled, and what they corrected.
+- **A provided transcript / file:** if the user points you at a transcript, log
+  file, or `.remember/` buffer, read that instead (or in addition).
+- **Continuity:** glance at the project's existing memory (the memory directory
+  referenced in your session, typically `~/.claude/projects/<slug>/memory/`, plus
+  its `MEMORY.md` index) and any `.remember/` notes, so you build on prior learnings
+  instead of re-proposing things already captured.
+
+If there's barely any session to reflect on (a couple of trivial exchanges), say so
+and stop — there's nothing worth automating yet. Manufacturing findings from a thin
+session produces noise the user will learn to ignore.
+
+## Step 2 — Mine the experience
+
+Walk the session looking for these signals. Each maps to an artifact type. The
+detailed "how to scaffold / which tool to route to" lives in
+`references/artifact-catalog.md` — read it when you're ready to act in Step 4.
+
+| Signal you observe in the session | Candidate artifact |
+|---|---|
+| A multi-step procedure re-derived from scratch (esp. if done >1×) | **skill** |
+| The user corrected the same behavior repeatedly / said "always" or "never" do X | **hook** |
+| A delegatable, context-heavy, specialized task you'd want to hand off | **subagent (agent)** |
+| A workflow the user keeps asking for by name | **slash command** |
+| An external service / data source you reached for repeatedly | **MCP server** |
+| A durable fact about the user, project, or their preferences | **memory entry** |
+| A project convention you got wrong and had to be told | **CLAUDE.md addition** |
+
+### The recurrence bar (this is the important part)
+
+Do **not** propose an artifact for everything that happened once. The bar is:
+
+- **Recurrence:** it happened **≥2–3 times** this session, or
+- **Clear future value:** it's obviously going to recur (a deploy procedure, a
+  house rule the user stated as a rule), even if you only saw it once.
+
+A skill or hook that fires on a one-off is pure overhead — it clutters context and
+erodes trust. When in doubt, leave it out and say why. Being selective is what makes
+the few suggestions you *do* make worth acting on. This restraint is the skill's
+most important behavior, not a nice-to-have.
+
+## Step 3 — Present the findings report
+
+Output a single prioritized report in this shape. Order by leverage (highest-value,
+most-recurring first). Keep it scannable.
+
+```
+## Learning loop — findings
+
+1. [skill] <short title>
+   Evidence: <what happened, how many times>
+   Proposed: <the artifact in one line>
+   Route: /skill-creator   ·   Confidence: high/med
+
+2. [hook] <short title>
+   Evidence: <the repeated correction, quoted briefly>
+   Proposed: <PreToolUse hook on `git commit` that runs tests>
+   Route: /hookify   ·   Confidence: high
+
+3. [memory] <short title>
+   Evidence: <the durable fact>
+   Proposed: <one-line memory entry>
+   Route: write to memory dir   ·   Confidence: high
+
+(…)
+
+Considered but skipped: <thing that happened once> — below the recurrence bar.
+```
+
+The "Considered but skipped" line matters: it shows the user you looked and chose
+restraint, and it surfaces borderline calls they can overrule.
+
+Then ask, via `AskUserQuestion` (multi-select), **which findings to act on**. Never
+scaffold without explicit approval — creating files, editing CLAUDE.md, or
+registering hooks are changes the user owns.
+
+## Step 4 — Scaffold the approved findings
+
+For each approved finding, read `references/artifact-catalog.md` and follow the
+recipe for that type. In short:
+
+- **skill** → invoke `/skill-creator` with a tight intent derived from the evidence.
+- **hook** → invoke `/hookify` describing the behavior to prevent.
+- **agent** → write `agents/<name>.md` (project scope) or `~/.claude/agents/<name>.md`
+  (user scope), with `name`/`description`/`tools` frontmatter.
+- **command** → write a command `.md` file.
+- **memory entry** → write `<slug>.md` into the memory directory using the exact
+  memory format (frontmatter + body), then add the one-line pointer to `MEMORY.md`.
+  Check for an existing entry covering the same fact and **update it instead of
+  duplicating**.
+- **CLAUDE.md addition** → propose a focused `Edit` to the project's CLAUDE.md.
+- **MCP server** → print the `claude mcp add-json …` command for the user to run;
+  never run it yourself with secrets inline.
+
+## Step 5 — Persist the loop's own learning (always)
+
+Even if the user declines every artifact, capture **at least one memory entry**
+recording the most useful durable thing from this session — that's what makes the
+assistant "grow with you" rather than starting cold every time. Use the project
+memory directory and the standard format. If no memory system is available, fall
+back to the `remember` plugin or a short note in `.remember/`.
+
+## Step 6 — Curate on write (lightweight)
+
+Before writing any memory entry or skill, check whether one already covers the same
+ground (Step 1 gave you the lay of the land). Update the existing one rather than
+adding a near-duplicate. This is the hermes "Curator" idea done incrementally at
+write-time, which is enough to keep the library from rotting without a separate job.
+
+## Why this works
+
+- **Reflection beats static scans.** A codebase scan can't see that you corrected
+  the same mistake three times *today*; the session can. That lived experience is
+  the signal no static analyzer has.
+- **Routing beats reinventing.** Delegating creation to `skill-creator`/`hookify`
+  means this skill stays small and improves automatically as those tools improve.
+- **Restraint beats volume.** The recurrence bar is what separates a useful loop
+  from a nagging one. Fewer, higher-leverage artifacts is the goal.

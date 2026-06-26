@@ -94,6 +94,29 @@ The `harness` plugin bundles a **Spec → Build → QA pipeline**: an autonomous
 
 **Why it holds together:** claims are atomic (a `flock` registry in `.git`), so N sessions self-distribute across feature areas with no two ever building the same thing; each claim gets its own worktree, branch, and port, so files and running servers never collide; merges to `main` are serialized. QA is **independent** — a separate agent verifies each feature through the real UI as a black-box — and a QA defect flips the feature back to unimplemented and re-routes it to coding, with retries escalating to a stronger model before giving up. "Done" means *observably working*, and quality ratchets up instead of degrading.
 
+## Learning loop
+
+> *"Little by little, one travels far."*
+
+`/harness:learning-loop` is a [hermes-agent](https://github.com/NousResearch/hermes-agent)–style self-improvement loop: **experience → reflect → create artifact → persist → curate**. Run it after a session (or point it at a transcript) and it looks back at what was *re-derived, repeated, or corrected*, then proposes — and on your approval, scaffolds — the Claude Code automation that would have made it cheaper:
+
+| You did this in the session… | …it suggests |
+| --- | --- |
+| Re-derived a multi-step procedure (esp. more than once) | a **skill** (via `/skill-creator`) |
+| Corrected the same behavior repeatedly ("always/never do X") | a **hook** (via `/hookify`) |
+| A delegatable, context-heavy investigation | a **subagent** |
+| A durable fact about you or the project | a **memory entry** (written to your memory dir) |
+| A convention it got wrong | a **CLAUDE.md** addition |
+
+It's an **orchestrator** — the reflection and routing are its job; the actual creation is delegated to the tools above, so it stays small and improves as they do. A built-in **recurrence bar** (act on things that happened ≥2–3× or are clearly going to recur) keeps it from nagging. Durable learnings persist to your existing per-project memory directory + `MEMORY.md`, so the assistant grows across sessions instead of starting cold. Bundled `evals/` (sample session transcripts with planted patterns) verify it via the skill-creator eval harness.
+
+Invocation is manual by default. For hermes-style autonomy, opt in with a `Stop` hook in `~/.claude/settings.json` that nudges you at session end:
+
+```jsonc
+"Stop": [{ "hooks": [{ "type": "command",
+  "command": "echo 'Run /harness:learning-loop to capture what you learned this session.'" }]}]
+```
+
 ## Plugins
 
 > *"Some plugins that ship deserve deleting, and some that are deleted deserve shipping — these are the ones worth keeping."*
@@ -102,7 +125,7 @@ Everything below is a row in the installer's checklist. Required plugins are pre
 
 | Plugin | Required? | Namespace | Source | What it does |
 | --- | --- | --- | --- | --- |
-| `harness` | required | `/harness:*` | this repo | My own skills, agents, and scripts — the [spec→build→QA pipeline](#framework) (`planner`/`generator`/`evaluator` + agents), `/harness:update-project`, and the status line. |
+| `harness` | required | `/harness:*` | this repo | My own skills, agents, and scripts — the [spec→build→QA pipeline](#framework) (`planner`/`generator`/`evaluator` + agents), the [learning loop](#learning-loop), `/harness:update-project`, and the status line. |
 | `ponytail` | required | `/ponytail:*` | [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail) | Lazy senior-dev mode — forces the simplest solution that works (YAGNI, stdlib first, no unrequested abstractions). |
 | `context7` | required | MCP server | [claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | Up-to-date, version-specific library docs pulled into context (Upstash Context7). |
 | `remember` | required | `/remember:*` | [Digital-Process-Tools/claude-remember](https://github.com/Digital-Process-Tools/claude-remember) | Saves session state to `.remember/` for clean continuation across sessions. |
