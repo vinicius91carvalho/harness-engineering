@@ -11,6 +11,23 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.5.0...v0.6.0) (2026-06-26)
+
+
+### Features
+
+* **harness:** add learning-loop skill for session-driven self-improvement ([6873090](https://github.com/vinicius91carvalho/harness-engineering/commit/6873090ab7f6bc431e39e98458b172a11e853e4a))
+
+
+### Continuous Integration
+
+* bump plugin.json version on release ([7b00ec7](https://github.com/vinicius91carvalho/harness-engineering/commit/7b00ec798fa12507ae00e460a1ebf1b1b6def2ec))
+
+
+### Documentation
+
+* update CHANGELOG for v0.5.0 [skip ci] ([870bb3d](https://github.com/vinicius91carvalho/harness-engineering/commit/870bb3dc105d08e83a08f9694e46ba9477d1e246))
+
 ## [0.5.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.4.0...v0.5.0) (2026-06-26)
 
 
