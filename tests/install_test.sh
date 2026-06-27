@@ -17,6 +17,7 @@ done
 
 export PATH="$TMP/bin:/usr/bin:/bin"
 export HOME="$TMP/home"
+export XDG_CONFIG_HOME="$TMP/home/.config"
 export HARNESS_TEST_LOG="$TMP/commands.log"
 
 fail() { printf 'not ok - %s\n' "$1" >&2; exit 1; }
