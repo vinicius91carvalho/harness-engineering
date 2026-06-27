@@ -44,10 +44,10 @@ the scripts are worse than no docs.
 ## Testing a marketplace change
 
 ```sh
-claude plugin marketplace update vinicius91carvalho   # refresh after editing marketplace.json
-claude plugin install <name>@vinicius91carvalho
+claude plugin marketplace update harness-engineering   # refresh after editing marketplace.json
+claude plugin install <name>@harness-engineering
 ```
 
-The marketplace name is `vinicius91carvalho` (from `marketplace.json`'s `name`), distinct from the repo slug `vinicius91carvalho/harness-engineering` used to *add* the marketplace.
+The marketplace name is `harness-engineering` (from `marketplace.json`'s `name`), distinct from the repo slug `vinicius91carvalho/harness-engineering` used to *add* the marketplace.
 
 For Opencode and Codex, the plugin is discovered via `opencode.json` and `.codex-plugin/plugin.json` respectively — no marketplace update needed.

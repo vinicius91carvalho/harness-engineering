@@ -197,7 +197,7 @@ function Apply-ClaudeSharedConfig {
 }
 
 function Read-PasteableSecret([string]$Prompt) {
-  Write-Host -NoNewline "$Prompt: "
+  Write-Host -NoNewline "${Prompt}: "
   $value = [Text.StringBuilder]::new()
   while ($true) {
     $key = [Console]::ReadKey($true)

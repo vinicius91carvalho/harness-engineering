@@ -56,7 +56,7 @@ pass 'dry-run performs no writes or host commands'
 : >"$HARNESS_TEST_LOG"
 "$ROOT/install.sh" --cli claude --no </dev/null >"$TMP/out"
 grep -q '^claude plugin marketplace' "$HARNESS_TEST_LOG" || fail 'Claude marketplace command missing'
-grep -q '^claude plugin install harness@vinicius91carvalho --scope user$' "$HARNESS_TEST_LOG" || fail 'Claude plugin command is not native'
+grep -q '^claude plugin install harness@harness-engineering --scope user$' "$HARNESS_TEST_LOG" || fail 'Claude plugin command is not native'
 if grep -Eq '^(codex|opencode) ' "$HARNESS_TEST_LOG"; then fail 'unselected host was invoked'; fi
 pass 'only the selected Claude host is changed'
 
