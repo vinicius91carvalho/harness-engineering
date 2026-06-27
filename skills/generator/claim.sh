@@ -27,7 +27,7 @@ read_claims() { local f; f="$(claims "$1")"; [ -s "$f" ] && cat "$f" || echo '{}
 acquire_state_lock() {
   local repo="$1" ld tries=0 token; ld="$(stateld "$repo")"
   mkdir -p "$(dirname "$ld")"
-  token="$BASHPID.$RANDOM.$(date +%s)"
+  token="${BASHPID:-$$}.$RANDOM.$(date +%s)"
   while :; do
     if mkdir "$ld" 2>/dev/null; then
       printf '%s\n' "$token" > "$ld/owner"
