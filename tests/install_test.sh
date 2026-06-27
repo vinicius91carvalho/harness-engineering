@@ -73,9 +73,9 @@ pass 'only the selected Codex host is changed'
 test -f "$HOME/.config/opencode/skills/harness-generator/SKILL.md" || fail 'OpenCode namespaced skill missing'
 test -f "$HOME/.config/opencode/agents/harness-coding-agent.md" || fail 'OpenCode namespaced agent missing'
 test -f "$HOME/.config/opencode/commands/harness-generator.md" || fail 'OpenCode namespaced command missing'
-first=$(find "$HOME/.config/opencode" -type f -exec sha256sum {} \; | sort | sha256sum)
+first=$(find "$HOME/.config/opencode" -type f -exec shasum -a 256 {} \; | sort | shasum -a 256)
 "$ROOT/install.sh" --cli opencode --no </dev/null >"$TMP/out"
-second=$(find "$HOME/.config/opencode" -type f -exec sha256sum {} \; | sort | sha256sum)
+second=$(find "$HOME/.config/opencode" -type f -exec shasum -a 256 {} \; | sort | shasum -a 256)
 [ "$first" = "$second" ] || fail 'repeated OpenCode install is not idempotent'
 [ ! -s "$HARNESS_TEST_LOG" ] || fail 'OpenCode asset install should not invoke another host'
 pass 'OpenCode assets are namespaced and idempotent'
