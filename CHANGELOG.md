@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### [0.12.2](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.12.1...v0.12.2) (2026-06-27)
+
+
+### Bug Fixes
+
+* **ci:** align test and docs with renamed marketplace, fix PS1 variable syntax ([c198d45](https://github.com/vinicius91carvalho/harness-engineering/commit/c198d458773be8cd509ac623008618eac0887376))
+
 ### [0.12.1](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.12.0...v0.12.1) (2026-06-27)
 
 
