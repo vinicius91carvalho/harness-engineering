@@ -3,7 +3,7 @@
 set -eu
 
 MARKETPLACE_REPO="vinicius91carvalho/harness-engineering"
-CLAUDE_MARKETPLACE="vinicius91carvalho"
+CLAUDE_MARKETPLACE="harness-engineering"
 CODEX_MARKETPLACE="harness-engineering"
 REPO_URL="https://github.com/$MARKETPLACE_REPO.git"
 MEMORY_INSTALLER="https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh"
@@ -53,9 +53,26 @@ done
 case "$CLI_REQUEST" in ""|claude|codex|opencode|all) ;; *) die "invalid --cli value: $CLI_REQUEST" ;; esac
 case "$SCOPE" in ""|user|project|local) ;; *) die "invalid --scope value: $SCOPE" ;; esac
 
+cli_installed() {
+  cli=$1
+  command -v "$cli" >/dev/null 2>&1 && return 0
+  [ "$cli" = opencode ] || return 1
+  # The official OpenCode installer writes here before the updated PATH is
+  # visible to the current shell. Also honor its documented custom locations.
+  for path in \
+    "${OPENCODE_INSTALL_DIR:-}/opencode" \
+    "${XDG_BIN_DIR:-}/opencode" \
+    "$HOME/bin/opencode" \
+    "$HOME/.opencode/bin/opencode"
+  do
+    [ "$path" != /opencode ] && [ -x "$path" ] && return 0
+  done
+  return 1
+}
+
 detected_clis=""
 for cli in claude codex opencode; do
-  command -v "$cli" >/dev/null 2>&1 && detected_clis="$detected_clis $cli"
+  cli_installed "$cli" && detected_clis="$detected_clis $cli"
 done
 detected_clis=${detected_clis# }
 [ -n "$detected_clis" ] || die 'no supported CLI found (install Claude Code, Codex, or OpenCode)'
@@ -63,6 +80,87 @@ detected_clis=${detected_clis# }
 tty_available() { [ -r /dev/tty ] && [ -w /dev/tty ] && (set +e; : </dev/tty) >/dev/null 2>&1; }
 word_count() { set -- $1; echo "$#"; }
 word_at() { list=$1; wanted=$2; i=1; for value in $list; do [ "$i" -eq "$wanted" ] && { echo "$value"; return; }; i=$((i + 1)); done; }
+
+# Read one keypress from the terminal and echo a logical token (arrows, Enter,
+# Space, etc). Runs inside $() so its locals never leak.
+menu_key() {
+  c=$(dd if=/dev/tty bs=1 count=1 2>/dev/null || true)
+  case "$c" in
+    "") printf enter ;;
+    " ") printf space ;;
+    q|Q) printf quit ;;
+    a|A) printf all ;;
+    k|K) printf up ;;
+    j|J) printf down ;;
+    [1-9]) printf 'num:%s' "$c" ;;
+    "$(printf '\033')")
+      s=$(dd if=/dev/tty bs=1 count=1 2>/dev/null || true)
+      t=$(dd if=/dev/tty bs=1 count=1 2>/dev/null || true)
+      case "$s$t" in "[A") printf up ;; "[B") printf down ;; *) printf other ;; esac ;;
+    *) printf other ;;
+  esac
+}
+
+# Arrow-key menu drawn on the alternate screen buffer: every frame repaints from
+# the top, so navigation never duplicates lines and it can't corrupt when the
+# list is longer than the window (it clips instead of scrolling old frames in).
+# ponytail: assumes the terminal is taller than the list; add a scrolling
+# viewport only if tiny windows ever matter.
+# In:  MENU_MODE=single|multi, MENU_ITEMS (space list), MENU_CHECKED (multi only),
+#      MENU_TITLE.  Out: MENU_RESULT (multi: checked items; single: chosen one).
+select_menu() {
+  total=$(word_count "$MENU_ITEMS")
+  [ "$total" -gt 0 ] || { MENU_RESULT=; return; }
+  cursor=1; checked=" $MENU_CHECKED "
+  saved=$(stty -g </dev/tty)
+  menu_restore() { stty "$saved" </dev/tty 2>/dev/null || true; printf '\033[?1049l' >/dev/tty; }
+  trap 'menu_restore; cleanup; exit 130' HUP INT TERM
+  stty -echo -icanon min 1 </dev/tty
+  printf '\033[?1049h' >/dev/tty
+  while :; do
+    printf '\033[H\033[J%s\n\n' "$MENU_TITLE" >/dev/tty
+    i=1
+    for item in $MENU_ITEMS; do
+      [ "$i" -eq "$cursor" ] && pointer='> ' || pointer='  '
+      if [ "$MENU_MODE" = multi ]; then
+        case "$checked" in *" $item "*) box='[x]' ;; *) box='[ ]' ;; esac
+        printf '%s%s %s\n' "$pointer" "$box" "$item" >/dev/tty
+      else
+        printf '%s%s\n' "$pointer" "$item" >/dev/tty
+      fi
+      i=$((i + 1))
+    done
+    if [ "$MENU_MODE" = multi ]; then
+      printf '\n  up/down: move   space: toggle   a: all/none   enter: confirm   q: cancel\n' >/dev/tty
+    else
+      printf '\n  up/down: move   enter: select   q: cancel\n' >/dev/tty
+    fi
+    key=$(menu_key)
+    case "$key" in
+      up) [ "$cursor" -gt 1 ] && cursor=$((cursor - 1)) ;;
+      down) [ "$cursor" -lt "$total" ] && cursor=$((cursor + 1)) ;;
+      space)
+        [ "$MENU_MODE" = multi ] || continue
+        cur=$(word_at "$MENU_ITEMS" "$cursor")
+        case "$checked" in
+          *" $cur "*) checked=$(printf '%s' "$checked" | sed "s/ $cur / /") ;;
+          *) checked="$checked$cur " ;;
+        esac ;;
+      all)
+        [ "$MENU_MODE" = multi ] || continue
+        on=1; for item in $MENU_ITEMS; do case "$checked" in *" $item "*) ;; *) on=0 ;; esac; done
+        [ "$on" -eq 1 ] && checked=' ' || checked=" $MENU_ITEMS " ;;
+      num:*)
+        n=${key#num:}
+        if [ "$n" -le "$total" ]; then cursor=$n; [ "$MENU_MODE" = single ] && break; fi ;;
+      enter) break ;;
+      quit) menu_restore; trap cleanup EXIT HUP INT TERM; die 'cancelled' ;;
+    esac
+  done
+  menu_restore
+  trap cleanup EXIT HUP INT TERM
+  if [ "$MENU_MODE" = multi ]; then MENU_RESULT=$(echo $checked); else MENU_RESULT=$(word_at "$MENU_ITEMS" "$cursor"); fi
+}
 
 select_cli() {
   if [ -n "$CLI_REQUEST" ]; then
@@ -76,35 +174,9 @@ select_cli() {
   if [ "$count" -eq 1 ]; then CLI=$detected_clis; return; fi
   tty_available || die "multiple CLIs detected ($detected_clis); pass --cli claude|codex|opencode|all"
 
-  total=$((count + 1)); cursor=1
-  saved=$(stty -g </dev/tty)
-  restore_tty() { stty "$saved" </dev/tty 2>/dev/null || true; }
-  trap 'restore_tty; cleanup; exit 130' HUP INT TERM
-  stty -echo -icanon min 1 </dev/tty
-  while :; do
-    printf '\nSelect target host (numbers, arrows, Enter):\n' >/dev/tty
-    i=1; for value in $detected_clis all; do
-      if [ "$i" -eq "$cursor" ]; then printf '  > %d) %s\n' "$i" "$value" >/dev/tty; else printf '    %d) %s\n' "$i" "$value" >/dev/tty; fi
-      i=$((i + 1))
-    done
-    key=$(dd if=/dev/tty bs=1 count=1 2>/dev/null || true)
-    case "$key" in
-      "") break ;;
-      [1-9])
-        if [ "$key" -le "$total" ]; then cursor=$key; break; fi
-        printf '\aInvalid selection. Choose 1-%d.\n' "$total" >/dev/tty ;;
-      "$(printf '\033')")
-        second=$(dd if=/dev/tty bs=1 count=1 2>/dev/null || true)
-        third=$(dd if=/dev/tty bs=1 count=1 2>/dev/null || true)
-        [ "$second$third" = "[A" ] && [ "$cursor" -gt 1 ] && cursor=$((cursor - 1))
-        [ "$second$third" = "[B" ] && [ "$cursor" -lt "$total" ] && cursor=$((cursor + 1)) ;;
-      q|Q) restore_tty; die 'cancelled' ;;
-      *) printf '\aInvalid selection. Choose 1-%d.\n' "$total" >/dev/tty ;;
-    esac
-  done
-  restore_tty
-  trap cleanup EXIT HUP INT TERM
-  [ "$cursor" -eq "$total" ] && CLI=$detected_clis || CLI=$(word_at "$detected_clis" "$cursor")
+  MENU_MODE=single; MENU_TITLE='Select target host:'; MENU_ITEMS="$detected_clis all"; MENU_CHECKED=
+  select_menu
+  [ "$MENU_RESULT" = all ] && CLI=$detected_clis || CLI=$MENU_RESULT
 }
 select_cli
 
@@ -124,15 +196,14 @@ select_items() {
   if [ "$ASSUME" = no ]; then SELECTED=harness; return; fi
   if [ "$ASSUME" = yes ]; then SELECTED="harness $OPTIONAL"; return; fi
   tty_available || { SELECTED=harness; return; }
-  # Keep the checklist intentionally line-oriented so it works on minimal POSIX terminals.
-  SELECTED=harness
+  candidates=harness
   for item in $OPTIONAL; do
     supported=0; for cli in $CLI; do has_word "$(plugin_clis "$item")" "$cli" && supported=1; done
-    [ "$supported" -eq 1 ] || continue
-    printf 'Install %s? [y/N] ' "$item" >/dev/tty
-    IFS= read -r answer </dev/tty || answer=n
-    case "$answer" in y|Y|yes|YES) SELECTED="$SELECTED $item" ;; esac
+    [ "$supported" -eq 1 ] && candidates="$candidates $item"
   done
+  MENU_MODE=multi; MENU_TITLE='Select what to install (harness recommended):'; MENU_ITEMS="$candidates"; MENU_CHECKED=harness
+  select_menu
+  SELECTED=$MENU_RESULT
 }
 select_items
 
@@ -195,7 +266,14 @@ install_plugin() {
   has_word "$(plugin_clis "$name")" "$cli" || return 0
   case "$cli" in
     claude) run claude plugin install "$name@$CLAUDE_MARKETPLACE" --scope "$SCOPE" ;;
-    codex) run codex plugin add "$name@$CODEX_MARKETPLACE" ;;
+    codex)
+      if [ "$name" = ponytail ]; then
+        run codex plugin marketplace add https://github.com/DietrichGebert/ponytail
+        run codex plugin add ponytail@ponytail
+      else
+        run codex plugin add "$name@$CODEX_MARKETPLACE"
+      fi
+      ;;
     opencode) install_opencode_plugin "$name" ;;
   esac
 }
@@ -241,7 +319,7 @@ install_mcp_inventory() {
     json=$(jq -c --arg name "$name" '.mcpServers[$name]' "$inventory")
     for placeholder in $(printf '%s' "$json" | grep -o '\${[A-Za-z0-9_]*}' | sort -u || true); do
       key=$(printf '%s' "$placeholder" | tr -d '${}')
-      printf 'Value for %s (Enter skips %s): ' "$key" "$name" >/dev/tty
+      printf 'Value for %s (input hidden; paste supported; Enter skips %s): ' "$key" "$name" >/dev/tty
       saved=$(stty -g </dev/tty); stty -echo </dev/tty; IFS= read -r value </dev/tty || value=; stty "$saved" </dev/tty; printf '\n' >/dev/tty
       [ -n "$value" ] || { json=; break; }
       json=$(printf '%s' "$json" | jq -c --arg from "$placeholder" --arg to "$value" 'walk(if type=="string" then split($from) | join($to) else . end)')

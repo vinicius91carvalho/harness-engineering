@@ -1,5 +1,5 @@
 {
-  "name": "vinicius91carvalho",
+  "name": "harness-engineering",
   "owner": { "name": "Vinicius Carvalho" },
   "plugins": [
     { "name": "harness", "source": "./" },

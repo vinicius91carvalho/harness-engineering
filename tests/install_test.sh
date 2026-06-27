@@ -28,6 +28,16 @@ fi
 grep -q -- '--cli' "$TMP/err" || fail 'no-TTY error should explain --cli'
 pass 'multiple CLIs require an explicit non-interactive host'
 
+mv "$TMP/bin/opencode" "$TMP/bin/opencode.off"
+mkdir -p "$HOME/.opencode/bin"
+printf '#!/bin/sh\n' >"$HOME/.opencode/bin/opencode"
+chmod +x "$HOME/.opencode/bin/opencode"
+"$ROOT/install.sh" --cli opencode --no --dry-run </dev/null >"$TMP/out"
+grep -q 'complete for:opencode' "$TMP/out" || fail 'OpenCode fallback install was not selected'
+mv "$TMP/bin/opencode.off" "$TMP/bin/opencode"
+rm -rf "$HOME/.opencode"
+pass 'OpenCode is detected in its official user install directory'
+
 if "$ROOT/install.sh" --cli codex --scope user --no </dev/null >"$TMP/out" 2>"$TMP/err"; then
   fail '--scope must be rejected for non-Claude selections'
 fi

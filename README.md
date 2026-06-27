@@ -48,9 +48,13 @@ curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineeri
 ```
 
 The installer detects available CLIs. With more than one host, choose with numbers,
-arrow keys, or Enter; non-interactive runs must pass `--cli`. `--yes` and `--no`
-control checklist contents, while `--cli` controls target hosts. Integrations are
-offered only on documented hosts, and repeated runs are idempotent.
+arrow keys, or Enter; non-interactive runs must pass `--cli`. Then pick what to
+install from a single Space-to-toggle checklist (`a` selects or clears all, Enter
+confirms) instead of one prompt per plugin. `--yes` and `--no` control checklist
+contents, while `--cli` controls target hosts. Integrations are offered only on
+documented hosts, and repeated runs are idempotent. OpenCode is also detected in
+its official `~/.opencode/bin` install location before a shell restart updates
+`PATH`. MCP secret prompts mask typed and pasted API keys.
 
 For **native Windows**, run [`install.ps1`](install.ps1). It stages the repository
 when invoked through a pipe, so it does not depend on `$PSScriptRoot`.

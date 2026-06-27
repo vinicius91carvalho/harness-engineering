@@ -10,7 +10,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $MarketplaceRepo = "vinicius91carvalho/harness-engineering"
-$ClaudeMarketplace = "vinicius91carvalho"
+$ClaudeMarketplace = "harness-engineering"
 $CodexMarketplace = "harness-engineering"
 $MemoryInstaller = "https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.ps1"
 $Optional = @("ponytail", "remember", "context7", "skill-creator", "claude-md-management", "claude-code-setup", "hookify", "playwright", "typescript-lsp", "ralph-loop", "pyright-lsp", "rust-analyzer-lsp", "codex", "codebase-memory-mcp", "status-line", "shared-config", "mcp-servers")
@@ -27,8 +27,66 @@ $PluginClis = @{
 }
 
 if ($Yes -and $No) { throw "-Yes and -No are mutually exclusive" }
-$Detected = @("claude", "codex", "opencode") | Where-Object { Get-Command $_ -ErrorAction SilentlyContinue }
+function Test-CliInstalled([string]$Name) {
+  if (Get-Command $Name -ErrorAction SilentlyContinue) { return $true }
+  if ($Name -ne "opencode") { return $false }
+  # The official OpenCode installer writes here before the updated PATH is
+  # visible to the current shell. Also honor its documented custom locations.
+  $directories = @($env:OPENCODE_INSTALL_DIR, $env:XDG_BIN_DIR, (Join-Path $HOME "bin"), (Join-Path $HOME ".opencode/bin")) |
+    Where-Object { $_ }
+  foreach ($directory in $directories) {
+    foreach ($executable in @("opencode", "opencode.exe")) {
+      if (Test-Path (Join-Path $directory $executable) -PathType Leaf) { return $true }
+    }
+  }
+  return $false
+}
+
+$Detected = @("claude", "codex", "opencode") | Where-Object { Test-CliInstalled $_ }
 if ($Detected.Count -eq 0) { throw "No supported CLI found. Install Claude Code, Codex, or OpenCode." }
+
+# Arrow-key menu that repaints the whole console each frame (Clear() first), so
+# navigation never duplicates lines. single = pick one; multi = space-toggle
+# checklist with a/A select-all. Mirrors select_menu in install.sh.
+function Select-Menu {
+  param([ValidateSet("single", "multi")][string]$Mode, [string[]]$Items, [string[]]$Checked = @(), [string]$Title)
+  if ($Items.Count -eq 0) { return @() }
+  $cursor = 0
+  $state = @{}; foreach ($item in $Items) { $state[$item] = ($Checked -contains $item) }
+  while ($true) {
+    [Console]::Clear()
+    Write-Host "$Title`n"
+    for ($i = 0; $i -lt $Items.Count; $i++) {
+      $pointer = if ($i -eq $cursor) { ">" } else { " " }
+      if ($Mode -eq "multi") {
+        $box = if ($state[$Items[$i]]) { "[x]" } else { "[ ]" }
+        Write-Host " $pointer $box $($Items[$i])"
+      } else {
+        Write-Host " $pointer $($Items[$i])"
+      }
+    }
+    $hint = if ($Mode -eq "multi") { "space: toggle   a: all/none   enter: confirm" } else { "enter: select" }
+    Write-Host "`n  up/down: move   $hint   q: cancel"
+    $key = [Console]::ReadKey($true)
+    if ($key.Key -eq "UpArrow") { if ($cursor -gt 0) { $cursor-- }; continue }
+    if ($key.Key -eq "DownArrow") { if ($cursor -lt $Items.Count - 1) { $cursor++ }; continue }
+    if ($key.Key -eq "Enter") { break }
+    if ($key.Key -eq "Escape" -or $key.KeyChar -eq 'q' -or $key.KeyChar -eq 'Q') { throw "Cancelled" }
+    if ($Mode -eq "multi" -and $key.KeyChar -eq ' ') { $state[$Items[$cursor]] = -not $state[$Items[$cursor]]; continue }
+    if ($Mode -eq "multi" -and ($key.KeyChar -eq 'a' -or $key.KeyChar -eq 'A')) {
+      $allOn = @($Items | Where-Object { -not $state[$_] }).Count -eq 0
+      foreach ($item in $Items) { $state[$item] = -not $allOn }
+      continue
+    }
+    $number = 0
+    if ([int]::TryParse([string]$key.KeyChar, [ref]$number) -and $number -ge 1 -and $number -le $Items.Count) {
+      $cursor = $number - 1
+      if ($Mode -eq "single") { break }
+    }
+  }
+  if ($Mode -eq "multi") { return @($Items | Where-Object { $state[$_] }) }
+  return @($Items[$cursor])
+}
 
 function Select-Host {
   if ($Cli) {
@@ -38,24 +96,9 @@ function Select-Host {
   }
   if ($Detected.Count -eq 1) { return @($Detected[0]) }
   if ([Console]::IsInputRedirected) { throw "Multiple CLIs detected; pass -Cli claude|codex|opencode|all." }
-  $cursor = 0; $choices = @($Detected) + "all"
-  while ($true) {
-    Write-Host "`nSelect target host (numbers, arrows, Enter):"
-    for ($i = 0; $i -lt $choices.Count; $i++) {
-      $prefix = if ($i -eq $cursor) { ">" } else { " " }
-      Write-Host " $prefix $($i + 1)) $($choices[$i])"
-    }
-    $key = [Console]::ReadKey($true)
-    if ($key.Key -eq "UpArrow" -and $cursor -gt 0) { $cursor--; continue }
-    if ($key.Key -eq "DownArrow" -and $cursor -lt $choices.Count - 1) { $cursor++; continue }
-    if ($key.Key -eq "Enter") { break }
-    $number = 0
-    if ([int]::TryParse([string]$key.KeyChar, [ref]$number) -and $number -ge 1 -and $number -le $choices.Count) { $cursor = $number - 1; break }
-    if ($key.Key -eq "Escape") { throw "Cancelled" }
-    [Console]::Beep()
-  }
-  if ($choices[$cursor] -eq "all") { return $Detected }
-  return @($choices[$cursor])
+  $choice = @(Select-Menu -Mode single -Items (@($Detected) + "all") -Title "Select target host:")[0]
+  if ($choice -eq "all") { return $Detected }
+  return @($choice)
 }
 
 $Targets = @(Select-Host)
@@ -153,6 +196,27 @@ function Apply-ClaudeSharedConfig {
   Write-ClaudeSettings { param($json) foreach ($property in $shared.PSObject.Properties) { $json | Add-Member -Force NoteProperty $property.Name $property.Value } }
 }
 
+function Read-PasteableSecret([string]$Prompt) {
+  Write-Host -NoNewline "$Prompt: "
+  $value = [Text.StringBuilder]::new()
+  while ($true) {
+    $key = [Console]::ReadKey($true)
+    if ($key.Key -eq "Enter") { Write-Host; return $value.ToString() }
+    if ($key.Key -eq "C" -and ($key.Modifiers -band [ConsoleModifiers]::Control)) { throw "Cancelled" }
+    if ($key.Key -eq "Backspace") {
+      if ($value.Length -gt 0) {
+        $value.Length--
+        Write-Host -NoNewline "`b `b"
+      }
+      continue
+    }
+    if (-not [char]::IsControl($key.KeyChar)) {
+      [void]$value.Append($key.KeyChar)
+      Write-Host -NoNewline "*"
+    }
+  }
+}
+
 function Install-ClaudeMcpInventory {
   if ($DryRun) { Write-Host "DRY RUN - prompt for and configure Claude MCP inventory"; return }
   if ([Console]::IsInputRedirected) { Write-Warning "MCP inventory requires a console for secret prompts; skipped"; return }
@@ -164,8 +228,7 @@ function Install-ClaudeMcpInventory {
     $json = $property.Value | ConvertTo-Json -Depth 20 -Compress
     $skip = $false
     foreach ($match in [regex]::Matches($json, '\$\{([A-Za-z0-9_]+)\}')) {
-      $secret = Read-Host "Value for $($match.Groups[1].Value) (Enter skips server)" -AsSecureString
-      $value = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret))
+      $value = Read-PasteableSecret "Value for $($match.Groups[1].Value) (paste supported; Enter skips server)"
       if (-not $value) { $skip = $true; break }
       $json = $json.Replace($match.Value, $value)
     }
@@ -197,7 +260,16 @@ function Install-Memory {
   }
 }
 
-$Selected = if ($No) { @("harness") } elseif ($Yes) { @("harness") + $Optional } else { @("harness") }
+$Selected = if ($No) {
+  @("harness")
+} elseif ($Yes) {
+  @("harness") + $Optional
+} elseif ([Console]::IsInputRedirected) {
+  @("harness")
+} else {
+  $candidates = @("harness") + @($Optional | Where-Object { @($PluginClis[$_] | Where-Object { $Targets -contains $_ }).Count -gt 0 })
+  @(Select-Menu -Mode multi -Items $candidates -Checked @("harness") -Title "Select what to install (harness recommended):")
+}
 
 foreach ($target in $Targets) {
   if ($target -eq "claude") {

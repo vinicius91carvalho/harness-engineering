@@ -12,8 +12,9 @@ jq empty .claude-plugin/*.json .codex-plugin/*.json \
   .agents/plugins/marketplace.json opencode.json config/*.json
 ```
 
-The fake-CLI tests cover non-TTY host selection, Claude-only scope, selected-host
-command isolation, zero-write dry runs, catalog policy, retry behavior, and
+The fake-CLI tests cover non-TTY host selection, OpenCode detection before its
+user install directory reaches `PATH`, Claude-only scope, selected-host command
+isolation, zero-write dry runs, catalog policy, retry behavior, and
 `feature_list.json` verification. CI runs shell tests on Ubuntu and macOS and
 PowerShell parsing/tests on Windows.
 
