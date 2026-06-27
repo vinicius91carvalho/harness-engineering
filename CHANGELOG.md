@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [0.12.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.11.0...v0.12.0) (2026-06-27)
+
+
+### Features
+
+* **workflows:** restore Claude-native workflow runner alongside portable fallback ([64e966d](https://github.com/vinicius91carvalho/harness-engineering/commit/64e966dc811c9c15263d6db3dffa3377dfe603fb))
+
 ## [0.11.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.10.0...v0.11.0) (2026-06-26)
 
 
