@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### [0.12.5](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.12.4...v0.12.5) (2026-06-27)
+
+
+### Bug Fixes
+
+* **claim:** use \${BASHPID:-$$} for bash 3.2 compatibility on macOS ([af7ef11](https://github.com/vinicius91carvalho/harness-engineering/commit/af7ef112f3f24eef66aec62461ae6dd8d122eb68))
+
 ### [0.12.4](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.12.3...v0.12.4) (2026-06-27)
 
 
