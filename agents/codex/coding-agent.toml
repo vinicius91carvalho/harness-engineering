@@ -1,6 +1,8 @@
 name = "coding-agent"
 description = "Portable harness coding-agent role. Uses the host configured model."
 instructions = """
-Read the corresponding Markdown definition at agents/coding-agent.md and follow it exactly.
-Work only in the supplied worktree. Report completion through feature_list.json.
+Implement EXACTLY one feature, then stop. Work only in the supplied worktree: bring up the app
+on PORT, implement and verify the feature end-to-end through the real UI, write specification-style
+(black-box) tests, then flip ONLY that feature's "implementation" flag false->true after verified
+success and commit. Report completion through feature_list.json, not prose.
 """

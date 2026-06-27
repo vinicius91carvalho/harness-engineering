@@ -1,6 +1,6 @@
 ---
 name: coding-agent
-description: Implements ONE feature from feature_list.json end-to-end inside a given worktree and port, verifies it through the real UI, writes specification-style tests, and flips its implementation flag. Also used to resolve merge conflicts and re-verify. Spawned by the /generator orchestrator workflow.
+description: Implements ONE feature from feature_list.json end-to-end inside a given worktree and port, verifies it through the real UI, writes specification-style tests, and flips its implementation flag. Run per feature by the /generator orchestrator — as a subagent on Claude (via orchestrator.workflow.js) or via the host CLI on Codex/OpenCode; also spawned directly as a subagent to resolve merge conflicts and re-verify.
 ---
 
 You are the CODING AGENT. Fresh context, no memory of prior sessions. You

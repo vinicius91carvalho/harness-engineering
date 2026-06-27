@@ -1,7 +1,7 @@
 ---
 name: evaluator
 description: Independent QA sweep over a built project — finds features that are implemented but not yet QA-verified, and checks each through the real UI as a black-box specification. Claims a context like /generator so it never collides with active builders. Use when the user wants to QA, validate, or re-verify already-implemented features without writing new code.
-allowed-tools: Bash, Agent, AskUserQuestion, Read
+allowed-tools: Bash, Workflow, Agent, AskUserQuestion, Read
 ---
 
 # Evaluator
@@ -27,12 +27,19 @@ and `HOST` the current host (`claude`, `codex`, or `opencode`).
    Empty output → nothing left to QA; report and stop. Otherwise it prints
    `{context, worktree, port, featureIds}` (a fresh worktree + branch).
 
-3. Run the portable QA-only loop:
+3. Run the QA-only loop (hybrid by host). On **Claude** (`HOST=claude`) use the
+   Workflow — real `qa-agent`, schema-validated:
+   ```js
+   Workflow({ scriptPath: "$GEN/orchestrator.workflow.js",
+     args: { workdir: "<worktree>", port: <port>, mode: "qa",
+             features: [ { id, context, description }, ... ] } })
+   ```
+   On **Codex or OpenCode**, use the portable Node runner:
    ```bash
    node "$GEN/orchestrator.mjs" --host "$HOST" --workdir "$WORKTREE" \
      --port "$PORT" --mode qa --features "$COMMA_SEPARATED_IDS"
    ```
-   The runner trusts the resulting `feature_list.json` state, not agent prose.
+   Either way, trust the resulting `feature_list.json` state, not agent prose.
 
 4. Merge + release exactly as `/generator` does:
    ```bash

@@ -1,7 +1,7 @@
 ---
 name: generator
 description: Build a spec'd project from feature_list.json using isolated worktrees, portable host adapters, independent QA, and up to three verified attempts.
-allowed-tools: Bash, Agent, AskUserQuestion, Read
+allowed-tools: Bash, Workflow, Agent, AskUserQuestion, Read
 ---
 
 # Generator
@@ -56,15 +56,23 @@ bash "$GEN/claim.sh" select-claim "$REPO" "$MODE" "$SELECTOR" $$
   created the worktree + `gen/<context>` branch. Read the `description` for each id
   from `feature_list.json` to build the `features` array.
 
-**a. Build (portable state machine).** Invoke the same runner on every host:
+**a. Build (hybrid by host).** On **Claude** (`HOST=claude`), run the inner loop as a
+Workflow — the richer path: real `coding-agent`/`qa-agent` subagents, schema-validated
+results, and sonnet→opus escalation at retry 2. Watch it in `/workflows`:
+```js
+Workflow({ scriptPath: "$GEN/orchestrator.workflow.js",
+  args: { workdir: "<worktree>", port: <port>, mode: "<MODE>",
+          features: [ { id, context, description }, ... ] } })
+```
+On **Codex or OpenCode** (no `Workflow` tool there), run the portable Node runner,
+which shells out to `codex exec` / `opencode run` preserving the user's model:
 ```bash
 node "$GEN/orchestrator.mjs" --host "$HOST" --workdir "$WORKTREE" \
   --port "$PORT" --mode "$MODE" --features "$COMMA_SEPARATED_IDS"
 ```
-It uses `claude -p`, `codex exec`, or `opencode run`, preserving the user's
-configured model. It verifies both coding and QA against `feature_list.json` and
-retries at most three times. If its JSON result contains `stuck`, stop and ask the
-user how to proceed before merging.
+Either path verifies both coding and QA against `feature_list.json` (a prose claim is
+insufficient) and retries at most three times. If the result reports `stuck` features,
+stop and ask the user how to proceed before merging.
 
 **b. Merge (serialized).** Once the context's features pass:
 ```bash

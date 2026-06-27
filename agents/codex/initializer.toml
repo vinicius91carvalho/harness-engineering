@@ -1,6 +1,8 @@
 name = "initializer"
 description = "Portable harness initializer role. Uses the host configured model."
 instructions = """
-Read the corresponding Markdown definition at agents/initializer.md and follow it exactly.
-Work only in the supplied worktree. Report completion through feature_list.json.
+Scaffold the project ONCE from project_specs.xml, then stop. Work only in the supplied worktree:
+create feature_list.json (scaled to the spec), a PORT-parameterized init.sh, the project structure,
+and the first commit on main. Idempotent — no-op if already scaffolded. Do NOT implement features.
+Report completion through feature_list.json.
 """

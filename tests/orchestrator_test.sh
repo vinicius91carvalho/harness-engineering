@@ -36,3 +36,34 @@ if node "$ROOT/skills/generator/orchestrator.mjs" --host invalid --workdir "$TMP
 fi
 grep -q 'claude, codex, or opencode' "$TMP/err"
 echo 'ok - orchestrator exposes only supported host adapters'
+
+# built counts implemented features, not list position: a built feature after a
+# stuck one must not inflate the count (old Math.max(built, results.length+1) gave 2).
+mkdir -p "$TMP/work2"
+cat >"$TMP/work2/feature_list.json" <<'JSON'
+[{"id":"F1","context":"core","description":"never builds","implementation":false,"qa":false},
+ {"id":"F2","context":"core","description":"builds","implementation":false,"qa":false}]
+JSON
+cat >"$TMP/bin/claude" <<'SH'
+#!/bin/sh
+set -eu
+prompt=""; for arg in "$@"; do prompt=$arg; done
+tmp="$PWD/feature_list.json.tmp"
+case "$prompt" in
+  *CODING*id=F2*) jq 'map(if .id=="F2" then .implementation=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json ;;
+  *QA*id=F2*)     jq 'map(if .id=="F2" then .qa=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json ;;
+  # F1 coding always lies (never flips implementation), so F1 stays stuck.
+esac
+printf '{"ok":true}\n'
+SH
+chmod +x "$TMP/bin/claude"
+PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" "$NODE" "$ROOT/skills/generator/orchestrator.mjs" \
+  --host claude --workdir "$TMP/work2" --port 5170 --features F1,F2 >"$TMP/result2.json"
+jq -e '.built == 1 and .passed == 1' "$TMP/result2.json" >/dev/null || { cat "$TMP/result2.json" >&2; exit 1; }
+echo 'ok - built counts implemented features by count, not list position'
+
+# Claude-native hybrid path: the Workflow script must exist and route to both subagents.
+wf="$ROOT/skills/generator/orchestrator.workflow.js"
+grep -q "agentType: 'coding-agent'" "$wf" && grep -q "agentType: 'qa-agent'" "$wf" \
+  || { echo 'not ok - orchestrator.workflow.js missing or not routing to coding-agent/qa-agent' >&2; exit 1; }
+echo 'ok - Claude-native workflow routes to coding-agent and qa-agent'

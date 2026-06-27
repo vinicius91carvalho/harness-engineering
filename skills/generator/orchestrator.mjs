@@ -58,13 +58,21 @@ function runAgent(prompt) {
   return { ok: false, detail: (result.stderr || result.stdout || '').trim() }
 }
 
+// ponytail: agents/coding-agent.md and agents/qa-agent.md are the canonical role
+// playbooks; this is their portable one-paragraph essence. Keep in sync if they change.
 function prompt(kind, feature, attempt) {
   const action = kind === 'CODING'
-    ? 'Implement this feature, test it through its public interface, and set only its implementation flag true after it works.'
-    : 'Independently verify this feature as a black-box specification. Set qa true only on pass; on failure set implementation false and record defects.'
+    ? 'You are the coding-agent. Implement EXACTLY this one feature, then stop. cd into WORKDIR, ' +
+      'bring up the app on PORT (watch the log), implement and verify the feature end-to-end through ' +
+      'the real UI, write specification-style (black-box, refactor-proof) tests, then flip ONLY this ' +
+      "feature's implementation flag false->true after verified success and commit."
+    : 'You are the qa-agent. Independently QA EXACTLY this one feature as a black-box specification. ' +
+      'cd into WORKDIR, bring up the app on PORT (watch the log), verify the feature through the real ' +
+      'UI as a user would (no internals, no curl-only). On pass set qa true; on any defect set ' +
+      'implementation false and list the defects. Commit your flag change.'
   return `${kind} attempt ${attempt}/3\nWORKDIR=${options.workdir}\nPORT=${options.port}\n` +
     `Feature id=${feature.id} context=${feature.context}: ${feature.description || ''}\n${action}\n` +
-    'The orchestrator will verify feature_list.json; a prose claim of success is insufficient.'
+    'The orchestrator verifies feature_list.json; a prose claim of success is insufficient.'
 }
 
 const initial = await readFeatures()
@@ -78,6 +86,7 @@ let passed = 0
 for (const feature of selected) {
   let status = 'stuck-implementation'
   let detail = ''
+  let counted = false
   for (let attempt = 1; attempt <= 3; attempt++) {
     let current = (await readFeatures()).find((item) => String(item.id) === String(feature.id))
     if (options.mode !== 'qa' && current.implementation !== true) {
@@ -86,7 +95,7 @@ for (const feature of selected) {
       current = (await readFeatures()).find((item) => String(item.id) === String(feature.id))
       if (!coding.ok || current.implementation !== true) continue
     }
-    if (current.implementation === true) built = Math.max(built, results.length + 1)
+    if (current.implementation === true && !counted) { built++; counted = true }
 
     const qa = runAgent(prompt('QA', feature, attempt))
     detail = qa.detail
