@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### [0.12.4](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.12.3...v0.12.4) (2026-06-27)
+
+
+### Bug Fixes
+
+* **test:** use shasum -a 256 for portable checksums on macOS ([3196be4](https://github.com/vinicius91carvalho/harness-engineering/commit/3196be42431c2b500cf9d117359e39b19b5dd9a5))
+
 ### [0.12.3](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.12.2...v0.12.3) (2026-06-27)
 
 
