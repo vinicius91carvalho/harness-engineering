@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### [0.12.3](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.12.2...v0.12.3) (2026-06-27)
+
+
+### Bug Fixes
+
+* **test:** pin XDG_CONFIG_HOME in install_test to prevent CI env bleed ([83a2255](https://github.com/vinicius91carvalho/harness-engineering/commit/83a225566cbdc4da92f74ceba9f76d3e601bbd49))
+
 ### [0.12.2](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.12.1...v0.12.2) (2026-06-27)
 
 
