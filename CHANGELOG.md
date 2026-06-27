@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### [0.12.1](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.12.0...v0.12.1) (2026-06-27)
+
+
+### Bug Fixes
+
+* **install:** questions rendering and marketplaces for codex ([28c7508](https://github.com/vinicius91carvalho/harness-engineering/commit/28c75080d49c035e06a8d8b5c1216c1574ec9654))
+
 ## [0.12.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.11.0...v0.12.0) (2026-06-27)
 
 
