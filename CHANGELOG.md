@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### [0.12.6](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.12.5...v0.12.6) (2026-06-28)
+
+
+### Bug Fixes
+
+* install plugins and MCP servers across hosts ([a4f2057](https://github.com/vinicius91carvalho/harness-engineering/commit/a4f20570d4beadb921cf5051ad23d96f2a6ce908))
+
 ### [0.12.5](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.12.4...v0.12.5) (2026-06-27)
 
 
