@@ -126,13 +126,33 @@ function Get-Repository {
   return $script:StagedRepo
 }
 
-function Install-OpenCodePlugin([string]$Name) {
-  if ($DryRun) { Write-Host "DRY RUN - install namespaced OpenCode skills, agents, and commands for $Name"; return }
-  $source = Get-Repository
-  if ($Name -eq "ponytail") {
-    $source = Join-Path ([IO.Path]::GetTempPath()) ("ponytail-" + [guid]::NewGuid())
-    Invoke-Native git @("clone", "--depth", "1", "https://github.com/DietrichGebert/ponytail.git", $source)
+function Remove-OpenCodePluginFiles([string]$Name) {
+  $base = Join-Path $HOME ".config/opencode"
+  foreach ($dir in @("skills", "agents", "commands")) {
+    $dirPath = Join-Path $base $dir
+    if (-not (Test-Path $dirPath)) { continue }
+    Get-ChildItem "$dirPath/$Name-*" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
   }
+}
+
+function Install-OpenCodePlugin([string]$Name) {
+  if ($DryRun) {
+    if ($Name -eq "ponytail") {
+      Write-Host "DRY RUN - npm install -g @dietrichgebert/ponytail"
+      Write-Host "DRY RUN - register ponytail in OpenCode plugin config"
+    } else {
+      Write-Host "DRY RUN - install namespaced OpenCode skills, agents, and commands for $Name"
+    }
+    return
+  }
+  if ($Name -eq "ponytail") {
+    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { throw "npm is required to install the ponytail OpenCode plugin" }
+    Invoke-Native npm @("install", "-g", "@dietrichgebert/ponytail")
+    Remove-OpenCodePluginFiles ponytail
+    Set-OpenCodePlugin ponytail "@dietrichgebert/ponytail"
+    return
+  }
+  $source = Get-Repository
   $base = Join-Path $HOME ".config/opencode"
   @("skills", "agents", "commands") | ForEach-Object { New-Item -ItemType Directory -Force (Join-Path $base $_) | Out-Null }
   Get-ChildItem (Join-Path $source "skills") -Directory -ErrorAction SilentlyContinue | ForEach-Object {
@@ -151,7 +171,7 @@ function Install-OpenCodePlugin([string]$Name) {
   }
 }
 
-function Set-OpenCodeMcp([string]$Name, $Entry) {
+function Set-OpenCodeConfig([scriptblock]$Update) {
   $base = Join-Path $HOME ".config/opencode"; $config = Join-Path $base "opencode.json"
   New-Item -ItemType Directory -Force $base | Out-Null
   $jsonc = Join-Path $base "opencode.jsonc"; if (Test-Path $jsonc) { $config = $jsonc }
@@ -165,11 +185,27 @@ function Set-OpenCodeMcp([string]$Name, $Entry) {
     if ($LASTEXITCODE -ne 0) { throw "Invalid OpenCode JSONC; backup retained at $config.pre-harness.bak" }
   } else { $normalized = $raw }
   $json = $normalized | ConvertFrom-Json
-  if (-not $json.mcp) { $json | Add-Member -Force NoteProperty mcp ([pscustomobject]@{}) }
-  $json.mcp | Add-Member -Force NoteProperty $Name $Entry
+  & $Update $json
   $temp = "$config.$PID.tmp"
   $json | ConvertTo-Json -Depth 20 | Set-Content $temp -Encoding utf8
   Move-Item $temp $config -Force
+}
+
+function Set-OpenCodeMcp([string]$Name, $Entry) {
+  Set-OpenCodeConfig {
+    param($json)
+    if (-not $json.mcp) { $json | Add-Member -Force NoteProperty mcp ([pscustomobject]@{}) }
+    $json.mcp | Add-Member -Force NoteProperty $Name $Entry
+  }
+}
+
+function Set-OpenCodePlugin([string]$Name, [string]$Spec) {
+  Set-OpenCodeConfig {
+    param($json)
+    if (-not $json.plugin) { $json | Add-Member -Force NoteProperty plugin @() }
+    $plugins = [System.Collections.ArrayList]::new($json.plugin)
+    if ($plugins -notcontains $Spec) { [void]$plugins.Add($Spec); $json.plugin = $plugins.ToArray() }
+  }
 }
 
 function Write-ClaudeSettings([scriptblock]$Update) {

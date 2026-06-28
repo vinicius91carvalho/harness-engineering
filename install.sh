@@ -238,15 +238,29 @@ install_codex_marketplace() {
   codex plugin marketplace upgrade "$CODEX_MARKETPLACE" >/dev/null 2>&1 || codex plugin marketplace add "$MARKETPLACE_REPO"
 }
 
+cleanup_opencode_plugin_files() {
+  name=$1; base=${XDG_CONFIG_HOME:-$HOME/.config}/opencode
+  for dir in skills agents commands; do
+    [ ! -d "$base/$dir" ] && continue
+    for path in "$base/$dir/$name-"*; do
+      [ -e "$path" ] || continue
+      rm -rf "$path"
+    done
+  done
+}
+
 install_opencode_plugin() {
   name=$1
-  [ -n "$DRY" ] && { echo "DRY RUN — install namespaced OpenCode skills, agents, and commands for $name"; return; }
+  [ -n "$DRY" ] && { if [ "$name" = ponytail ]; then echo "DRY RUN — npm install @dietrichgebert/ponytail"; echo "DRY RUN — register ponytail in OpenCode plugin config"; else echo "DRY RUN — install namespaced OpenCode skills, agents, and commands for $name"; fi; return; }
+  if [ "$name" = ponytail ]; then
+    command -v npm >/dev/null 2>&1 || die 'npm is required to install the ponytail OpenCode plugin'
+    npm install -g @dietrichgebert/ponytail || die 'npm install of ponytail failed'
+    cleanup_opencode_plugin_files ponytail
+    atomic_opencode_plugin_add ponytail "@dietrichgebert/ponytail"
+    return
+  fi
   ensure_repo
   source=$TEMP_REPO
-  if [ "$name" = ponytail ]; then
-    source=$(mktemp -d "${TMPDIR:-/tmp}/ponytail.XXXXXX")
-    git clone --depth 1 https://github.com/DietrichGebert/ponytail.git "$source" || die 'could not download ponytail for OpenCode'
-  fi
   base=${XDG_CONFIG_HOME:-$HOME/.config}/opencode
   mkdir -p "$base/skills" "$base/agents" "$base/commands"
   if [ -d "$source/skills" ]; then
@@ -352,8 +366,9 @@ install_mcp_inventory() {
   done
 }
 
-atomic_opencode_mcp() {
-  name=$1; server=$2; base=${XDG_CONFIG_HOME:-$HOME/.config}/opencode; cfg=$base/opencode.json
+atomic_opencode_json() {
+  filter=$1; shift
+  base=${XDG_CONFIG_HOME:-$HOME/.config}/opencode; cfg=$base/opencode.json
   ensure_jq; mkdir -p "$base"
   [ ! -f "$base/opencode.jsonc" ] || cfg=$base/opencode.jsonc
   [ -f "$cfg" ] || printf '{}\n' >"$cfg"
@@ -364,9 +379,19 @@ atomic_opencode_mcp() {
     node "$TEMP_REPO/scripts/jsonc-normalize.js" <"$cfg" >"$normalized" || { rm -f "$normalized"; die "invalid OpenCode JSONC in $cfg (backup retained)"; }
   else cp "$cfg" "$normalized"; fi
   tmp=$(mktemp "$base/opencode.json.XXXXXX")
-  jq --arg name "$name" --argjson server "$server" '.mcp = (.mcp // {}) | .mcp[$name] = $server' "$normalized" >"$tmp" || { rm -f "$tmp" "$normalized"; die "invalid OpenCode JSON in $cfg (backup retained)"; }
+  jq "$@" "$filter" "$normalized" >"$tmp" || { rm -f "$tmp" "$normalized"; die "invalid OpenCode JSON in $cfg (backup retained)"; }
   rm -f "$normalized"
   mv "$tmp" "$cfg"
+}
+
+atomic_opencode_mcp() {
+  name=$1; server=$2
+  atomic_opencode_json '.mcp = (.mcp // {}) | .mcp[$name] = $server' --arg name "$name" --argjson server "$server"
+}
+
+atomic_opencode_plugin_add() {
+  name=$1; spec=$2
+  atomic_opencode_json '.plugin = (.plugin // []) | if (.plugin | index($spec)) then . else .plugin += [$spec] end' --arg spec "$spec"
 }
 
 install_memory() {
