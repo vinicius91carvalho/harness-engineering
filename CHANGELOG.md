@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### [0.12.7](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.12.6...v0.12.7) (2026-06-28)
+
+
+### Bug Fixes
+
+* install ponytail via npm, register in OpenCode plugin config ([bc4d3d3](https://github.com/vinicius91carvalho/harness-engineering/commit/bc4d3d3af02e514eb0de7a2c8d801892e78ccd9e))
+
 ### [0.12.6](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.12.5...v0.12.6) (2026-06-28)
 
 
