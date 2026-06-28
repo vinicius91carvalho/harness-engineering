@@ -23,7 +23,8 @@ $PluginClis = @{
   "typescript-lsp" = @("claude"); "ralph-loop" = @("claude"); "pyright-lsp" = @("claude")
   "rust-analyzer-lsp" = @("claude"); codex = @("claude")
   "codebase-memory-mcp" = @("claude", "codex", "opencode")
-  "status-line" = @("claude"); "shared-config" = @("claude"); "mcp-servers" = @("claude")
+  "mcp-servers" = @("claude", "codex", "opencode")
+  "status-line" = @("claude"); "shared-config" = @("claude")
 }
 
 if ($Yes -and $No) { throw "-Yes and -No are mutually exclusive" }
@@ -150,7 +151,7 @@ function Install-OpenCodePlugin([string]$Name) {
   }
 }
 
-function Set-OpenCodeMemory([string]$Binary) {
+function Set-OpenCodeMcp([string]$Name, $Entry) {
   $base = Join-Path $HOME ".config/opencode"; $config = Join-Path $base "opencode.json"
   New-Item -ItemType Directory -Force $base | Out-Null
   $jsonc = Join-Path $base "opencode.jsonc"; if (Test-Path $jsonc) { $config = $jsonc }
@@ -165,7 +166,7 @@ function Set-OpenCodeMemory([string]$Binary) {
   } else { $normalized = $raw }
   $json = $normalized | ConvertFrom-Json
   if (-not $json.mcp) { $json | Add-Member -Force NoteProperty mcp ([pscustomobject]@{}) }
-  $json.mcp | Add-Member -Force NoteProperty "codebase-memory-mcp" ([pscustomobject]@{ type="local"; command=@($Binary); enabled=$true })
+  $json.mcp | Add-Member -Force NoteProperty $Name $Entry
   $temp = "$config.$PID.tmp"
   $json | ConvertTo-Json -Depth 20 | Set-Content $temp -Encoding utf8
   Move-Item $temp $config -Force
@@ -217,14 +218,14 @@ function Read-PasteableSecret([string]$Prompt) {
   }
 }
 
-function Install-ClaudeMcpInventory {
-  if ($DryRun) { Write-Host "DRY RUN - prompt for and configure Claude MCP inventory"; return }
+function Install-McpInventory {
+  if ($DryRun) { Write-Host "DRY RUN - prompt for and configure MCP inventory for: $($Targets -join ', ')"; return }
   if ([Console]::IsInputRedirected) { Write-Warning "MCP inventory requires a console for secret prompts; skipped"; return }
   $path = Join-Path (Get-Repository) "config/mcp.json"
   if (-not (Test-Path $path)) { Write-Host "No MCP inventory found"; return }
   $servers = (Get-Content $path -Raw | ConvertFrom-Json).mcpServers
   foreach ($property in $servers.PSObject.Properties) {
-    if ((Read-Host "Configure Claude MCP server $($property.Name)? [y/N]") -notmatch '^(y|yes)$') { continue }
+    if ((Read-Host "Configure MCP server $($property.Name)? [y/N]") -notmatch '^(y|yes)$') { continue }
     $json = $property.Value | ConvertTo-Json -Depth 20 -Compress
     $skip = $false
     foreach ($match in [regex]::Matches($json, '\$\{([A-Za-z0-9_]+)\}')) {
@@ -232,7 +233,32 @@ function Install-ClaudeMcpInventory {
       if (-not $value) { $skip = $true; break }
       $json = $json.Replace($match.Value, $value)
     }
-    if (-not $skip) { Invoke-Native claude @("mcp", "add-json", "--scope", "user", $property.Name, $json) }
+    if ($skip) { continue }
+    $server = $json | ConvertFrom-Json
+    foreach ($target in $Targets) {
+      switch ($target) {
+        claude {
+          & claude mcp remove $property.Name --scope user *> $null
+          Invoke-Native claude @("mcp", "add-json", "--scope", "user", $property.Name, $json)
+        }
+        codex {
+          if ($server.url) {
+            & codex mcp remove $property.Name *> $null
+            & codex mcp add $property.Name --url $server.url *> $null
+            if ($LASTEXITCODE -ne 0) {
+              & codex mcp get $property.Name *> $null
+              if ($LASTEXITCODE -ne 0) { throw "Codex MCP configuration failed for $($property.Name)" }
+            }
+          }
+          else { Invoke-Native codex (@("mcp", "add", $property.Name, "--", $server.command) + @($server.args)) }
+        }
+        opencode {
+          $entry = if ($server.url) { [pscustomobject]@{ type="remote"; url=$server.url; enabled=$true } }
+            else { [pscustomobject]@{ type="local"; command=@($server.command) + @($server.args); enabled=$true } }
+          Set-OpenCodeMcp $property.Name $entry
+        }
+      }
+    }
   }
 }
 
@@ -253,9 +279,12 @@ function Install-Memory {
   if (-not $binary) { throw "codebase-memory-mcp binary was not found after installation; add it to PATH and retry" }
   foreach ($target in $Targets) {
     switch ($target) {
-      claude { Invoke-Native claude @("mcp", "add-json", "--scope", "user", "codebase-memory-mcp", "{`"command`":`"$($binary.Source)`",`"args`":[]}") }
+      claude {
+        & claude mcp remove codebase-memory-mcp --scope user *> $null
+        Invoke-Native claude @("mcp", "add-json", "--scope", "user", "codebase-memory-mcp", "{`"command`":`"$($binary.Source)`",`"args`":[]}")
+      }
       codex { Invoke-Native codex @("mcp", "add", "codebase-memory-mcp", "--", $binary.Source) }
-      opencode { Set-OpenCodeMemory $binary.Source }
+      opencode { Set-OpenCodeMcp "codebase-memory-mcp" ([pscustomobject]@{ type="local"; command=@($binary.Source); enabled=$true }) }
     }
   }
 }
@@ -276,7 +305,7 @@ foreach ($target in $Targets) {
     if ($DryRun) { Invoke-Native claude @("plugin", "marketplace", "update", $ClaudeMarketplace) }
     else {
       & claude plugin marketplace update $ClaudeMarketplace
-      if ($LASTEXITCODE -ne 0) { Invoke-Native claude @("plugin", "marketplace", "add", $MarketplaceRepo) }
+      if ($LASTEXITCODE -ne 0) { Invoke-Native claude @("plugin", "marketplace", "add", "https://github.com/$MarketplaceRepo.git") }
     }
   }
   if ($target -eq "codex") {
@@ -292,12 +321,21 @@ foreach ($item in $Selected) {
   if ($item -eq "codebase-memory-mcp") { Install-Memory; continue }
   if ($item -eq "status-line") { Enable-ClaudeStatusLine; continue }
   if ($item -eq "shared-config") { Apply-ClaudeSharedConfig; continue }
-  if ($item -eq "mcp-servers") { Install-ClaudeMcpInventory; continue }
+  if ($item -eq "mcp-servers") { Install-McpInventory; continue }
   foreach ($target in $Targets) {
     if ($PluginClis[$item] -notcontains $target) { continue }
     switch ($target) {
       claude { Invoke-Native claude @("plugin", "install", "$item@$ClaudeMarketplace", "--scope", $Scope) }
-      codex { Invoke-Native codex @("plugin", "add", "$item@$CodexMarketplace") }
+      codex {
+        if ($item -eq "ponytail") {
+          if ($DryRun) { Invoke-Native codex @("plugin", "marketplace", "upgrade", "ponytail") }
+          else {
+            & codex plugin marketplace upgrade ponytail
+            if ($LASTEXITCODE -ne 0) { Invoke-Native codex @("plugin", "marketplace", "add", "https://github.com/DietrichGebert/ponytail") }
+          }
+          Invoke-Native codex @("plugin", "add", "ponytail@ponytail")
+        } else { Invoke-Native codex @("plugin", "add", "$item@$CodexMarketplace") }
+      }
       opencode { Install-OpenCodePlugin $item }
     }
   }

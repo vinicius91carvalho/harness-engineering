@@ -52,7 +52,9 @@ arrow keys, or Enter; non-interactive runs must pass `--cli`. Then pick what to
 install from a single Space-to-toggle checklist (`a` selects or clears all, Enter
 confirms) instead of one prompt per plugin. `--yes` and `--no` control checklist
 contents, while `--cli` controls target hosts. Integrations are offered only on
-documented hosts, and repeated runs are idempotent. OpenCode is also detected in
+documented hosts, and repeated runs are idempotent. The MCP inventory applies to
+Claude, Codex, and OpenCode, resolving secrets before writing host configs.
+OpenCode is also detected in
 its official `~/.opencode/bin` install location before a shell restart updates
 `PATH`. MCP secret prompts mask typed and pasted API keys.
 

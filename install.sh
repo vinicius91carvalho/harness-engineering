@@ -188,7 +188,8 @@ plugin_clis() {
     harness|ponytail) echo 'claude codex opencode' ;;
     remember|context7|skill-creator|claude-md-management|claude-code-setup|hookify|playwright|typescript-lsp|ralph-loop|pyright-lsp|rust-analyzer-lsp|codex) echo claude ;;
     codebase-memory-mcp) echo 'claude codex opencode' ;;
-    status-line|shared-config|mcp-servers) echo claude ;;
+    mcp-servers) echo 'claude codex opencode' ;;
+    status-line|shared-config) echo claude ;;
   esac
 }
 
@@ -229,7 +230,7 @@ ensure_repo() {
 
 install_claude_marketplace() {
   [ -n "$DRY" ] && { run claude plugin marketplace update "$CLAUDE_MARKETPLACE"; return; }
-  claude plugin marketplace update "$CLAUDE_MARKETPLACE" >/dev/null 2>&1 || claude plugin marketplace add "$MARKETPLACE_REPO"
+  claude plugin marketplace update "$CLAUDE_MARKETPLACE" >/dev/null 2>&1 || claude plugin marketplace add "$REPO_URL"
 }
 
 install_codex_marketplace() {
@@ -268,7 +269,9 @@ install_plugin() {
     claude) run claude plugin install "$name@$CLAUDE_MARKETPLACE" --scope "$SCOPE" ;;
     codex)
       if [ "$name" = ponytail ]; then
-        run codex plugin marketplace add https://github.com/DietrichGebert/ponytail
+        if [ -n "$DRY" ]; then run codex plugin marketplace upgrade ponytail
+        else codex plugin marketplace upgrade ponytail >/dev/null 2>&1 || codex plugin marketplace add https://github.com/DietrichGebert/ponytail
+        fi
         run codex plugin add ponytail@ponytail
       else
         run codex plugin add "$name@$CODEX_MARKETPLACE"
@@ -308,12 +311,12 @@ apply_shared_config() {
 }
 
 install_mcp_inventory() {
-  [ -n "$DRY" ] && { echo 'DRY RUN — prompt for and configure Claude MCP inventory'; return; }
+  [ -n "$DRY" ] && { echo "DRY RUN — prompt for and configure MCP inventory for:$CLI"; return; }
   tty_available || { echo '   MCP inventory requires a TTY for secret prompts; skipped' >&2; return; }
   ensure_repo; inventory=$TEMP_REPO/config/mcp.json; ensure_jq
   [ -f "$inventory" ] || { echo '   no MCP inventory found'; return; }
   for name in $(jq -r '.mcpServers | keys[]' "$inventory"); do
-    printf 'Configure Claude MCP server %s? [y/N] ' "$name" >/dev/tty
+    printf 'Configure MCP server %s? [y/N] ' "$name" >/dev/tty
     IFS= read -r answer </dev/tty || answer=n
     case "$answer" in y|Y|yes|YES) ;; *) continue ;; esac
     json=$(jq -c --arg name "$name" '.mcpServers[$name]' "$inventory")
@@ -324,12 +327,33 @@ install_mcp_inventory() {
       [ -n "$value" ] || { json=; break; }
       json=$(printf '%s' "$json" | jq -c --arg from "$placeholder" --arg to "$value" 'walk(if type=="string" then split($from) | join($to) else . end)')
     done
-    [ -n "$json" ] && claude mcp add-json --scope user "$name" "$json" || true
+    [ -n "$json" ] || continue
+    for cli in $CLI; do
+      case "$cli" in
+        claude)
+          claude mcp remove "$name" --scope user >/dev/null 2>&1 || true
+          claude mcp add-json --scope user "$name" "$json" || die "Claude MCP configuration failed for $name" ;;
+        codex)
+          url=$(printf '%s' "$json" | jq -r '.url // empty')
+          if [ -n "$url" ]; then
+            codex mcp remove "$name" >/dev/null 2>&1 || true
+            codex mcp add "$name" --url "$url" >/dev/null 2>&1 || codex mcp get "$name" >/dev/null 2>&1 || die "Codex MCP configuration failed for $name"
+          else
+            command=$(printf '%s' "$json" | jq -r '.command')
+            args=$(printf '%s' "$json" | jq -r '.args[]?' | xargs)
+            # shellcheck disable=SC2086
+            codex mcp add "$name" -- "$command" $args || die "Codex MCP configuration failed for $name"
+          fi ;;
+        opencode)
+          server=$(printf '%s' "$json" | jq -c 'if .url then {type:"remote",url:.url,enabled:true} else {type:"local",command:([.command]+(.args//[])),enabled:true} + (if .env then {environment:.env} else {} end) end')
+          atomic_opencode_mcp "$name" "$server" ;;
+      esac
+    done
   done
 }
 
 atomic_opencode_mcp() {
-  binary=$1; base=${XDG_CONFIG_HOME:-$HOME/.config}/opencode; cfg=$base/opencode.json
+  name=$1; server=$2; base=${XDG_CONFIG_HOME:-$HOME/.config}/opencode; cfg=$base/opencode.json
   ensure_jq; mkdir -p "$base"
   [ ! -f "$base/opencode.jsonc" ] || cfg=$base/opencode.jsonc
   [ -f "$cfg" ] || printf '{}\n' >"$cfg"
@@ -340,7 +364,7 @@ atomic_opencode_mcp() {
     node "$TEMP_REPO/scripts/jsonc-normalize.js" <"$cfg" >"$normalized" || { rm -f "$normalized"; die "invalid OpenCode JSONC in $cfg (backup retained)"; }
   else cp "$cfg" "$normalized"; fi
   tmp=$(mktemp "$base/opencode.json.XXXXXX")
-  jq --arg bin "$binary" '.mcp = (.mcp // {}) | .mcp["codebase-memory-mcp"] = {type:"local", command:[$bin], enabled:true}' "$normalized" >"$tmp" || { rm -f "$tmp" "$normalized"; die "invalid OpenCode JSON in $cfg (backup retained)"; }
+  jq --arg name "$name" --argjson server "$server" '.mcp = (.mcp // {}) | .mcp[$name] = $server' "$normalized" >"$tmp" || { rm -f "$tmp" "$normalized"; die "invalid OpenCode JSON in $cfg (backup retained)"; }
   rm -f "$normalized"
   mv "$tmp" "$cfg"
 }
@@ -363,9 +387,11 @@ install_memory() {
   [ -n "$binary" ] && [ -x "$binary" ] || die 'codebase-memory-mcp binary was not found after installation; add it to PATH and retry'
   for cli in $CLI; do
     case "$cli" in
-      claude) claude mcp add-json --scope user codebase-memory-mcp "{\"command\":\"$binary\",\"args\":[]}" || die 'Claude MCP configuration failed' ;;
+      claude)
+        claude mcp remove codebase-memory-mcp --scope user >/dev/null 2>&1 || true
+        claude mcp add-json --scope user codebase-memory-mcp "{\"command\":\"$binary\",\"args\":[]}" || die 'Claude MCP configuration failed' ;;
       codex) codex mcp add codebase-memory-mcp -- "$binary" || die 'Codex MCP configuration failed' ;;
-      opencode) atomic_opencode_mcp "$binary" ;;
+      opencode) atomic_opencode_mcp codebase-memory-mcp "$(jq -nc --arg bin "$binary" '{type:"local",command:[$bin],enabled:true}')" ;;
     esac
   done
 }

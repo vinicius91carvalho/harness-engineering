@@ -52,6 +52,9 @@ after=$(find "$HOME" -mindepth 1 -print | sort)
 [ "$before" = "$after" ] || fail 'dry-run wrote into HOME'
 [ ! -s "$HARNESS_TEST_LOG" ] || fail 'dry-run executed a host command'
 grep -q 'codebase-memory-mcp' "$TMP/out" || fail 'dry-run should describe memory integration'
+grep -q 'MCP inventory for:claude codex opencode' "$TMP/out" || fail 'MCP inventory should target every selected host'
+grep -q 'marketplace upgrade ponytail' "$TMP/out" || fail 'Codex Ponytail marketplace should be idempotent'
+grep -q 'plugin add ponytail@ponytail' "$TMP/out" || fail 'Codex Ponytail should use its upstream marketplace'
 pass 'dry-run performs no writes or host commands'
 
 : >"$HARNESS_TEST_LOG"
@@ -93,3 +96,9 @@ if grep -q 'codebase-memory-mcp' "$ROOT/.claude-plugin/marketplace.json"; then
   fail 'memory MCP must not be represented as a marketplace plugin'
 fi
 pass 'plugin catalogs keep remember Claude-only and memory out of marketplaces'
+
+if grep -q 'BRIGHTDATA_TOKEN' "$ROOT/.mcp.json" "$ROOT/.codex-plugin/mcp.json"; then
+  fail 'active MCP manifests must not install unresolved Bright Data secrets'
+fi
+grep -q 'BRIGHTDATA_TOKEN' "$ROOT/config/mcp.json" || fail 'Bright Data must remain in the prompted MCP inventory'
+pass 'secret-backed MCP servers are installed only through the prompted inventory'

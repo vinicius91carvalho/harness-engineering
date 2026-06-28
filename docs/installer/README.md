@@ -23,8 +23,9 @@ the terminal mode is always restored on exit.
 
 OpenCode detection checks `PATH` plus the official installer's user binary
 location (`~/.opencode/bin`), so it remains selectable before the current shell
-reloads its startup file. MCP secret prompts accept pasted values while keeping
-them masked (shell input is fully hidden; PowerShell displays `*` per character).
+reloads its startup file. The MCP inventory is installed into every selected
+host. Secret prompts accept pasted values while keeping them masked (shell input
+is fully hidden; PowerShell displays `*` per character).
 
 `--scope`/`-Scope` is Claude-only and accepts `user`, `project`, or `local`.
 Codex and OpenCode installs are user-wide.

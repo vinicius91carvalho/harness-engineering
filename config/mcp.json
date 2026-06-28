@@ -1,9 +1,9 @@
 {
-  "_comment": "Sanitized inventory of locally-configured MCP servers, written by /harness:update-project. Secrets (tokens, API keys, passwords) are redacted to ${PLACEHOLDER} — restore is manual (`claude mcp add ...` or merge into ~/.claude.json) and you must supply the real values.",
+  "_comment": "Sanitized inventory of locally-configured MCP servers, written by /harness:update-project. Secrets (tokens, API keys, passwords) are redacted to ${PLACEHOLDER}; the installer prompts for them before configuring each selected host.",
   "mcpServers": {
     "brightdata": {
-      "type": "sse",
-      "url": "https://mcp.brightdata.com/sse?token=${BRIGHTDATA_TOKEN}"
+      "type": "http",
+      "url": "https://mcp.brightdata.com/mcp?token=${BRIGHTDATA_TOKEN}"
     },
     "playwright": {
       "type": "stdio",

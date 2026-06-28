@@ -1,9 +1,5 @@
 {
   "mcpServers": {
-    "brightdata": {
-      "type": "sse",
-      "url": "https://mcp.brightdata.com/sse?token=${BRIGHTDATA_TOKEN}"
-    },
     "playwright": {
       "type": "stdio",
       "command": "npx",
