@@ -68,7 +68,7 @@ strict dry-run behavior, and Claude-only scope flags.
 
 > *"It's the job that's never started as takes longest to finish."*
 
-The `harness` plugin bundles a **Spec → Build → QA pipeline**: an autonomous, multi-session workflow that turns a 1–4 sentence idea into a complete spec, scaffolds the project, then implements and independently QA's every feature — looping until each one is both built *and* verified. Build sessions can run **in parallel**, each isolated in its own git worktree. Inspired by Anthropic's [Harness design for long-running application development](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents).
+The `harness` plugin bundles a **Spec → Build → QA pipeline**: an autonomous, multi-session workflow that turns a 1–4 sentence idea into a complete spec, scaffolds the project, then implements and independently QA's every feature — looping until each one is both built *and* verified. Build sessions can run **in parallel**, each isolated in its own git worktree. Inspired by Anthropic's [Effective harnesses for long-running agents](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents) and [Harness design for long-running application development](https://www.anthropic.com/engineering/harness-design-long-running-apps).
 
 ### Components
 
@@ -158,3 +158,4 @@ Full notes for every version are on the [Releases page](https://github.com/vinic
 ## References
 
 1 - [Harness design for long-running application development](https://www.anthropic.com/engineering/harness-design-long-running-apps) by Prithvi Rajasekaran on Anthropic Labs
+2 - [Effective harnesses for long-running agents](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents) by Justin Young on Anthropic Labs
