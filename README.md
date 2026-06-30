@@ -9,14 +9,8 @@
 </p>
 
 <p align="center">
-  <b>A curated developer workflow for any AI harness.</b>
+  <b>A curated developer workflow for any(*) AI harness.</b>
 </p>
-
-> *"YOU SHOULD NOT PASS!"* — on the bad plugins, the boilerplate, and the 3am pages.
->
-> *"A wizard is never late, nor is he early — he installs precisely the plugins he means to."*
->
-> *"All we have to decide is what to do with the config that is given us."*
 
 ## About
 
@@ -31,17 +25,6 @@ It's opinionated but not precious: **feedback, tips, and plugin suggestions are 
 The project website teaches the complete workflow in plain language, including
 Mermaid diagrams, generated file formats, recovery, customization, and known
 limitations: **[vinicius91carvalho.github.io/harness-engineering](https://vinicius91carvalho.github.io/harness-engineering/)**.
-
-It is a build-free static site under `site/`; Mermaid is loaded as one pinned
-browser module. Preview it locally with:
-
-```sh
-cd site && python3 -m http.server 8000
-```
-
-`.github/workflows/pages.yml` uploads that directory through GitHub's native Pages
-actions on pushes to `main`. In the repository's **Settings → Pages**, select
-**GitHub Actions** as the publishing source once; no build command is required.
 
 # Why does this project exists?
 
