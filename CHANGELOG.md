@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### [0.14.3](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.14.2...v0.14.3) (2026-06-30)
+
+
+### Bug Fixes
+
+* handle symlinked worktree paths by wrapping realpathSync with resolve fallback ([e98a56c](https://github.com/vinicius91carvalho/harness-engineering/commit/e98a56c4516f17a94e1b6916cec1ef760998c8ca))
+
 ### [0.14.2](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.14.1...v0.14.2) (2026-06-30)
 
 
