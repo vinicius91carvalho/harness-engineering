@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### [0.14.1](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.14.0...v0.14.1) (2026-06-30)
+
+
+### Bug Fixes
+
+* stabilize pages and goal review workflows ([4203e66](https://github.com/vinicius91carvalho/harness-engineering/commit/4203e66cf96073bc57198e359a9cde3dc3adeb88))
+
 ## [0.14.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.13.0...v0.14.0) (2026-06-30)
 
 
