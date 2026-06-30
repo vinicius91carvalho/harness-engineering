@@ -1,6 +1,6 @@
 {
   "name": "harness",
-  "version": "0.14.6",
+  "version": "0.15.0",
   "description": "AI Harness Engineering System - A curated developer workflow with spec→build→QA pipeline, learning loop, and marketplace",
   "author": {
     "name": "Vinicius Carvalho",

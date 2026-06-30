@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [0.15.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.14.6...v0.15.0) (2026-06-30)
+
+
+### Features
+
+* streamline setup guide and enforce spec context ([56d7c5d](https://github.com/vinicius91carvalho/harness-engineering/commit/56d7c5d1380b227e793e18690d966a109ca6f464))
+
 ### [0.14.6](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.14.5...v0.14.6) (2026-06-30)
 
 
