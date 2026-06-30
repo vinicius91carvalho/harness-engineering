@@ -9,8 +9,7 @@ user-authored skills, agents, commands, hooks, and instruction files.
 
 Credentials, tokens, histories, conversations, sessions, caches, logs, indexes,
 telemetry, and installed plugin payloads are excluded. MCP secrets become named
-`${PLACEHOLDER}` values and each host retains its native MCP schema. `remember`
-remains Claude-only and existing `.remember/` data is not touched;
+`${PLACEHOLDER}` values and each host retains its native MCP schema.
 `codebase-memory-mcp` remains a separately installed MCP/tool integration.
 
 Skills installed by a package manager aren't vendored here — they're reinstalled from source. The ones I use from [Matt Pocock's pack](https://github.com/mattpocock/skills) (symlinked into `~/.claude/skills`) restore with `npx skills@latest add mattpocock/skills`:

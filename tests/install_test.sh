@@ -52,6 +52,8 @@ after=$(find "$HOME" -mindepth 1 -print | sort)
 [ "$before" = "$after" ] || fail 'dry-run wrote into HOME'
 [ ! -s "$HARNESS_TEST_LOG" ] || fail 'dry-run executed a host command'
 grep -q 'codebase-memory-mcp' "$TMP/out" || fail 'dry-run should describe memory integration'
+grep -q 'configure context7 MCP for:claude codex opencode' "$TMP/out" || fail 'Context7 should target every host'
+grep -q 'configure playwright MCP for:claude codex opencode' "$TMP/out" || fail 'Playwright should target every host'
 grep -q 'MCP inventory for:claude codex opencode' "$TMP/out" || fail 'MCP inventory should target every selected host'
 grep -q 'marketplace upgrade ponytail' "$TMP/out" || fail 'Codex Ponytail marketplace should be idempotent'
 grep -q 'plugin add ponytail@ponytail' "$TMP/out" || fail 'Codex Ponytail should use its upstream marketplace'
@@ -90,12 +92,13 @@ if [ -n "$SYSTEM_NODE" ]; then
   pass 'JSONC normalization preserves strings and accepts comments/trailing commas'
 fi
 
-grep -q 'Digital-Process-Tools/claude-remember' "$ROOT/.claude-plugin/marketplace.json" || fail 'Claude remember plugin is missing'
-if grep -q '"name": "remember"' "$ROOT/.agents/plugins/marketplace.json"; then fail 'remember must remain Claude-only'; fi
 if grep -q 'codebase-memory-mcp' "$ROOT/.claude-plugin/marketplace.json"; then
   fail 'memory MCP must not be represented as a marketplace plugin'
 fi
-pass 'plugin catalogs keep remember Claude-only and memory out of marketplaces'
+if grep -Eq 'skill-creator|hookify|claude-md-management|claude-code-setup|ralph-loop|typescript-lsp|pyright-lsp|rust-analyzer-lsp|"name": "remember"|"name": "codex"' "$ROOT/.claude-plugin/marketplace.json"; then
+  fail 'Claude-only plugins must not remain in the marketplace'
+fi
+pass 'plugin catalogs keep memory and Claude-only integrations out of marketplaces'
 
 if grep -q 'BRIGHTDATA_TOKEN' "$ROOT/.mcp.json" "$ROOT/.codex-plugin/mcp.json"; then
   fail 'active MCP manifests must not install unresolved Bright Data secrets'

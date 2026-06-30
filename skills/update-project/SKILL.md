@@ -15,9 +15,8 @@ Before writing, show the source and destination inventory and ask through the
 active host's native question facility. Never read or copy credentials, tokens,
 history, conversations, sessions, caches, logs, indexes, telemetry, or installed
 plugin payloads. Preserve `${PLACEHOLDER}` values in committed MCP inventories.
-`remember` is a Claude-only optional marketplace plugin. Never delete existing
-`.remember/` data or silently uninstall a live plugin. `codebase-memory-mcp` is a
-separate optional MCP/tool integration, not a marketplace plugin.
+`codebase-memory-mcp` is a separate optional MCP/tool integration, not a
+marketplace plugin.
 
 ## Host backups
 
@@ -41,8 +40,8 @@ Keep host MCP shapes distinct: Claude uses `mcpServers`, Codex uses TOML
 
 Reconcile the Claude and Codex marketplace catalogs, both installers, README,
 AGENTS.md, and CLAUDE.md. Optional tools absent from a live setup are not automatic
-deletions; ask before removing an offering. Never reintroduce `remember` or list
-`codebase-memory-mcp` as a marketplace plugin. Keep `remember` Claude-only.
+deletions; ask before removing an offering. Never list `codebase-memory-mcp` as a
+marketplace plugin or reintroduce host-specific plugins.
 
 Run the same checks as CI:
 

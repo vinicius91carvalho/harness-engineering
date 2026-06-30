@@ -115,20 +115,15 @@ coding and QA from `feature_list.json` rather than trusting agent prose.
 
 | You did this in the session… | …it suggests |
 | --- | --- |
-| Re-derived a multi-step procedure (esp. more than once) | a **skill** (via `/skill-creator`) |
-| Corrected the same behavior repeatedly ("always/never do X") | a **hook** (via `/hookify`) |
+| Re-derived a multi-step procedure (esp. more than once) | a portable **skill** |
+| Corrected the same behavior repeatedly ("always/never do X") | an **AGENTS.md rule** |
 | A delegatable, context-heavy investigation | a **subagent** |
 | A durable fact about you or the project | a **memory entry** (written to your memory dir) |
-| A convention it got wrong | a **CLAUDE.md** addition |
+| A convention it got wrong | an **AGENTS.md** addition |
 
-It's an **orchestrator** — the reflection and routing are its job; the actual creation is delegated to the tools above, so it stays small and improves as they do. A built-in **recurrence bar** (act on things that happened ≥2–3× or are clearly going to recur) keeps it from nagging. Durable learnings persist to your existing per-project memory directory + `MEMORY.md`, so the assistant grows across sessions instead of starting cold. Bundled `evals/` (sample session transcripts with planted patterns) verify it via the skill-creator eval harness.
+It's an **orchestrator** — the reflection and routing are its job. A built-in **recurrence bar** (act on things that happened ≥2–3× or are clearly going to recur) keeps it from nagging. Durable learnings persist to your existing per-project memory directory + `MEMORY.md`, so the assistant grows across sessions instead of starting cold. Bundled `evals/` verify it with sample session transcripts.
 
-Invocation is manual by default. For hermes-style autonomy, opt in with a `Stop` hook in `~/.claude/settings.json` that nudges you at session end:
-
-```jsonc
-"Stop": [{ "hooks": [{ "type": "command",
-  "command": "echo 'Run /harness:learning-loop to capture what you learned this session.'" }]}]
-```
+Invocation is manual by default.
 
 ## Docs
 

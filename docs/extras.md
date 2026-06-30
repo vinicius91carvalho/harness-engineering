@@ -2,7 +2,9 @@
 
 | Integration | Hosts | Behavior |
 | --- | --- | --- |
-| `codebase-memory-mcp` | Claude, Codex, OpenCode | Runs the upstream signed-binary installer with `--skip-config`, verifies the executable, then writes only the selected hosts' native MCP entries. |
+| `codebase-memory-mcp` | Claude, Codex, OpenCode | Runs the upstream signed-binary installer with `--skip-config`, verifies the executable, enables auto-indexing, then writes only the selected hosts' native MCP entries. |
+| Context7 | Claude, Codex, OpenCode | Registers Upstash's remote MCP endpoint for current library documentation. |
+| Playwright | Claude, Codex, OpenCode | Registers Microsoft's `@playwright/mcp` server through `npx`. |
 | Status line | Claude | Uses the bundled `scripts/statusline.sh`. No Codex or OpenCode status-line support is claimed. |
 | Shared config | Claude | Atomically merges the sanitized `config/settings.json`, preserving unrelated settings and a backup. |
 | MCP inventory | Claude, Codex, OpenCode | Prompts once for redacted secrets and writes selected servers to every selected host. |

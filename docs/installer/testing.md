@@ -29,5 +29,4 @@ Run these only on disposable user profiles after authenticating each real CLI:
 3. Select `codebase-memory-mcp`; verify the binary exists, only the selected host
    has an MCP entry, and “Index this project” exposes its tools.
 4. Run `--yes --dry-run`; compare the profile tree and config hashes before/after.
-5. For Claude, install `remember`, restart, and confirm existing `.remember/`
-   content remains intact.
+5. Install Context7 and Playwright for each host and verify both appear in its MCP list.

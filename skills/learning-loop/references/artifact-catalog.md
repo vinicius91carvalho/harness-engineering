@@ -1,39 +1,24 @@
 # Artifact catalog — how to scaffold each finding
 
 Read this in Step 4 of the learning loop, once the user has approved findings.
-Each section says **when it's the right call** and **how to create it**. Prefer
-delegating to an existing tool over hand-writing — less to maintain, improves
-automatically.
+Each section says **when it's the right call** and **how to create it**.
 
 ## skill
 
 **When:** a multi-step procedure was re-derived from scratch, especially more than
 once (e.g. "build → run migrations → deploy to staging → smoke test → promote").
 
-**How:** invoke `/skill-creator` (the `skill-creator:skill-creator` skill). Hand it
-a tight intent built from the evidence: what the procedure does, the trigger phrases
-you saw, and the steps you observed. Let skill-creator drive drafting + evals — do
-not write the SKILL.md yourself here. If `skill-creator` is unavailable, fall back to
-writing a minimal `skills/<name>/SKILL.md` with `name`/`description` frontmatter and
-the procedure as imperative steps.
+**How:** write a minimal `skills/<name>/SKILL.md` with `name`/`description`
+frontmatter, explicit trigger phrases, and the procedure as imperative steps.
 
-## hook
+## instruction rule
 
 **When:** the user corrected the same behavior repeatedly, or stated a rule
-("always run tests before committing", "never edit generated files"). Hooks are for
-*deterministic enforcement* — things that should happen every time without relying on
-the model to remember.
+("always run tests before committing", "never edit generated files").
 
-**How:** invoke `/hookify` describing the behavior to prevent and the trigger. Pick
-the event:
-- before a tool runs and should be blocked/validated → `PreToolUse` (e.g. block
-  `git commit` until tests pass)
-- after a tool runs → `PostToolUse` (e.g. run a formatter after `Edit`)
-- at session end → `Stop`
-
-If `hookify` is unavailable, the hook lives in `~/.claude/settings.json` under
-`hooks.<Event>` as `{ "matcher": "<ToolName>", "hooks": [{ "type": "command",
-"command": "<shell>" }] }`. Propose it; don't silently edit settings.
+**How:** propose one focused imperative rule under the relevant section of the
+project's `AGENTS.md`. This is advisory rather than deterministic, but it is portable
+across all three supported hosts. Use CI when deterministic enforcement is required.
 
 ## subagent (agent)
 

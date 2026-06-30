@@ -37,7 +37,6 @@ Claude and Codex use their marketplace/plugin CLIs. OpenCode receives namespaced
 skills, agents, and commands under `~/.config/opencode`. A piped PowerShell run
 stages the repository before it needs assets, because `$PSScriptRoot` is empty.
 
-`remember` is offered only to Claude Code. `codebase-memory-mcp` is a separate
-optional integration on all hosts: the upstream installer runs with
-`--skip-config`, the binary is verified, then only selected hosts are configured.
-Existing `.remember/` data is never removed.
+`codebase-memory-mcp`, Context7, and Playwright are optional MCP integrations on
+all hosts. The memory server's upstream installer runs with `--skip-config`, its
+binary is verified, auto-indexing is enabled, then only selected hosts are configured.

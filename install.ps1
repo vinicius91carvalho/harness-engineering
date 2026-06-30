@@ -13,16 +13,12 @@ $MarketplaceRepo = "vinicius91carvalho/harness-engineering"
 $ClaudeMarketplace = "harness-engineering"
 $CodexMarketplace = "harness-engineering"
 $MemoryInstaller = "https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.ps1"
-$Optional = @("ponytail", "remember", "context7", "skill-creator", "claude-md-management", "claude-code-setup", "hookify", "playwright", "typescript-lsp", "ralph-loop", "pyright-lsp", "rust-analyzer-lsp", "codex", "codebase-memory-mcp", "status-line", "shared-config", "mcp-servers")
+$Optional = @("ponytail", "codebase-memory-mcp", "context7", "playwright", "status-line", "shared-config", "mcp-servers")
 $PluginClis = @{
   harness = @("claude", "codex", "opencode")
   ponytail = @("claude", "codex", "opencode")
-  remember = @("claude")
-  context7 = @("claude"); "skill-creator" = @("claude"); "claude-md-management" = @("claude")
-  "claude-code-setup" = @("claude"); hookify = @("claude"); playwright = @("claude")
-  "typescript-lsp" = @("claude"); "ralph-loop" = @("claude"); "pyright-lsp" = @("claude")
-  "rust-analyzer-lsp" = @("claude"); codex = @("claude")
   "codebase-memory-mcp" = @("claude", "codex", "opencode")
+  context7 = @("claude", "codex", "opencode"); playwright = @("claude", "codex", "opencode")
   "mcp-servers" = @("claude", "codex", "opencode")
   "status-line" = @("claude"); "shared-config" = @("claude")
 }
@@ -313,6 +309,8 @@ function Install-Memory {
     $binary = Get-Command codebase-memory-mcp -ErrorAction SilentlyContinue
   }
   if (-not $binary) { throw "codebase-memory-mcp binary was not found after installation; add it to PATH and retry" }
+  & $binary.Source config set auto_index true
+  if ($LASTEXITCODE -ne 0) { throw "Could not enable codebase-memory-mcp auto-indexing" }
   foreach ($target in $Targets) {
     switch ($target) {
       claude {
@@ -321,6 +319,34 @@ function Install-Memory {
       }
       codex { Invoke-Native codex @("mcp", "add", "codebase-memory-mcp", "--", $binary.Source) }
       opencode { Set-OpenCodeMcp "codebase-memory-mcp" ([pscustomobject]@{ type="local"; command=@($binary.Source); enabled=$true }) }
+    }
+  }
+}
+
+function Install-PortableMcp([string]$Name) {
+  $server = if ($Name -eq "context7") {
+    [pscustomobject]@{ type="http"; url="https://mcp.context7.com/mcp" }
+  } else {
+    [pscustomobject]@{ type="stdio"; command="npx"; args=@("-y", "@playwright/mcp@latest") }
+  }
+  if ($DryRun) { Write-Host "DRY RUN - configure $Name MCP for: $($Targets -join ', ')"; return }
+  $json = $server | ConvertTo-Json -Compress
+  foreach ($target in $Targets) {
+    switch ($target) {
+      claude {
+        & claude mcp remove $Name --scope user *> $null
+        Invoke-Native claude @("mcp", "add-json", "--scope", "user", $Name, $json)
+      }
+      codex {
+        & codex mcp remove $Name *> $null
+        if ($server.url) { Invoke-Native codex @("mcp", "add", $Name, "--url", $server.url) }
+        else { Invoke-Native codex (@("mcp", "add", $Name, "--", $server.command) + @($server.args)) }
+      }
+      opencode {
+        $entry = if ($server.url) { [pscustomobject]@{ type="remote"; url=$server.url; enabled=$true } }
+          else { [pscustomobject]@{ type="local"; command=@($server.command) + @($server.args); enabled=$true } }
+        Set-OpenCodeMcp $Name $entry
+      }
     }
   }
 }
@@ -355,6 +381,7 @@ foreach ($target in $Targets) {
 
 foreach ($item in $Selected) {
   if ($item -eq "codebase-memory-mcp") { Install-Memory; continue }
+  if ($item -eq "context7" -or $item -eq "playwright") { Install-PortableMcp $item; continue }
   if ($item -eq "status-line") { Enable-ClaudeStatusLine; continue }
   if ($item -eq "shared-config") { Apply-ClaudeSharedConfig; continue }
   if ($item -eq "mcp-servers") { Install-McpInventory; continue }

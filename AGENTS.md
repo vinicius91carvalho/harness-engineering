@@ -4,7 +4,7 @@ This file provides guidance to Opencode, Codex, and other AI coding agents when 
 
 ## What this is
 
-An AI coding plugin marketplace plus one in-repo plugin (`harness`) for **Claude Code**, **OpenCode**, and **Codex**. Claude and Codex use their native manifests and marketplace catalogs; OpenCode installs namespaced skills, agents, and commands. `remember` is Claude-only. `codebase-memory-mcp` is an optional MCP/tool integration, never a marketplace plugin.
+An AI coding plugin marketplace plus one in-repo plugin (`harness`) for **Claude Code**, **OpenCode**, and **Codex**. Claude and Codex use their native manifests and marketplace catalogs; OpenCode installs namespaced skills, agents, and commands. `codebase-memory-mcp` is an optional MCP/tool integration, never a marketplace plugin.
 
 There is no build, test, or lint step. Changes are validated by installing the marketplace and running the CLI.
 

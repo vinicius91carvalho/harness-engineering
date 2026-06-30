@@ -26,12 +26,11 @@ Maintained decisions:
   Same-name user entries are replaced so repeated installs remain idempotent.
   Codex URL registration verifies the saved entry when optional OAuth discovery
   exits nonzero, and suppresses OAuth URLs because they can contain query secrets.
-- `remember` is a Claude-only optional plugin. Existing user `.remember/` data is
-  never deleted and a live installation is never silently removed.
 - [`codebase-memory-mcp`](https://github.com/DeusData/codebase-memory-mcp#installation)
   is an MCP/tool integration, never a marketplace plugin. Its signed/checksummed
   platform binary is installed through upstream `--skip-config`, then configured
-  host-by-host. This also follows upstream's multi-agent contract.
+  host-by-host with auto-indexing enabled. It replaces the removed Claude-only LSP
+  plugins. Context7 and Playwright use their upstream host-neutral MCP servers.
 - Existing model choices win. No manifest or workflow pins vendor model IDs.
 - JSON configuration writes retain a pre-normalization backup and replace files
   atomically while preserving unrelated keys.

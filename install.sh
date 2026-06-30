@@ -7,7 +7,7 @@ CLAUDE_MARKETPLACE="harness-engineering"
 CODEX_MARKETPLACE="harness-engineering"
 REPO_URL="https://github.com/$MARKETPLACE_REPO.git"
 MEMORY_INSTALLER="https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh"
-OPTIONAL="ponytail remember context7 skill-creator claude-md-management claude-code-setup hookify playwright typescript-lsp ralph-loop pyright-lsp rust-analyzer-lsp codex codebase-memory-mcp status-line shared-config mcp-servers"
+OPTIONAL="ponytail codebase-memory-mcp context7 playwright status-line shared-config mcp-servers"
 
 ASSUME=""
 DRY=""
@@ -186,8 +186,7 @@ if [ -n "$SCOPE" ] && [ "$CLI" != claude ]; then die '--scope is only valid when
 plugin_clis() {
   case "$1" in
     harness|ponytail) echo 'claude codex opencode' ;;
-    remember|context7|skill-creator|claude-md-management|claude-code-setup|hookify|playwright|typescript-lsp|ralph-loop|pyright-lsp|rust-analyzer-lsp|codex) echo claude ;;
-    codebase-memory-mcp) echo 'claude codex opencode' ;;
+    codebase-memory-mcp|context7|playwright) echo 'claude codex opencode' ;;
     mcp-servers) echo 'claude codex opencode' ;;
     status-line|shared-config) echo claude ;;
   esac
@@ -410,6 +409,7 @@ install_memory() {
     binary=$(command -v codebase-memory-mcp 2>/dev/null || true)
   fi
   [ -n "$binary" ] && [ -x "$binary" ] || die 'codebase-memory-mcp binary was not found after installation; add it to PATH and retry'
+  "$binary" config set auto_index true || die 'could not enable codebase-memory-mcp auto-indexing'
   for cli in $CLI; do
     case "$cli" in
       claude)
@@ -421,6 +421,32 @@ install_memory() {
   done
 }
 
+install_portable_mcp() {
+  name=$1
+  ensure_jq
+  case "$name" in
+    context7) json='{"type":"http","url":"https://mcp.context7.com/mcp"}' ;;
+    playwright) json='{"type":"stdio","command":"npx","args":["-y","@playwright/mcp@latest"]}' ;;
+  esac
+  if [ -n "$DRY" ]; then echo "DRY RUN — configure $name MCP for:$CLI"; return; fi
+  for cli in $CLI; do
+    case "$cli" in
+      claude)
+        claude mcp remove "$name" --scope user >/dev/null 2>&1 || true
+        claude mcp add-json --scope user "$name" "$json" || die "Claude MCP configuration failed for $name" ;;
+      codex)
+        codex mcp remove "$name" >/dev/null 2>&1 || true
+        url=$(printf '%s' "$json" | jq -r '.url // empty')
+        if [ -n "$url" ]; then codex mcp add "$name" --url "$url"
+        else codex mcp add "$name" -- "$(printf '%s' "$json" | jq -r .command)" -y "$(printf '%s' "$json" | jq -r '.args[-1]')"
+        fi || die "Codex MCP configuration failed for $name" ;;
+      opencode)
+        server=$(printf '%s' "$json" | jq -c 'if .url then {type:"remote",url:.url,enabled:true} else {type:"local",command:([.command]+.args),enabled:true} end')
+        atomic_opencode_mcp "$name" "$server" ;;
+    esac
+  done
+}
+
 for cli in $CLI; do
   case "$cli" in claude) install_claude_marketplace ;; codex) install_codex_marketplace ;; esac
 done
@@ -428,6 +454,7 @@ done
 for item in $SELECTED; do
   case "$item" in
     codebase-memory-mcp) install_memory ;;
+    context7|playwright) install_portable_mcp "$item" ;;
     status-line) enable_status_line ;;
     shared-config) apply_shared_config ;;
     mcp-servers) install_mcp_inventory ;;

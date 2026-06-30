@@ -2,12 +2,12 @@
 name: learning-loop
 description: |
   Reflect on a coding session and turn what happened into durable harness
-  improvements — suggest (and, with approval, scaffold) skills, hooks, subagents,
+  improvements — suggest (and, with approval, scaffold) skills, rules, subagents,
   commands, MCP servers, memory entries, and host instruction fixes, then persist
   what was learned so the assistant grows across sessions. This is a hermes-agent
   style learning loop. Use it whenever the user says "what did we learn", "reflect
   on this session", "run the learning loop", "retrospective", "capture this as a
-  skill", "what should I automate", "suggest skills/hooks/agents", "improve my
+  skill", "what should I automate", "suggest skills/rules/agents", "improve my
   harness setup", or asks to review a session transcript for reusable patterns —
   and proactively at the end of a long or repetitive task, even if they don't use
   those exact words.
@@ -23,13 +23,8 @@ convert those moments into portable automations so the next session is cheaper
 and smarter. A session that solves a problem and forgets it has wasted the lesson.
 
 The whole point is leverage: a procedure done twice by hand becomes a skill done
-once; a correction repeated three times becomes a hook that never lets it happen
-again; a fact about the user re-explained every session becomes a memory entry.
-
-**You are an orchestrator, not a reinventor.** The tools to *create* these
-artifacts already exist — `skill-creator`, `hookify`, the memory system. Your value
-is the *reflection* (spotting the pattern) and the *routing* (handing each finding
-to the right tool). Don't re-implement skill authoring or hook generation yourself.
+once; a correction repeated three times becomes a portable instruction rule; a
+fact about the user re-explained every session becomes a memory entry.
 
 ## Step 1 — Scope the reflection
 
@@ -55,7 +50,7 @@ detailed "how to scaffold / which tool to route to" lives in
 | Signal you observe in the session | Candidate artifact |
 |---|---|
 | A multi-step procedure re-derived from scratch (esp. if done >1×) | **skill** |
-| The user corrected the same behavior repeatedly / said "always" or "never" do X | **hook** |
+| The user corrected the same behavior repeatedly / said "always" or "never" do X | **instruction rule** |
 | A delegatable, context-heavy, specialized task you'd want to hand off | **subagent (agent)** |
 | A workflow the user keeps asking for by name | **slash command** |
 | An external service / data source you reached for repeatedly | **MCP server** |
@@ -70,7 +65,7 @@ Do **not** propose an artifact for everything that happened once. The bar is:
 - **Clear future value:** it's obviously going to recur (a deploy procedure, a
   house rule the user stated as a rule), even if you only saw it once.
 
-A skill or hook that fires on a one-off is pure overhead — it clutters context and
+A skill or rule for a one-off is pure overhead — it clutters context and
 erodes trust. When in doubt, leave it out and say why. Being selective is what makes
 the few suggestions you *do* make worth acting on. This restraint is the skill's
 most important behavior, not a nice-to-have.
@@ -86,12 +81,12 @@ most-recurring first). Keep it scannable.
 1. [skill] <short title>
    Evidence: <what happened, how many times>
    Proposed: <the artifact in one line>
-   Route: /skill-creator   ·   Confidence: high/med
+   Route: portable SKILL.md   ·   Confidence: high/med
 
-2. [hook] <short title>
+2. [instruction] <short title>
    Evidence: <the repeated correction, quoted briefly>
-   Proposed: <PreToolUse hook on `git commit` that runs tests>
-   Route: /hookify   ·   Confidence: high
+   Proposed: <AGENTS.md rule requiring tests before commits>
+   Route: AGENTS.md   ·   Confidence: high
 
 3. [memory] <short title>
    Evidence: <the durable fact>
@@ -109,15 +104,15 @@ restraint, and it surfaces borderline calls they can overrule.
 Then ask via the current host's native question facility (`AskUserQuestion`,
 `request_user_input`, or OpenCode `question`) **which findings to act on**. Never
 scaffold without explicit approval — creating files, editing CLAUDE.md, or
-registering hooks are changes the user owns.
+adding rules are changes the user owns.
 
 ## Step 4 — Scaffold the approved findings
 
 For each approved finding, read `references/artifact-catalog.md` and follow the
 recipe for that type. In short:
 
-- **skill** → invoke `/skill-creator` with a tight intent derived from the evidence.
-- **hook** → invoke `/hookify` describing the behavior to prevent.
+- **skill** → write the minimal portable `skills/<name>/SKILL.md`.
+- **instruction rule** → propose a focused `AGENTS.md` edit.
 - **agent** → use Claude Markdown, Codex TOML, or OpenCode Markdown for the active host.
 - **command** → write a command `.md` file.
 - **memory entry** → write `<slug>.md` into the memory directory using the exact
@@ -148,7 +143,7 @@ write-time, which is enough to keep the library from rotting without a separate 
 - **Reflection beats static scans.** A codebase scan can't see that you corrected
   the same mistake three times *today*; the session can. That lived experience is
   the signal no static analyzer has.
-- **Routing beats reinventing.** Delegating creation to `skill-creator`/`hookify`
-  means this skill stays small and improves automatically as those tools improve.
+- **Portable artifacts beat host-specific automation.** Skills and `AGENTS.md`
+  work across Claude Code, Codex, and OpenCode.
 - **Restraint beats volume.** The recurrence bar is what separates a useful loop
   from a nagging one. Fewer, higher-leverage artifacts is the goal.

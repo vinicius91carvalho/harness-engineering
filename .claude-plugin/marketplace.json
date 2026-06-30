@@ -3,18 +3,6 @@
   "owner": { "name": "Vinicius Carvalho" },
   "plugins": [
     { "name": "harness", "source": "./" },
-    { "name": "ponytail", "source": { "source": "github", "repo": "DietrichGebert/ponytail" } },
-    { "name": "remember", "source": { "source": "github", "repo": "Digital-Process-Tools/claude-remember" } },
-    { "name": "context7", "source": { "source": "git-subdir", "url": "https://github.com/anthropics/claude-plugins-official.git", "path": "external_plugins/context7" } },
-    { "name": "skill-creator", "source": { "source": "git-subdir", "url": "https://github.com/anthropics/claude-plugins-official.git", "path": "plugins/skill-creator" } },
-    { "name": "playwright", "source": { "source": "git-subdir", "url": "https://github.com/anthropics/claude-plugins-official.git", "path": "external_plugins/playwright" } },
-    { "name": "claude-md-management", "source": { "source": "git-subdir", "url": "https://github.com/anthropics/claude-plugins-official.git", "path": "plugins/claude-md-management" } },
-    { "name": "typescript-lsp", "source": { "source": "git-subdir", "url": "https://github.com/anthropics/claude-plugins-official.git", "path": "plugins/typescript-lsp" } },
-    { "name": "ralph-loop", "source": { "source": "git-subdir", "url": "https://github.com/anthropics/claude-plugins-official.git", "path": "plugins/ralph-loop" } },
-    { "name": "claude-code-setup", "source": { "source": "git-subdir", "url": "https://github.com/anthropics/claude-plugins-official.git", "path": "plugins/claude-code-setup" } },
-    { "name": "pyright-lsp", "source": { "source": "git-subdir", "url": "https://github.com/anthropics/claude-plugins-official.git", "path": "plugins/pyright-lsp" } },
-    { "name": "hookify", "source": { "source": "git-subdir", "url": "https://github.com/anthropics/claude-plugins-official.git", "path": "plugins/hookify" } },
-    { "name": "rust-analyzer-lsp", "source": { "source": "git-subdir", "url": "https://github.com/anthropics/claude-plugins-official.git", "path": "plugins/rust-analyzer-lsp" } },
-    { "name": "codex", "source": { "source": "git-subdir", "url": "https://github.com/openai/codex-plugin-cc.git", "path": "plugins/codex" } }
+    { "name": "ponytail", "source": { "source": "github", "repo": "DietrichGebert/ponytail" } }
   ]
 }
