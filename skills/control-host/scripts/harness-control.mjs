@@ -535,6 +535,9 @@ async function start() {
   if (current.status === 'complete' && clean && goalState.reviewedHead === head) {
     return process.stdout.write(`${JSON.stringify({ started: false, status: 'complete', reviewedHead: head })}\n`)
   }
+  if (current.status === 'complete' && clean && goalState.reviewedHead !== head) {
+    process.stderr.write(`harness-control: start skipped — reviewedHead mismatch (goal=${goalState.reviewedHead || 'none'}, head=${head})\n`)
+  }
   if (desired.status === 'paused') {
     return process.stdout.write(`${JSON.stringify({ started: false, status: 'paused' })}\n`)
   }
