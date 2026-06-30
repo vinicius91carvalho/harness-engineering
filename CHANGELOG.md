@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### [0.17.2](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.17.1...v0.17.2) (2026-06-30)
+
+
+### Bug Fixes
+
+* operational merge failures are not misclassified as conflicts ([f569b16](https://github.com/vinicius91carvalho/harness-engineering/commit/f569b16e10eeba3479f41d62488f8dc07d6d3d8e))
+
 ### [0.17.1](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.17.0...v0.17.1) (2026-06-30)
 
 
