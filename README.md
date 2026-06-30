@@ -69,10 +69,11 @@ Native Windows users can run [`install.ps1`](install.ps1). See the
 
 ## Framework
 
-The harness has four user-facing skills:
+The harness has five user-facing skills:
 
 | Skill | Purpose |
 | --- | --- |
+| `/harness:setup` | Adopt the harness in an existing codebase without changing application code. |
 | `/harness:planner` | Turn an idea into `project_specs.xml` with stable Acceptance Checks. |
 | `/harness:generator` | Build, independently test, integrate, retry, and resume the work. |
 | `/harness:evaluator` | Run the final Goal Review against integrated `main`. |
@@ -83,6 +84,12 @@ idea → project_specs.xml → feature_list.json → coding → QA → integrati
                                       ↑          │
                                       └── repair ┘
 ```
+
+For an existing repository, run `/harness:setup [your goal]`. It inspects the
+current codebase, uses the planner to create `project_specs.xml`, and uses only
+the generator's initialization stage to create `feature_list.json`, `init.sh`,
+and any missing setup files. It preserves existing application files and stops before
+claiming or implementing work; review the spec, then run `/harness:generator`.
 
 ### How the workflow runs
 

@@ -28,7 +28,9 @@ If `main:feature_list.json` is absent, first acquire
 `mkdir "${REPO%/}.harness-init.lock"` and run the initializer exactly once in the
 `main` checkout. Reference `project_specs.xml` explicitly in the initializer task
 so it can create and verify every spec-required file and directory without relying
-on inherited chat context. Another session that cannot acquire it waits and rechecks instead
+on inherited chat context. In a non-empty codebase, it must derive harness setup
+from existing files and preserve application code, configuration, documentation,
+tests, and Git history. Another session that cannot acquire it waits and rechecks instead
 of starting a second initializer. Remove the directory only after initialization
 completes; a lock left by a crashed initializer requires explicit user-confirmed
 takeover. Then, in the checkout of `main`:

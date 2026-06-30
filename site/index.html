@@ -116,12 +116,18 @@ opencode
 reload the page, and still find it.</code></pre>
       <p>Review the generated checks before continuing. Each check should describe behavior that QA can actually observe.</p>
       <p class="files"><strong>Created:</strong> <code>project_specs.xml</code> — the goal, design decisions, and stable Acceptance Checks.</p>
+      <aside class="note">
+        <strong>Existing codebase:</strong> run <code>/harness-setup Your goal</code>
+        instead. Setup inspects the current repository, runs the planner and the
+        generator's initialization stage, preserves application files, and stops
+        before implementation.
+      </aside>
     </section>
 
     <section class="topic" id="scaffold">
       <p class="step">Step 6</p>
       <h2>Create the execution queue</h2>
-      <p>In the same OpenCode session, invoke the generator once. It initializes Git state, maps checks into Work Items, and can start the first worker.</p>
+      <p>In the same OpenCode session, invoke the generator once. It initializes Git state, maps checks into Work Items, and can start the first worker. Skip this step if <code>/harness-setup</code> already created the queue.</p>
       <pre><code>/harness-generator</code></pre>
       <p class="files"><strong>Created:</strong> <code>feature_list.json</code>, <code>CONTEXT.md</code>, <code>harness-progress/</code>, and Run State under <code>.git/harness-runs/</code>.</p>
     </section>

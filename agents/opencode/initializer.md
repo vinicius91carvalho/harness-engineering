@@ -9,3 +9,5 @@ structure, and the first commit on main. Idempotent — no-op if already scaffol
 features. Categorize runtime blockers and self-contained/Docker prerequisites as `foundation` and
 order them before dependent work. Report observable completion through `feature_list.json`.
 `init.sh` must emit `Ready` only after a real health or UI boundary responds.
+For an existing codebase, derive setup from current files and preserve its source, configuration,
+tests, documentation, structure, and Git history.

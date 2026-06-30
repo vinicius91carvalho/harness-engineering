@@ -34,6 +34,7 @@
     "privacyPolicyURL": "https://github.com/vinicius91carvalho/harness-engineering/blob/main/LICENSE",
     "termsOfServiceURL": "https://github.com/vinicius91carvalho/harness-engineering/blob/main/LICENSE",
     "defaultPrompt": [
+      "Run /harness:setup to adopt the harness in an existing codebase",
       "Run /harness:planner to turn an idea into a complete project spec",
       "Run /harness:generator to build features in parallel worktrees",
       "Run /harness:learning-loop to capture what you learned this session"

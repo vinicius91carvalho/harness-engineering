@@ -24,6 +24,10 @@ Also read the repo's domain docs if present (`CONTEXT.md` / `CONTEXT-MAP.md`,
 write `feature_list.json` descriptions and steps in the glossary's vocabulary and
 honor recorded ADRs. If none exist, proceed silently.
 
+Inspect the repository before writing. In an existing codebase, derive commands,
+ports, structure, and dependencies from its current files. Preserve all existing
+source, configuration, tests, documentation, and Git history.
+
 ## STEP 2: Create feature_list.json
 
 Create `feature_list.json`: a flat JSON execution queue derived from the spec's
@@ -91,10 +95,11 @@ Base it on the spec's tech stack. It MUST:
 
 ## STEP 4: Project structure + git
 
-- Create the basic directory structure the spec implies (frontend/backend/etc.).
+- Create missing project structure only for an empty/new project. Never replace
+  or reorganize an existing codebase during initialization.
 - Add `dev.log` and `.harness/` to `.gitignore`; these are runtime state, not the
   tracked Workflow Journal.
-- Create `README.md` (overview + setup).
+- Create `README.md` only when it does not exist.
 - `git init` if needed, commit everything on **`main`**:
   `"Initial setup: feature_list.json, init.sh, and project structure"`.
 

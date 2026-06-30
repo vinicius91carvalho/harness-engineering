@@ -19,8 +19,12 @@ produce `project_specs.xml` in the user's current working directory.
 
 ## Pick the mode
 
-- **New Project** — cwd is empty OR there is no `project_specs.xml` → build the
-  WHOLE spec from `project_specs.template.xml` (in this skill's directory).
+- **New Project** — cwd is empty → build the WHOLE spec from
+  `project_specs.template.xml` (in this skill's directory).
+- **Existing Codebase** — cwd has application files but no `project_specs.xml` →
+  inspect the repository, then build the whole spec from the template around its
+  current behavior, architecture, commands, tests, and the user's stated goal.
+  Do not invent a replacement stack or describe unrequested rewrites.
 - **Feature** — `project_specs.xml` already exists → ADD only the new feature.
   Append new `<core_features>` and `<acceptance_check>` entries (and any new tables / endpoints / UI it
   needs). **Never rewrite, reorder, or delete existing content** — the generator
@@ -28,9 +32,10 @@ produce `project_specs.xml` in the user's current working directory.
 
 Read any existing `project_specs.xml` first to decide.
 
-For Feature mode, also inspect the files and tests that implement the affected
-area. Answer repository questions from the tree instead of asking the user, and
-make the added specification understandable without relying on chat history.
+For Existing Codebase and Feature modes, inspect the files and tests that
+implement the affected areas. Answer repository questions from the tree instead
+of asking the user, and make the specification understandable without relying on
+chat history.
 
 ## Read the domain docs first
 
@@ -99,7 +104,7 @@ the generator rejects missing mappings, unknown dependencies, and dependency cyc
 ## Finish
 
 - Write/update `project_specs.xml` in the user's cwd.
-- **New Project**: tell the user to review the file, then open a NEW session and
+- **New Project or Existing Codebase**: tell the user to review the file, then open a NEW session and
   run **`/generator`** — it scaffolds the project (via the initializer agent) on
   first run, then implements and QA's features. Multiple `/generator` sessions can
   run in parallel, each claiming a different `context`.

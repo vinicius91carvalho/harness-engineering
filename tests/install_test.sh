@@ -76,8 +76,10 @@ pass 'only the selected Codex host is changed'
 : >"$HARNESS_TEST_LOG"
 "$ROOT/install.sh" --cli opencode --no </dev/null >"$TMP/out"
 test -f "$HOME/.config/opencode/skills/harness-generator/SKILL.md" || fail 'OpenCode namespaced skill missing'
+test -f "$HOME/.config/opencode/skills/harness-setup/SKILL.md" || fail 'OpenCode setup skill missing'
 test -f "$HOME/.config/opencode/agents/harness-coding-agent.md" || fail 'OpenCode namespaced agent missing'
 test -f "$HOME/.config/opencode/commands/harness-generator.md" || fail 'OpenCode namespaced command missing'
+test -f "$HOME/.config/opencode/commands/harness-setup.md" || fail 'OpenCode setup command missing'
 first=$(find "$HOME/.config/opencode" -type f -exec shasum -a 256 {} \; | sort | shasum -a 256)
 "$ROOT/install.sh" --cli opencode --no </dev/null >"$TMP/out"
 second=$(find "$HOME/.config/opencode" -type f -exec shasum -a 256 {} \; | sort | shasum -a 256)
