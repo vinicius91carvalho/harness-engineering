@@ -11,17 +11,20 @@ is not a sweep of unchecked queue flags: it independently evaluates the Project
 Goal, every stable Acceptance Check, and cross-feature journeys on integrated
 `main`.
 
-Let `REPO` be the project root, `GEN` the generator skill directory, and `HOST` the
-current host.
+Let `PROJECT` be the directory containing the selected project's specification,
+`GEN` the generator skill directory, and `HOST` the current host. At a monorepo
+root, resolve the project through `.harness/projects.json`; Goal Review never
+combines independent project queues.
 
 1. Require `main:feature_list.json` and run
-   `node "$GEN/reconcile.mjs" "$REPO" --check`. Refuse Goal Review while any Work
+   `node "$GEN/reconcile.mjs" "$PROJECT" --check`. Refuse Goal Review while any Work
    Item lacks `integration:true`.
-2. If `.git/harness-runs/goal-review.json` is already `blocked`, show it and require
+2. If this project's Goal Review Run State under `.git/harness-runs/` is already
+   `blocked` (nested projects use a path-prefixed filename), show it and require
    user guidance before replacing its verdict.
 3. Run:
    ```bash
-   node "$GEN/orchestrator.mjs" --host "$HOST" --repo "$REPO" \
+   node "$GEN/orchestrator.mjs" --host "$HOST" --repo "$PROJECT" \
      --workdir "$MAIN_CHECKOUT" --mode goal-review --context goal-review \
      --port 5170 --claim-script "$GEN/claim.sh"
    ```

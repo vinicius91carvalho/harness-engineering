@@ -86,10 +86,94 @@ idea → project_specs.xml → feature_list.json → coding → QA → integrati
 ```
 
 For an existing repository, run `/harness:setup [your goal]`. It inspects the
-current codebase, uses the planner to create `project_specs.xml`, and uses only
+product docs, manifests, runtime configuration, integrations, and infrastructure;
+builds a technology inventory; and refuses initialization if a discovered material
+technology is missing from `project_specs.xml`. Each integration records its role,
+configuration, security/tenant boundary, failure behavior, deployment, and local
+substitute. Documentation/code contradictions are reported explicitly. Setup then
+uses the planner to create `project_specs.xml`, and uses only
 the generator's initialization stage to create `feature_list.json`, `init.sh`,
 and any missing setup files. It preserves existing application files and stops before
 claiming or implementing work; review the spec, then run `/harness:generator`.
+
+### Monorepos
+
+Setup detects independently runnable or deployable projects from workspace
+manifests, nested manifests, Compose/deployment configuration, and architecture
+docs. With multiple projects it writes a routing registry at the Git root:
+
+```json
+{
+  "projects": [
+    {"id": "frontend", "path": "apps/frontend", "description": "Customer web application"},
+    {"id": "backend", "path": "services/backend", "description": "HTTP API and persistence"}
+  ]
+}
+```
+
+Each registered directory owns its own `project_specs.xml`, technology inventory,
+`feature_list.json`, and workflow journals. Run planner, generator, evaluator, or
+the control host from that directory. When invoked at the Git root, skills use
+`.harness/projects.json` to list and select the owning project; they do not create
+an aggregate specification or queue.
+
+Git coordination remains repository-wide, while claims, branches, worktree paths,
+Run State, supervisor state, and Goal Review are project-namespaced. Therefore two
+projects may both have a `core` context without colliding. A project specification
+may require edits to shared packages or sibling services, but cross-project queue
+dependencies are intentionally unsupported: one project must own the observable
+Acceptance Check.
+
+Given this repository:
+
+```text
+acme/
+├── apps/web/
+├── services/api/
+└── packages/shared/
+```
+
+set it up once from the Git root:
+
+```sh
+cd acme
+/harness:setup Add customer account management
+```
+
+Setup identifies `apps/web` and `services/api` as runnable projects, records them
+in `.harness/projects.json`, and asks which ones to initialize. `packages/shared`
+remains shared code unless it is independently runnable or deployable. Review the
+generated files before coding:
+
+```text
+acme/
+├── .harness/projects.json
+├── apps/web/project_specs.xml
+├── apps/web/feature_list.json
+├── services/api/project_specs.xml
+└── services/api/feature_list.json
+```
+
+Run work from the project that owns the user-visible outcome:
+
+```sh
+cd apps/web
+/harness:generator
+
+cd ../../services/api
+/harness:generator
+```
+
+The worker may edit shared packages or sibling services when its specification
+requires that change. For a feature spanning frontend and backend, put the
+end-to-end Acceptance Check in one owning project—normally the user-facing
+frontend—and describe the required API behavior there. Give the backend a separate
+specification only when it has an independently releasable goal. To operate a
+project through the long-running control host, pass that project directory:
+
+```sh
+node "$CONTROL" start --repo /work/acme/services/api --host opencode
+```
 
 ### How the workflow runs
 
@@ -196,10 +280,11 @@ The workflow stores its state in:
 | Path | Purpose |
 | --- | --- |
 | `project_specs.xml` | Goal and stable Acceptance Checks. |
+| `.harness-technology-inventory.json` | Setup evidence for material technologies and documentation/code contradictions. |
 | `feature_list.json` | Dependency-aware execution queue. |
 | `harness-progress/` | Human-readable workflow journals. |
-| `.git/harness-runs/` | Worker state, attempts, and evidence. |
-| `.git/harness-control/` | Supervisor state and notification events. |
+| `.git/harness-runs/` | Project-namespaced worker state, attempts, and evidence. |
+| `.git/harness-control/` | Project-namespaced supervisor state and notification events. |
 
 ## Learning loop
 

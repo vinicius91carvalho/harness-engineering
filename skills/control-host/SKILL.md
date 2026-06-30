@@ -11,10 +11,15 @@ owns scheduling, worker admission, coding/QA retries, leases, integration, and
 completion. Never create raw coding subagents beside the supervisor: all workers
 must pass through its Resource Governor.
 
-Let `REPO` be the target Git repository, `CONTROL` this skill directory, and
+Let `REPO` be the selected harness project directory (which may be below the Git
+top-level), `CONTROL` this skill directory, and
 `WORKER_HOST` one authenticated CLI installed on the machine: `claude`, `codex`,
 or `opencode`. Hermes, nanobot, and pi are Control Hosts, not values for
 `WORKER_HOST`.
+
+At a monorepo root, resolve one project through `.harness/projects.json` before
+starting. Each project has its own specification, queue, supervisor state, and
+Goal Review. Do not start one aggregate supervisor for multiple project queues.
 
 ## Prepare the goal
 

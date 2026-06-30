@@ -73,3 +73,22 @@ bash "$ROOT/skills/generator/claim.sh" resume "$TMP/dag" "$CTX" 3004 force >"$TM
 jq -e '.resumed == true' "$TMP/explicit.json" >/dev/null
 test -d "$WT"
 echo 'ok - blocked worktrees are preserved and require explicit Resume'
+
+mkdir -p "$TMP/mono/apps/web" "$TMP/mono/services/api"
+git -C "$TMP/mono" init -b main -q
+git -C "$TMP/mono" config user.name test
+git -C "$TMP/mono" config user.email test@example.invalid
+for project in apps/web services/api; do
+  cat >"$TMP/mono/$project/feature_list.json" <<'JSON'
+[{"id":"A","context":"core","acceptance_checks":["AC-A"],"depends_on":[],"implementation":false,"qa":false,"integration":false}]
+JSON
+done
+git -C "$TMP/mono" add . && git -C "$TMP/mono" commit -qm init
+bash "$ROOT/skills/generator/claim.sh" select-claim "$TMP/mono/apps/web" all '' 5001 >"$TMP/web.json"
+bash "$ROOT/skills/generator/claim.sh" select-claim "$TMP/mono/services/api" all '' 5002 >"$TMP/api.json"
+jq -e '.context == "core" and (.worktree | endswith("/apps/web"))' "$TMP/web.json" >/dev/null
+jq -e '.context == "core" and (.worktree | endswith("/services/api"))' "$TMP/api.json" >/dev/null
+jq -e 'has("apps_web--core") and has("services_api--core")' "$TMP/mono/.git/generator-claims.json" >/dev/null
+test -f "$(jq -r .worktree "$TMP/web.json")/feature_list.json"
+test -f "$(jq -r .worktree "$TMP/api.json")/feature_list.json"
+echo 'ok - monorepo projects keep independent queues, claims, branches, and worktree directories'

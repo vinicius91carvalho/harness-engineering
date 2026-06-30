@@ -37,6 +37,20 @@
     <communication><!-- REST / SSE / websockets / external APIs --></communication>
   </technology_stack>
 
+  <integrations>
+    <!-- One entry per external/material technology. Never collapse platforms into a summary. -->
+    <integration name="">
+      <responsibility></responsibility>
+      <availability><!-- required | optional | feature-flagged --></availability>
+      <configuration><!-- credentials, environment variables, runtime configuration --></configuration>
+      <security><!-- authentication/security mechanism and tenant-isolation boundary --></security>
+      <failure_behavior></failure_behavior>
+      <deployment><!-- production deployment and local/test replacement --></deployment>
+      <affected_surfaces><!-- APIs, modules, and user flows, where relevant --></affected_surfaces>
+    </integration>
+    <contradictions><!-- documentation/code conflicts and which implementation evidence prevails --></contradictions>
+  </integrations>
+
   <prerequisites>
     <environment_setup>
       <!-- env vars, secrets (reference, never inline), pre-installed deps, where code lives,

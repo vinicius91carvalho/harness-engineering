@@ -17,6 +17,15 @@ Use the current host's native planning surface and configured model. Do not forc
 a vendor model ID. Do not write application code or scaffold anything; only
 produce `project_specs.xml` in the user's current working directory.
 
+In a monorepo, first read the Git-root `.harness/projects.json`. If cwd is the Git
+root, list the registered projects and ask which one owns the goal; do not create
+an aggregate root specification. If cwd is inside a registered path, use the
+nearest registered ancestor as the project root and write its `project_specs.xml`.
+The specification may require changes in shared packages or sibling services, but
+one project owns its Acceptance Checks and execution queue. Cross-project queue
+dependencies are not supported; express an externally required behavior as an
+Acceptance Check in the owning project instead.
+
 ## Pick the mode
 
 - **New Project** — cwd is empty → build the WHOLE spec from
@@ -76,7 +85,7 @@ feature that needs them. Do not call the project runnable until it starts withou
 the removed service and its primary smoke path succeeds.
 
 Required top-level sections (must all be present):
-`project_goal`, `overview`, `technology_stack`, `prerequisites`, `core_features`, `acceptance_checks`,
+`project_goal`, `overview`, `technology_stack`, `integrations`, `prerequisites`, `core_features`, `acceptance_checks`,
 `database_schema`, `api_endpoints_summary`, `ui_layout`, `design_system`,
 `key_interactions`, `implementation_steps`, `success_criteria`.
 
@@ -103,7 +112,7 @@ the generator rejects missing mappings, unknown dependencies, and dependency cyc
 
 ## Finish
 
-- Write/update `project_specs.xml` in the user's cwd.
+- Write/update `project_specs.xml` in the resolved project root.
 - **New Project or Existing Codebase**: tell the user to review the file, then open a NEW session and
   run **`/generator`** — it scaffolds the project (via the initializer agent) on
   first run, then implements and QA's features. Multiple `/generator` sessions can

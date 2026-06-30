@@ -30,6 +30,7 @@ jobs:
           bash tests/control_host_test.sh
           bash tests/site_test.sh
           bash tests/reconcile_test.sh
+          bash tests/setup_inventory_test.sh
           bash tests/claim_test.sh
           bash scripts/statusline.sh --selftest
           bash scripts/sync-config.sh --selftest
@@ -55,6 +56,7 @@ jobs:
       - run: bash tests/control_host_test.sh
       - run: bash tests/site_test.sh
       - run: bash tests/reconcile_test.sh
+      - run: bash tests/setup_inventory_test.sh
       - run: bash tests/claim_test.sh
 
   powershell:

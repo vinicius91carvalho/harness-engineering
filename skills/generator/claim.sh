@@ -18,6 +18,10 @@ need() { command -v "$1" >/dev/null 2>&1 || die "missing dependency: $1"; }
 need git; need jq
 
 gitdir()  { local d; d="$(git -C "$1" rev-parse --git-common-dir)"; case "$d" in /*) printf '%s' "$d";; *) printf '%s/%s' "$1" "$d";; esac; }  # absolute shared .git
+gitroot() { git -C "$1" rev-parse --show-toplevel; }
+project_prefix() { git -C "$1" rev-parse --show-prefix; }
+project_id() { local p; p="$(project_prefix "$1")"; [ -n "$p" ] && sani "${p%/}" || printf root; }
+claim_key() { local id; id="$(project_id "$1")"; [ "$id" = root ] && printf '%s' "$2" || printf '%s--%s' "$id" "$2"; }
 claims()  { echo "$(gitdir "$1")/generator-claims.json"; }
 stateld() { echo "$(gitdir "$1")/harness-locks/generator-state"; }
 mergeld() { echo "$(gitdir "$1")/harness-locks/generator-merge"; }
@@ -67,7 +71,8 @@ release_state_lock() {
 # prints {context,worktree,port,featureIds}. Prints NOTHING when there's no work.
 select_claim_locked() {
   local repo="$1" mode="$2" selector="${3:-}" session="${4:-$$}"
-  local fl; fl="$(git -C "$repo" show main:feature_list.json 2>/dev/null || echo '')"
+  local prefix project fl; prefix="$(project_prefix "$repo")"; project="$(project_id "$repo")"
+  fl="$(git -C "$repo" show "main:${prefix}feature_list.json" 2>/dev/null || echo '')"
   [ -z "$fl" ] && return 0             # not scaffolded yet -> nothing to claim
 
   local pending_filter
@@ -94,12 +99,14 @@ select_claim_locked() {
   else
     while IFS= read -r c; do
       [ -z "$c" ] && continue
-      if [ "$(jq --arg c "$c" 'has($c)' <<<"$cj")" = "false" ]; then ctx="$c"; break; fi
+      local k; k="$(claim_key "$repo" "$c")"
+      if [ "$(jq --arg c "$k" 'has($c)' <<<"$cj")" = "false" ]; then ctx="$c"; break; fi
     done < <(jq -r '.[].context' <<<"$ready" | awk '!seen[$0]++')
   fi
   [ -z "$ctx" ] && return 0
+  local key; key="$(claim_key "$repo" "$ctx")"
   # guard: explicit context already claimed?
-  [ "$(jq --arg c "$ctx" 'has($c)' <<<"$cj")" = "true" ] && return 0
+  [ "$(jq --arg c "$key" 'has($c)' <<<"$cj")" = "true" ] && return 0
 
   # feature ids to work on within the claim
   local ids
@@ -115,25 +122,27 @@ select_claim_locked() {
   while grep -qw "$((BASE_PORT+slot))" <<<"$used" || port_in_use "$((BASE_PORT+slot))"; do slot=$((slot+1)); done
   port=$((BASE_PORT+slot))
 
-  local sctx wt branch
-  sctx="$(sani "$ctx")"; branch="gen/$sctx"; wt="${repo%/}-wt-$sctx"
-  if [ -d "$wt" ]; then :                                   # reuse stale worktree
+  local sctx checkout wt branch root
+  root="$(gitroot "$repo")"; sctx="$(sani "$ctx")"; branch="gen/$project-$sctx"; checkout="${root%/}-wt-$project-$sctx"; wt="${checkout%/}/${prefix%/}"
+  [ -n "$prefix" ] || wt="$checkout"
+  if [ -d "$checkout" ]; then :                              # reuse stale worktree
   elif git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
-    git -C "$repo" worktree add "$wt" "$branch" >/dev/null
+    git -C "$repo" worktree add "$checkout" "$branch" >/dev/null
   else
-    git -C "$repo" worktree add "$wt" -b "$branch" main >/dev/null || return 75
+    git -C "$repo" worktree add "$checkout" -b "$branch" main >/dev/null || return 75
   fi
 
   local started; started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   local next_claims
-  next_claims="$(jq --arg c "$ctx" --arg b "$branch" --arg w "$wt" --argjson p "$port" \
+  next_claims="$(jq --arg c "$key" --arg b "$branch" --arg w "$wt" --argjson p "$port" \
      --arg s "$session" --arg t "$started" --argjson ids "$ids" \
-     '.[$c] = {branch:$b, worktree:$w,port:$p,session:$s,status:"building",started:$t,featureIds:$ids}' \
+     --arg project "$project" --arg context "$ctx" \
+     '.[$c] = {branch:$b, worktree:$w,project:$project,context:$context,port:$p,session:$s,status:"building",started:$t,featureIds:$ids}' \
      <<<"$cj")"
   write_claims "$repo" "$next_claims"
   local epoch host
   epoch="$(date +%s)"; host="$(hostname 2>/dev/null || echo unknown)"
-  write_runstate "$repo" "$ctx" "$(jq -cn --arg c "$ctx" --arg h "$host" --arg w "$wt" \
+  write_runstate "$repo" "$key" "$(jq -cn --arg c "$ctx" --arg h "$host" --arg w "$wt" \
     --argjson p "$port" --argjson ids "$ids" --argjson e "$epoch" \
     '{context:$c,status:"claimed",phase:"claimed",ownerHost:$h,ownerPid:null,childPid:null,worktree:$w,port:$p,featureIds:$ids,attempt:1,nextAction:"start-orchestrator",heartbeatEpoch:$e}')"
 
@@ -161,13 +170,14 @@ select_claim() {
 # ---- release <repo> <context> ----------------------------------------------
 release_locked() {
   local repo="$1" ctx="$2"
-  local wt branch
-  wt="$(jq -r --arg c "$ctx" '.[$c].worktree // empty' <<<"$(read_claims "$repo")")"
-  branch="$(jq -r --arg c "$ctx" '.[$c].branch // empty' <<<"$(read_claims "$repo")")"
-  [ -n "$wt" ] && git -C "$repo" worktree remove --force "$wt" 2>/dev/null || true
+  local key wt branch checkout; key="$(claim_key "$repo" "$ctx")"
+  wt="$(jq -r --arg c "$key" '.[$c].worktree // empty' <<<"$(read_claims "$repo")")"
+  branch="$(jq -r --arg c "$key" '.[$c].branch // empty' <<<"$(read_claims "$repo")")"
+  checkout="$(git -C "$wt" rev-parse --show-toplevel 2>/dev/null || true)"
+  [ -n "$checkout" ] && git -C "$repo" worktree remove --force "$checkout" 2>/dev/null || true
   [ -n "$branch" ] && git -C "$repo" branch -D "$branch" 2>/dev/null || true
-  write_claims "$repo" "$(jq --arg c "$ctx" 'del(.[$c])' <<<"$(read_claims "$repo")")"
-  rm -f "$(runstate "$repo" "$ctx")"
+  write_claims "$repo" "$(jq --arg c "$key" 'del(.[$c])' <<<"$(read_claims "$repo")")"
+  rm -f "$(runstate "$repo" "$key")"
   echo "released $ctx"
 }
 
@@ -210,15 +220,16 @@ merge_acquire() {
     integ="${repo%/}-wt-integration"
     [ -d "$integ" ] || git -C "$repo" worktree add "$integ" main >/dev/null
   fi
-  echo "$integ"
+  local prefix; prefix="$(project_prefix "$repo")"
+  [ -n "$prefix" ] && echo "${integ%/}/${prefix%/}" || echo "$integ"
 }
 
 # ---- merge-do <repo> <context> <integ-dir> ---------------------------------
 # Attempts the merge in the integration dir. exit 0 = clean; exit 2 = conflict.
 merge_do() {
   local repo="$1" ctx="$2" integ="$3"
-  local branch; branch="$(jq -r --arg c "$ctx" '.[$c].branch // empty' <<<"$(read_claims "$repo")")"
-  [ -z "$branch" ] && branch="gen/$(sani "$ctx")"
+  local key branch; key="$(claim_key "$repo" "$ctx")"; branch="$(jq -r --arg c "$key" '.[$c].branch // empty' <<<"$(read_claims "$repo")")"
+  [ -z "$branch" ] && branch="gen/$(project_id "$repo")-$(sani "$ctx")"
   if git -C "$integ" merge --no-edit "$branch" >/dev/null 2>&1; then
     echo "clean"; return 0
   fi
@@ -236,13 +247,13 @@ merge_release() {
 
 # ---- block/resume ----------------------------------------------------------
 block_claim_locked() {
-  local repo="$1" ctx="$2" cj state
+  local repo="$1" ctx="$2" key cj state; key="$(claim_key "$repo" "$ctx")"
   cj="$(read_claims "$repo")"
-  [ "$(jq --arg c "$ctx" 'has($c)' <<<"$cj")" = true ] || die "unknown claim: $ctx"
-  write_claims "$repo" "$(jq --arg c "$ctx" '.[$c].status="blocked" | .[$c].session=""' <<<"$cj")"
-  state="$(runstate "$repo" "$ctx")"
+  [ "$(jq --arg c "$key" 'has($c)' <<<"$cj")" = true ] || die "unknown claim: $ctx"
+  write_claims "$repo" "$(jq --arg c "$key" '.[$c].status="blocked" | .[$c].session=""' <<<"$cj")"
+  state="$(runstate "$repo" "$key")"
   if [ -s "$state" ]; then
-    write_runstate "$repo" "$ctx" "$(jq '.status="blocked" | .phase="blocked" | .ownerPid=null | .childPid=null | .nextAction="user-guidance"' "$state")"
+    write_runstate "$repo" "$key" "$(jq '.status="blocked" | .phase="blocked" | .ownerPid=null | .childPid=null | .nextAction="user-guidance"' "$state")"
   fi
   echo "blocked $ctx"
 }
@@ -257,17 +268,18 @@ block_claim() {
 
 resume_claim_locked() {
   local repo="$1" selector="${2:-}" session="${3:-$$}" force="${4:-auto}"
-  local cj ctx state current_host owner_host owner_pid child_pid heartbeat now status live=false
+  local cj ctx key state current_host owner_host owner_pid child_pid heartbeat now status live=false
   cj="$(read_claims "$repo")"
-  if [ -n "$selector" ]; then ctx="$selector"; else
-    ctx="$(jq -r 'to_entries[] | select(.value.status=="building") | .key' <<<"$cj" | head -1)"
+  if [ -n "$selector" ]; then ctx="$selector"; key="$(claim_key "$repo" "$ctx")"; else
+    key="$(jq -r --arg p "$(project_id "$repo")" 'to_entries[] | select(.value.project==$p and .value.status=="building") | .key' <<<"$cj" | head -1)"
+    ctx="$(jq -r --arg c "$key" '.[$c].context // empty' <<<"$cj")"
   fi
   [ -n "$ctx" ] || return 0
-  [ "$(jq --arg c "$ctx" 'has($c)' <<<"$cj")" = true ] || return 0
-  status="$(jq -r --arg c "$ctx" '.[$c].status' <<<"$cj")"
+  [ "$(jq --arg c "$key" 'has($c)' <<<"$cj")" = true ] || return 0
+  status="$(jq -r --arg c "$key" '.[$c].status' <<<"$cj")"
   [ "$status" != blocked ] || [ "$force" = force ] || { echo "BLOCKED $ctx requires explicit resume" >&2; return 0; }
 
-  state="$(runstate "$repo" "$ctx")"; current_host="$(hostname 2>/dev/null || echo unknown)"
+  state="$(runstate "$repo" "$key")"; current_host="$(hostname 2>/dev/null || echo unknown)"
   if [ ! -s "$state" ]; then
     [ "$force" = force ] || { echo "STALE $ctx has no Run State and requires explicit takeover" >&2; return 0; }
   fi
@@ -290,12 +302,12 @@ resume_claim_locked() {
     [ "$force" = force ] || { echo "STALE $ctx on $owner_host requires explicit takeover" >&2; return 0; }
   fi
 
-  write_claims "$repo" "$(jq --arg c "$ctx" --arg s "$session" '.[$c].status="building" | .[$c].session=$s' <<<"$cj")"
+  write_claims "$repo" "$(jq --arg c "$key" --arg s "$session" '.[$c].status="building" | .[$c].session=$s' <<<"$cj")"
   if [ "$status" != blocked ] && [ -s "$state" ]; then
-    write_runstate "$repo" "$ctx" "$(jq --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    write_runstate "$repo" "$key" "$(jq --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       '.previousPhase=.phase | .status="resuming" | .resumedAt=$t | .ownerPid=null | .childPid=null' "$state")"
   fi
-  jq -c --arg c "$ctx" '.[$c] | {context:$c,worktree,port,featureIds,resumed:true}' <<<"$(read_claims "$repo")"
+  jq -c --arg c "$key" '.[$c] | {context,worktree,port,featureIds,resumed:true}' <<<"$(read_claims "$repo")"
 }
 
 resume_claim() {
@@ -308,11 +320,12 @@ resume_claim() {
 
 # ---- list <repo> -----------------------------------------------------------
 list_claims() {
-  local repo="$1" cj; cj="$(read_claims "$repo")"
+  local repo="$1" cj project; cj="$(read_claims "$repo")"; project="$(project_id "$repo")"
+  cj="$(jq --arg p "$project" 'with_entries(select(.value.project==$p or (.value.project==null and $p=="root")))' <<<"$cj")"
   [ "$(jq 'length' <<<"$cj")" -eq 0 ] && { echo "no active claims"; return 0; }
-  while IFS=$'\t' read -r ctx line; do
+  while IFS=$'\t' read -r key ctx line; do
     local state phase attempt next heartbeat child app
-    state="$(runstate "$repo" "$ctx")"
+    state="$(runstate "$repo" "$key")"
     phase="$(jq -r '.phase // "-"' "$state" 2>/dev/null || echo -)"
     attempt="$(jq -r '.attempt // "-"' "$state" 2>/dev/null || echo -)"
     next="$(jq -r '.nextAction // "-"' "$state" 2>/dev/null || echo -)"
@@ -320,7 +333,7 @@ list_claims() {
     child="$(jq -r '.childPid // "-"' "$state" 2>/dev/null || echo -)"
     app="$(jq -r '.appPid // "-"' "$state" 2>/dev/null || echo -)"
     printf '%s\t%s\tphase=%s\tattempt=%s\tnext=%s\tchild=%s\tapp=%s\theartbeat=%s\n' "$ctx" "$line" "$phase" "$attempt" "$next" "$child" "$app" "$heartbeat"
-  done < <(jq -r 'to_entries[] | [.key, "tasks=\(.value.featureIds // [] | join(","))\tport=\(.value.port)\t\(.value.status)\t\(.value.worktree)"] | @tsv' <<<"$cj")
+  done < <(jq -r 'to_entries[] | [.key, (.value.context // .key), "tasks=\(.value.featureIds // [] | join(","))\tport=\(.value.port)\t\(.value.status)\t\(.value.worktree)"] | @tsv' <<<"$cj")
 }
 
 cmd="${1:-}"; shift || true

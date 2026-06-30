@@ -40,7 +40,9 @@ function git(args, allowFailure = false) { return exec('git', args, repo, allowF
 
 const commonRaw = git(['rev-parse', '--git-common-dir']).stdout.trim()
 const commonGit = isAbsolute(commonRaw) ? commonRaw : resolve(repo, commonRaw)
-const root = join(commonGit, 'harness-control')
+const projectPrefix = git(['rev-parse', '--show-prefix']).stdout.trim().replace(/\/$/, '')
+const projectId = projectPrefix ? projectPrefix.replace(/[^a-zA-Z0-9_-]/g, '_') : 'root'
+const root = projectPrefix ? join(commonGit, 'harness-control', projectId) : join(commonGit, 'harness-control')
 const stateFile = join(root, 'state.json')
 const eventFile = join(root, 'events.jsonl')
 const responseDir = join(root, 'responses')
@@ -186,7 +188,7 @@ async function mainCheckout() {
   let worktree = ''
   for (const line of lines) {
     if (line.startsWith('worktree ')) worktree = line.slice(9)
-    if (line === 'branch refs/heads/main') return worktree
+    if (line === 'branch refs/heads/main') return projectPrefix ? join(worktree, projectPrefix) : worktree
   }
   fatal('main must be checked out in a worktree')
 }
@@ -529,7 +531,8 @@ async function start() {
   await mkdir(root, { recursive: true })
   const current = await readJson(stateFile, {})
   const desired = await readJson(controlFile, {})
-  const goalState = await readJson(join(commonGit, 'harness-runs', 'goal-review.json'), {})
+  const goalStateName = projectPrefix ? `${projectId}--goal-review.json` : 'goal-review.json'
+  const goalState = await readJson(join(commonGit, 'harness-runs', goalStateName), {})
   const head = git(['rev-parse', 'main'], true).stdout.trim()
   const clean = git(['status', '--porcelain'], true).stdout.trim() === ''
   if (current.status === 'complete' && clean && goalState.reviewedHead === head) {

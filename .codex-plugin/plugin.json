@@ -20,8 +20,8 @@
   "mcpServers": "./.codex-plugin/mcp.json",
   "interface": {
     "displayName": "Harness Engineering",
-    "shortDescription": "Spec→Build→QA pipeline + learning loop + plugin marketplace",
-    "longDescription": "A curated developer workflow system for AI-assisted development. Includes a multi-session spec→build→QA pipeline (planner/generator/evaluator + agents), a Hermes-style learning loop that captures session insights as reusable automation, and a plugin marketplace with one-command setup for Claude Code, Opencode, and Codex.",
+    "shortDescription": "Spec\u2192Build\u2192QA pipeline + learning loop + plugin marketplace",
+    "longDescription": "A curated developer workflow system for AI-assisted development. Includes a multi-session spec\u2192build\u2192QA pipeline (planner/generator/evaluator + agents), a Hermes-style learning loop that captures session insights as reusable automation, and a plugin marketplace with one-command setup for Claude Code, Opencode, and Codex.",
     "developerName": "Vinicius Carvalho",
     "category": "Productivity",
     "capabilities": [

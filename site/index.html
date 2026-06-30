@@ -122,13 +122,43 @@ reload the page, and still find it.</code></pre>
         generator's initialization stage, preserves application files, and stops
         before implementation.
       </aside>
+      <aside class="note">
+        <strong>Monorepo:</strong> setup records independently runnable projects in
+        <code>.harness/projects.json</code>. Select a project and run subsequent
+        skills from its directory; each project keeps its own specification and
+        execution queue while Git coordination remains repository-wide.
+      </aside>
+    </section>
+
+    <section class="topic" id="monorepo">
+      <p class="step">Monorepo path</p>
+      <h2>Set up the root, code from a project</h2>
+      <p>Run setup once at the Git root. It detects independently runnable or deployable projects, writes the routing registry, and asks which projects to initialize. Shared libraries are not separate projects unless they run or deploy independently.</p>
+      <pre><code>cd /work/acme
+/harness-setup Add customer account management
+
+# Result
+.harness/projects.json
+apps/web/project_specs.xml
+apps/web/feature_list.json
+services/api/project_specs.xml
+services/api/feature_list.json</code></pre>
+      <p>Review each selected project's specification. Then start coding from the project that owns the observable outcome:</p>
+      <pre><code>cd /work/acme/apps/web
+/harness-generator
+
+cd /work/acme/services/api
+/harness-generator</code></pre>
+      <p>The worker can edit shared packages or sibling services when the owning specification requires it. For a frontend/backend feature, keep the end-to-end Acceptance Check in one owning project—usually the frontend. Create a separate backend goal only when it is independently releasable.</p>
+      <p class="files"><strong>Isolation:</strong> each project has its own specification, queue, journals, claims, Run State, and Goal Review. Git locks and integration remain repository-wide.</p>
     </section>
 
     <section class="topic" id="scaffold">
       <p class="step">Step 6</p>
       <h2>Create the execution queue</h2>
       <p>In the same OpenCode session, invoke the generator once. It initializes Git state, maps checks into Work Items, and can start the first worker. Skip this step if <code>/harness-setup</code> already created the queue.</p>
-      <pre><code>/harness-generator</code></pre>
+      <pre><code>cd /path/to/your-project  # registered project directory in a monorepo
+/harness-generator</code></pre>
       <p class="files"><strong>Created:</strong> <code>feature_list.json</code>, <code>CONTEXT.md</code>, <code>harness-progress/</code>, and Run State under <code>.git/harness-runs/</code>.</p>
     </section>
 
