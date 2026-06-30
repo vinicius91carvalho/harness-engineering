@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { appendFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
-import { mkdirSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { spawn, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { hostname } from 'node:os'
@@ -504,11 +504,9 @@ async function runGoalReviewLocked() {
 
 async function runGoalReview() {
   const lockedMain = await acquireMergeLock()
-  const canonicalLockedMain = realpathSync(lockedMain)
-  const canonicalWorkdir = realpathSync(options.workdir)
-  if (canonicalLockedMain !== canonicalWorkdir) {
+  if (resolve(lockedMain) !== resolve(options.workdir)) {
     command('bash', [claimScript, 'merge-release', options.repo, String(process.pid)], options.repo, true)
-    fail(`Goal Review must run in the locked main checkout: ${canonicalLockedMain}`)
+    fail(`Goal Review must run in the locked main checkout: ${lockedMain}`)
   }
   try {
     return await runGoalReviewLocked()
