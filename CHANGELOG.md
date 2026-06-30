@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### [0.14.2](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.14.1...v0.14.2) (2026-06-30)
+
+
+### Bug Fixes
+
+* replace realpathSync with path.resolve in runGoalReview to avoid ENOENT on CI ([5dfa7a4](https://github.com/vinicius91carvalho/harness-engineering/commit/5dfa7a4f6cf4385a43b75e3ad0ed855fa787fc19))
+
 ### [0.14.1](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.14.0...v0.14.1) (2026-06-30)
 
 
