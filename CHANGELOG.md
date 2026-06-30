@@ -11,6 +11,18 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.12.7...v0.13.0) (2026-06-30)
+
+
+### Features
+
+* replace host-specific plugins with portable integrations ([9678266](https://github.com/vinicius91carvalho/harness-engineering/commit/967826645d11a93210f60d6cee565abeb3593d64))
+
+
+### Documentation
+
+* list both Anthropic harness articles in references ([cc5d5db](https://github.com/vinicius91carvalho/harness-engineering/commit/cc5d5dbc2caca02790dfeccfb55cf4d91d8551d9))
+
 ### [0.12.7](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.12.6...v0.12.7) (2026-06-28)
 
 
