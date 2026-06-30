@@ -27,6 +27,9 @@ jobs:
         run: |
           bash tests/install_test.sh
           bash tests/orchestrator_test.sh
+          bash tests/control_host_test.sh
+          bash tests/site_test.sh
+          bash tests/reconcile_test.sh
           bash tests/claim_test.sh
           bash scripts/statusline.sh --selftest
           bash scripts/sync-config.sh --selftest
@@ -37,6 +40,8 @@ jobs:
           test -f "$f"
           grep -q '^name:' "$f"
           grep -q '^description:' "$f"
+          grep -q '^name:' skills/control-host/SKILL.md
+          grep -q '^description:' skills/control-host/SKILL.md
 
   portable-shell:
     strategy:
@@ -47,6 +52,9 @@ jobs:
       - uses: actions/checkout@v4
       - run: bash tests/install_test.sh
       - run: bash tests/orchestrator_test.sh
+      - run: bash tests/control_host_test.sh
+      - run: bash tests/site_test.sh
+      - run: bash tests/reconcile_test.sh
       - run: bash tests/claim_test.sh
 
   powershell:

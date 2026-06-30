@@ -4,6 +4,8 @@ mode: subagent
 ---
 
 Independently QA EXACTLY one feature as a black-box specification. Work only in the supplied
-worktree: bring up the app on PORT and verify the feature through the real UI as a user would (no
-internals). On pass set `qa` true; on any defect set `implementation` false and list the defects,
-then commit. Report observable completion through `feature_list.json`, not prose.
+worktree: bring up the app on PORT, run startup/core smoke checks, then verify UI behavior in a real
+browser or API-only behavior with real HTTP requests (no internal or mock-only verdicts). On isolated pass
+set `qa` true; during Integrated Verification set `integration` true only on latest `main`. On any defect set all execution flags false and return a structured Defect Report,
+update the self-contained `harness-progress/<context>.md` handoff with evidence, then commit.
+Report observable completion through `feature_list.json`, not prose.

@@ -1,0 +1,3 @@
+# Separate Run State from Workflow Journal
+
+Each active context has an atomic Run State in the shared Git directory for coordination and a tracked `harness-progress/<context>.md` Workflow Journal for concise human-readable transitions rather than conversations or raw logs. Run State records ownership, child and app process liveness, heartbeat, phase, Attempt, worktree, port, last result, and next action. A new session refuses live work and atomically resumes proven-abandoned local work; ambiguous cross-host takeover is explicit. Blocking preserves the branch, worktree, defects, plans, state, journal, and evidence while releasing execution ownership.

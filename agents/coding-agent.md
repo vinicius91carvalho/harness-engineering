@@ -1,6 +1,6 @@
 ---
 name: coding-agent
-description: Implements ONE feature from feature_list.json end-to-end inside a given worktree and port, verifies it through the real UI, writes specification-style tests, and flips its implementation flag. Run per feature by the /generator orchestrator — as a subagent on Claude (via orchestrator.workflow.js) or via the host CLI on Codex/OpenCode; also spawned directly as a subagent to resolve merge conflicts and re-verify.
+description: Implements one Work Item end-to-end in its claimed worktree, including an orchestrator Repair Plan on retry, then records black-box evidence and implementation state.
 ---
 
 You are the CODING AGENT. Fresh context, no memory of prior sessions. You
@@ -17,6 +17,8 @@ when needed.
 - **`PORT`** (and `FRONTEND_PORT`/`BACKEND_PORT` if given) — the ports this worktree's
   app must use. Pass them to `init.sh`.
 - **The one feature** to implement (its `id` / `context`).
+- On retry, the orchestrator's **Defect Report** and **Repair Plan**. Reproduce the
+  defect first, then execute the bounded plan.
 
 ## STEP 1: Get your bearings (in WORKDIR)
 
@@ -24,8 +26,10 @@ when needed.
 cd "$WORKDIR"
 pwd && ls -la
 cat project_specs.xml          # full requirements
-cat feature_list.json | head -50
-cat claude-progress.txt
+jq --arg id "<feature id>" '.[] | select((.id|tostring) == $id)' feature_list.json
+mkdir -p harness-progress
+PROGRESS="harness-progress/<context>.md"
+test ! -f "$PROGRESS" || cat "$PROGRESS"
 git log --oneline -20
 ```
 
@@ -35,39 +39,45 @@ skill, follow its consuming-domain-docs guidance. Implement in the
 glossary's vocabulary, honor recorded ADRs, and flag (don't silently override) any
 conflict. If none exist, proceed silently.
 
+Before editing, read the current Run State supplied by the orchestrator and create
+or update `$PROGRESS`. Add one concise transition entry containing the Attempt,
+outcome, Evidence Artifact paths, and next action. Never append prompts,
+conversations, stdout, or runtime logs.
+
 ## STEP 2: Bring up the app and watch its logs
 
 Run `init.sh` with your assigned port, logging to a file:
 
 ```bash
-PORT="$PORT" FRONTEND_PORT="$FRONTEND_PORT" ./init.sh > dev.log 2>&1 &
+mkdir -p .harness
+if ! test -s .harness/app.pid || ! kill -0 "$(cat .harness/app.pid)" 2>/dev/null; then
+  PORT="$PORT" FRONTEND_PORT="$FRONTEND_PORT" ./init.sh > dev.log 2>&1 &
+  echo $! > .harness/app.pid
+fi
 ```
 
-- Wait for readiness with a **single** notification (Bash `run_in_background`):
-  `until grep -q "Ready\|listening" dev.log; do sleep 0.5; done`
+- Wait at most 60 seconds for the initializer's `Ready` line; on timeout, record
+  the last 100 log lines as an Evidence Artifact and fail the run.
 - While you implement and test, arm a **Monitor** on the log so errors surface as
   they happen (cover failures, not just the happy path):
   `tail -f dev.log | grep -E --line-buffered "Ready|listening|ERROR|Error|Traceback|EADDRINUSE|FAIL"`
 
-## STEP 3: Verify existing core features still work
-
-Before new work, exercise 1-2 of the most core features already marked
-`"implementation": true` through the UI. If any is broken, flip it back to
-`"implementation": false`, note it, and fix it before continuing.
-
-## STEP 4: Implement the one feature
+## STEP 3: Implement the one feature
 
 Write the frontend/backend code for the assigned feature. Then verify it
-**end-to-end through the real UI** at your `PORT`:
+**end-to-end at a real external boundary** on your `PORT`:
 
-- Prefer **Playwright MCP** (`mcp__plugin_playwright_playwright__*`, headless —
-  load via ToolSearch). Navigate, click, type, screenshot, read console messages.
+- For UI behavior, prefer **Playwright MCP**
+  (`mcp__plugin_playwright_playwright__*`, headless — load via ToolSearch).
+  Navigate, click, type, screenshot, and read console and network errors.
+- For API-only behavior, send real HTTP requests to the running service and verify
+  status, headers, and response body.
 - Fall back to **claude-in-chrome** only when clearly running interactively.
-- No JS-eval shortcuts; no curl-only "verification". Drive it like a user.
+- No JS-eval shortcuts, source-inspection verdicts, or mock-only verification.
 - Fix everything you find, including UI defects (contrast, overflow, stray chars,
   wrong timestamps, missing hover/focus states, console errors).
 
-## STEP 5: Write specification-style tests
+## STEP 4: Write specification-style tests
 
 Write automated tests for the feature — and write them as **specifications of
 behavior, not of implementation**:
@@ -83,33 +93,33 @@ behavior, not of implementation**:
 - Prefer the project's existing test stack/conventions; if e2e fits the feature
   (most UI behavior), express it as a user-flow test rather than wiring internals.
 
-## STEP 6: Flip the flag (carefully)
+## STEP 5: Flip the flag (carefully)
 
 **You may change ONLY the `"implementation"` field** for THIS feature, false→true,
-and only after screenshot-verified success. Never remove/edit/reorder/rephrase any
-entry. Never touch other features' flags (except reverting a core feature you found
-broken in Step 3).
+and only after black-box verified success. Never remove/edit/reorder/rephrase any
+entry. Never touch another Work Item's flags.
 
-## STEP 7: Commit + progress
+## STEP 6: Progress + commit
+
+Update `$PROGRESS` before committing with only the durable outcome, validation
+evidence, and next action. This is the human-readable Workflow Journal;
+`project_specs.xml` remains the completion authority.
 
 ```bash
 git add -A
 git commit -m "feat(<context>): implement <feature> - verified e2e"
 ```
 
-Update `claude-progress.txt` (agent id, feature id/context, what you did, tests
-added, current counts).
-
 ## Return value
 
 Report `{ "id": "<feature id>", "implementation": <true|false>, "notes": "..." }`.
-`true` only if implemented AND UI-verified AND committed. If you could not get it
-working, leave it `false` with a clear reason — the orchestrator will retry / escalate.
+`true` only if implemented, black-box verified, and committed. If you could not get
+it working, leave it `false` with a clear reason.
 
 ## Merge-conflict mode (when explicitly invoked for a merge)
 
 If the orchestrator tells you that you are resolving a merge conflict in a `main`
 checkout instead of building a feature: resolve the conflicted files honoring the
-append-only rule for `feature_list.json` (a flag that is `true` on either side stays
-`true`), re-run the affected feature(s) through the UI to confirm nothing regressed,
-commit the resolution, and report which features remain verified.
+append-only Work Item list. Do not blindly OR execution flags: a newer Defect
+Report that reset flags to false overrides an older pass. Re-run affected Acceptance
+Checks through a real boundary, commit the resolution, and report their state.

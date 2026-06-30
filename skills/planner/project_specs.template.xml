@@ -8,6 +8,10 @@
 
   <project_name><!-- short product name --></project_name>
 
+  <project_goal>
+    <!-- One observable system-level outcome. Goal Review evaluates this directly. -->
+  </project_goal>
+
   <overview>
     <!-- 1-2 paragraphs: what it is, who it's for, the experience to deliver. Be ambitious. -->
   </overview>
@@ -35,7 +39,8 @@
 
   <prerequisites>
     <environment_setup>
-      <!-- env vars, secrets (reference, never inline), pre-installed deps, where code lives -->
+      <!-- env vars, secrets (reference, never inline), pre-installed deps, where code lives,
+           and every assumption a fresh implementation agent must know -->
     </environment_setup>
   </prerequisites>
 
@@ -43,7 +48,9 @@
     <!--
       THE SPINE. Group features into clearly named areas. Each area's tag name becomes a
       `context` the generator builds and parallel /generator sessions claim independently,
-      so keep areas cohesive and reasonably decoupled. Bullet the concrete capabilities.
+      so keep areas cohesive and reasonably decoupled. Put runtime blockers first in a
+      foundation area: local replacements/removals for required hosted services, database
+      setup, Docker startup, and the first smoke-testable path. Bullet concrete capabilities.
     -->
     <feature_area_name>
       - capability 1
@@ -51,6 +58,18 @@
     </feature_area_name>
     <!-- add more feature areas... -->
   </core_features>
+
+  <acceptance_checks>
+    <!--
+      Stable, append-only proof of the Project Goal. IDs never change. `context`
+      is the collision boundary, `category` is foundation/functional/style, and
+      `depends_on` is a comma-separated list of prerequisite Acceptance Check IDs.
+      Every check states behavior observable through a browser or real HTTP boundary.
+    -->
+    <acceptance_check id="AC-001" context="feature-area-name" category="foundation" depends_on="">
+      <description><!-- action/input and observable expected result --></description>
+    </acceptance_check>
+  </acceptance_checks>
 
   <database_schema>
     <tables>
@@ -85,14 +104,16 @@
     <step number="1">
       <title></title>
       <tasks>
+        <!-- Name exact repository-relative paths and commands where known. Each step
+             must leave an independently verifiable result and say what success looks like. -->
         -
       </tasks>
     </step>
-    <!-- ordered build phases, fundamentals first -->
+    <!-- ordered build phases: runtime blockers and a smoke-testable foundation first -->
   </implementation_steps>
 
   <success_criteria>
-    <functionality><!-- what must work --></functionality>
+    <functionality><!-- observable inputs, actions, and expected outputs --></functionality>
     <user_experience><!-- UX bar --></user_experience>
     <technical_quality><!-- code/quality bar --></technical_quality>
     <design_polish><!-- visual bar --></design_polish>

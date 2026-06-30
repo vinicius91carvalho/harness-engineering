@@ -1,55 +1,34 @@
 ---
 name: evaluator
-description: Independent QA sweep over a built project — finds features that are implemented but not yet QA-verified, and checks each through the real UI as a black-box specification. Claims a context like /generator so it never collides with active builders. Use when the user wants to QA, validate, or re-verify already-implemented features without writing new code.
-allowed-tools: Bash, Workflow, Agent, AskUserQuestion, Read
+description: Run the mandatory independent Goal Review against integrated main without implementing product code.
+allowed-tools: Bash, AskUserQuestion, Read
 ---
 
 # Evaluator
 
-A standalone QA pass. You reuse the `/generator` machinery in **`qa` mode**: claim a
-context that has `implementation:true, qa:false` features, verify each through the UI
-in an isolated worktree, then merge the QA flags back to `main`. No new features are
-implemented here.
+Run the same host-neutral orchestrator as `/generator` in `goal-review` mode. This
+is not a sweep of unchecked queue flags: it independently evaluates the Project
+Goal, every stable Acceptance Check, and cross-feature journeys on integrated
+`main`.
 
-Let `REPO` be the project root, `GEN` this plugin's generator skill directory,
-and `HOST` the current host (`claude`, `codex`, or `opencode`).
+Let `REPO` be the project root, `GEN` the generator skill directory, and `HOST` the
+current host.
 
-## Run
-
-1. Confirm the project is scaffolded:
-   `git -C "$REPO" show main:feature_list.json >/dev/null 2>&1` — if not, tell the
-   user to run `/generator` first.
-
-2. Claim QA work (loops until none remain):
+1. Require `main:feature_list.json` and run
+   `node "$GEN/reconcile.mjs" "$REPO" --check`. Refuse Goal Review while any Work
+   Item lacks `integration:true`.
+2. If `.git/harness-runs/goal-review.json` is already `blocked`, show it and require
+   user guidance before replacing its verdict.
+3. Run:
    ```bash
-   bash "$GEN/claim.sh" select-claim "$REPO" qa "" $$
+   node "$GEN/orchestrator.mjs" --host "$HOST" --repo "$REPO" \
+     --workdir "$MAIN_CHECKOUT" --mode goal-review --context goal-review \
+     --port 5170 --claim-script "$GEN/claim.sh"
    ```
-   Empty output → nothing left to QA; report and stop. Otherwise it prints
-   `{context, worktree, port, featureIds}` (a fresh worktree + branch).
+4. The state machine holds and releases the merge lock for the full review. Report
+   the verdict and link `harness-progress/goal-review.md` plus
+   its Evidence Artifacts. Concrete in-scope defects reopen linked Work Items for
+   `/generator`; ambiguity or exhausted Attempts blocks for user guidance.
 
-3. Run the QA-only loop (hybrid by host). On **Claude** (`HOST=claude`) use the
-   Workflow — real `qa-agent`, schema-validated:
-   ```js
-   Workflow({ scriptPath: "$GEN/orchestrator.workflow.js",
-     args: { workdir: "<worktree>", port: <port>, mode: "qa",
-             features: [ { id, context, description }, ... ] } })
-   ```
-   On **Codex or OpenCode**, use the portable Node runner:
-   ```bash
-   node "$GEN/orchestrator.mjs" --host "$HOST" --workdir "$WORKTREE" \
-     --port "$PORT" --mode qa --features "$COMMA_SEPARATED_IDS"
-   ```
-   Either way, trust the resulting `feature_list.json` state, not agent prose.
-
-4. Merge + release exactly as `/generator` does:
-   ```bash
-   INTEG=$(bash "$GEN/claim.sh" merge-acquire "$REPO" $$)
-   bash "$GEN/claim.sh" merge-do "$REPO" "<context>" "$INTEG"   # resolve conflicts via coding-agent if exit 2
-   bash "$GEN/claim.sh" merge-release "$REPO"
-   bash "$GEN/claim.sh" release "$REPO" "<context>"
-   ```
-   Loop to step 2 for the next context.
-
-5. Report: features that passed QA vs. those a defect kicked back to
-   `implementation:false` (these need `/generator` again). Show state with
-   `bash "$GEN/claim.sh" list "$REPO"`.
+Never modify product code in evaluator mode. Only `goal:true` satisfies the
+Completion Contract.

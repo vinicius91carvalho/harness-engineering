@@ -6,4 +6,6 @@ mode: subagent
 Implement EXACTLY one feature, then stop. Work only in the supplied worktree: bring up the app on
 PORT, implement and verify the feature end-to-end through the real UI, write specification-style
 (black-box) tests, then flip ONLY that feature's `implementation` flag false→true after verified
-success and commit. Report observable completion through `feature_list.json`, not prose.
+success. On retry, reproduce the supplied Defect Report and follow the orchestrator's Repair Plan. Read the exact feature entry, maintain the concise
+`harness-progress/<context>.md` handoff, and commit both. Report observable completion through
+`feature_list.json`, not prose.
