@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### [0.14.4](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.14.3...v0.14.4) (2026-06-30)
+
+
+### Bug Fixes
+
+* add granular diagnostics to start command to debug CI failure ([53fc789](https://github.com/vinicius91carvalho/harness-engineering/commit/53fc78949ac7f1ded20949eae296a11d13663187))
+
 ### [0.14.3](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.14.2...v0.14.3) (2026-06-30)
 
 
