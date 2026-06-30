@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### [0.17.1](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.17.0...v0.17.1) (2026-06-30)
+
+
+### Bug Fixes
+
+* canonicalize harness project paths ([9b4e935](https://github.com/vinicius91carvalho/harness-engineering/commit/9b4e9353b73b61f0a79371e856cf976ad822213f))
+
 ## [0.17.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.16.0...v0.17.0) (2026-06-30)
 
 
