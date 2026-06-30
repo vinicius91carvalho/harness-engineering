@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [0.16.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.15.0...v0.16.0) (2026-06-30)
+
+
+### Features
+
+* add existing codebase setup mode ([4f42709](https://github.com/vinicius91carvalho/harness-engineering/commit/4f42709b9e85c8ee153cc0dd4f52f291423ca1e3))
+
 ## [0.15.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.14.6...v0.15.0) (2026-06-30)
 
 
