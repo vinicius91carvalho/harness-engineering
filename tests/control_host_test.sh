@@ -68,7 +68,10 @@ jq -e '.status == "complete" and .supervisorPid == null and .progress.integrated
 jq -s -e 'any(.[]; .kind == "progress") and any(.[]; .kind == "goal_review_started") and any(.[]; .kind == "run_completed" and .immediate)' "$EVENTS" >/dev/null
 echo 'ok - supervisor claims, builds, verifies, releases, and runs governed Goal Review'
 
-"$NODE" "$CONTROL" start --repo "$TMP/repo" --host claude | jq -e '.started == false and .status == "complete"' >/dev/null
+START_OUTPUT=$("$NODE" "$CONTROL" start --repo "$TMP/repo" --host claude 2>"$TMP/start_stderr.txt" || true)
+printf 'DEBUG start stdout: %s\n' "$START_OUTPUT" >&2
+printf 'DEBUG start stderr: ' >&2; cat "$TMP/start_stderr.txt" >&2
+echo "$START_OUTPUT" | jq -e '.started == false and .status == "complete"' >/dev/null
 git clone -q "$TMP/repo" "$TMP/detached"
 git -C "$TMP/detached" config user.name test
 git -C "$TMP/detached" config user.email test@example.invalid

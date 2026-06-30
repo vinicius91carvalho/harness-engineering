@@ -531,13 +531,14 @@ async function start() {
   const desired = await readJson(controlFile, {})
   const goalState = await readJson(join(commonGit, 'harness-runs', 'goal-review.json'), {})
   const head = git(['rev-parse', 'main'], true).stdout.trim()
-  const clean = git(['status', '--porcelain'], true).stdout.trim() === ''
+  const statusResult = git(['status', '--porcelain'], true)
+  const clean = statusResult.stdout.trim() === ''
   if (current.status === 'complete' && clean && goalState.reviewedHead === head) {
     return process.stdout.write(`${JSON.stringify({ started: false, status: 'complete', reviewedHead: head })}\n`)
   }
-  if (current.status === 'complete' && clean && goalState.reviewedHead !== head) {
-    process.stderr.write(`harness-control: start skipped — reviewedHead mismatch (goal=${goalState.reviewedHead || 'none'}, head=${head})\n`)
-  }
+  if (current.status !== 'complete') process.stderr.write(`harness-control: start status=${current.status}\n`)
+  if (!clean) process.stderr.write(`harness-control: start dirty=[${statusResult.stdout.trim()}]\n`)
+  if (goalState.reviewedHead !== head) process.stderr.write(`harness-control: start reviewedHead mismatch (goal=${goalState.reviewedHead || 'none'}, head=${head})\n`)
   if (desired.status === 'paused') {
     return process.stdout.write(`${JSON.stringify({ started: false, status: 'paused' })}\n`)
   }
