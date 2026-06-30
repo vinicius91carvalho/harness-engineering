@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [0.17.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.16.0...v0.17.0) (2026-06-30)
+
+
+### Features
+
+* support monorepo project workflows ([d1be776](https://github.com/vinicius91carvalho/harness-engineering/commit/d1be776bada0319bbac08eb0758e7b1766e677b7))
+
 ## [0.16.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.15.0...v0.16.0) (2026-06-30)
 
 
