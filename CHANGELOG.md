@@ -11,6 +11,18 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### [0.14.6](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.14.5...v0.14.6) (2026-06-30)
+
+
+### Bug Fixes
+
+* wait for supervisor shutdown in tests ([c7c08c1](https://github.com/vinicius91carvalho/harness-engineering/commit/c7c08c1aa0772095491c5fa900c30ac226a4c676))
+
+
+### Documentation
+
+* reorder sections ([f59c682](https://github.com/vinicius91carvalho/harness-engineering/commit/f59c6821dd2e00d070136678dcdec764fbaf2614))
+
 ## [0.14.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.13.0...v0.14.0) (2026-06-30)
 
 
