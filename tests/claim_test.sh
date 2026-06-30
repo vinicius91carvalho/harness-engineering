@@ -92,3 +92,17 @@ jq -e 'has("apps_web--core") and has("services_api--core")' "$TMP/mono/.git/gene
 test -f "$(jq -r .worktree "$TMP/web.json")/feature_list.json"
 test -f "$(jq -r .worktree "$TMP/api.json")/feature_list.json"
 echo 'ok - monorepo projects keep independent queues, claims, branches, and worktree directories'
+
+WEB_WT=$(jq -r .worktree "$TMP/web.json")
+echo branch >"$WEB_WT/collision"
+git -C "$WEB_WT" add collision
+git -C "$WEB_WT" commit -qm collision
+echo main >"$TMP/mono/apps/web/collision"
+set +e
+bash "$ROOT/skills/generator/claim.sh" merge-do "$TMP/mono/apps/web" core "$TMP/mono/apps/web" >"$TMP/merge.out" 2>"$TMP/merge.err"
+status=$?
+set -e
+test "$status" -eq 1
+test ! -s "$TMP/merge.out"
+grep -q 'would be overwritten by merge' "$TMP/merge.err"
+echo 'ok - operational merge failures are not misclassified as conflicts'

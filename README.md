@@ -189,7 +189,8 @@ node "$CONTROL" start --repo /work/acme/services/api --host opencode
    workflow allows at most three coding → QA → integration attempts before asking
    the user for guidance.
 6. **Integrate:** passing work merges into the latest `main`, then QA reruns the
-   checks against the combined product.
+   checks against the combined product. Only actual unmerged paths invoke the
+   conflict resolver; other merge failures remain operational errors.
 7. **Review the goal:** after every Work Item integrates, an independent Goal
    Review exercises the whole specification. Only persisted `goal:true` means done.
 

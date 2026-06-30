@@ -225,16 +225,24 @@ merge_acquire() {
 }
 
 # ---- merge-do <repo> <context> <integ-dir> ---------------------------------
-# Attempts the merge in the integration dir. exit 0 = clean; exit 2 = conflict.
+# Attempts the merge in the integration dir. exit 0 = clean; 1 = operational failure; 2 = conflict.
 merge_do() {
   local repo="$1" ctx="$2" integ="$3"
-  local key branch; key="$(claim_key "$repo" "$ctx")"; branch="$(jq -r --arg c "$key" '.[$c].branch // empty' <<<"$(read_claims "$repo")")"
+  local key branch output status unmerged; key="$(claim_key "$repo" "$ctx")"; branch="$(jq -r --arg c "$key" '.[$c].branch // empty' <<<"$(read_claims "$repo")")"
   [ -z "$branch" ] && branch="gen/$(project_id "$repo")-$(sani "$ctx")"
-  if git -C "$integ" merge --no-edit "$branch" >/dev/null 2>&1; then
+  set +e
+  output="$(git -C "$integ" merge --no-edit "$branch" 2>&1)"; status=$?
+  set -e
+  if [ "$status" -eq 0 ]; then
     echo "clean"; return 0
   fi
+  unmerged="$(git -C "$integ" diff --name-only --diff-filter=U)"
+  if [ -z "$unmerged" ]; then
+    echo "$output" >&2
+    return 1
+  fi
   echo "conflict in: $integ"
-  git -C "$integ" diff --name-only --diff-filter=U
+  echo "$unmerged"
   return 2
 }
 
