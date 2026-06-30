@@ -79,7 +79,7 @@ if PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" "$NODE" "$CONTROL" start --r
   echo 'not ok - a second live supervisor acquired the same repository' >&2; exit 1
 fi
 for _ in $(seq 1 50); do
-  [ "$("$NODE" "$CONTROL" status --repo "$TMP/detached" | jq -r .status)" = complete ] && break
+  [ "$("$NODE" "$CONTROL" status --repo "$TMP/detached" | jq -r 'select(.status == "complete" and .supervisorPid == null) | "ready"')" = ready ] && break
   sleep 0.1
 done
 "$NODE" "$CONTROL" status --repo "$TMP/detached" | jq -e '.status == "complete" and .supervisorPid == null' >/dev/null
@@ -118,7 +118,7 @@ fi
 test -f "$TMP/invalid/.git/harness-control/responses/$REQUEST.json"
 PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" "$NODE" "$CONTROL" start --repo "$TMP/invalid" --host claude | jq -e '.started == true' >/dev/null
 for _ in $(seq 1 30); do
-  [ "$("$NODE" "$CONTROL" status --repo "$TMP/invalid" | jq -r .status)" = paused ] && break
+  [ "$("$NODE" "$CONTROL" status --repo "$TMP/invalid" | jq -r 'select(.status == "paused" and .supervisorPid == null) | "ready"')" = ready ] && break
   sleep 0.1
 done
 "$NODE" "$CONTROL" status --repo "$TMP/invalid" | jq -e '.status == "paused" and .supervisorPid == null' >/dev/null
