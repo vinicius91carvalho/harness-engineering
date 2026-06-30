@@ -95,13 +95,15 @@ echo 'ok - Run State records resumable phase, result, and next action'
 echo 'ok - every workflow agent receives the spec reference and verifies the generated structure'
 
 bash "$ROOT/skills/generator/claim.sh" release "$TMP/repo" core >/dev/null
+ln -s "$TMP/repo" "$TMP/main-alias"
 PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" HARNESS_TEST_QA_COUNT="$TMP/qa-count" HARNESS_TEST_CODE_COUNT="$TMP/code-count" \
   "$NODE" "$ROOT/skills/generator/orchestrator.mjs" --host claude --repo "$TMP/repo" \
-  --workdir "$TMP/repo" --mode goal-review --context goal-review --port 5170 \
+  --workdir "$TMP/main-alias" --mode goal-review --context goal-review --port 5170 \
   --claim-script "$ROOT/skills/generator/claim.sh" >"$TMP/goal.json"
 jq -e '.goal == true and .summary == "goal observed"' "$TMP/goal.json" >/dev/null
 grep -q 'Goal Review passed' "$TMP/repo/harness-progress/goal-review.md"
 echo 'ok - mandatory Goal Review evaluates integrated main independently of queue exhaustion'
+echo 'ok - Goal Review canonicalizes logical checkout paths before referencing the specification'
 
 PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" HARNESS_TEST_QA_COUNT="$TMP/qa-count" HARNESS_TEST_CODE_COUNT="$TMP/code-count" \
   "$NODE" "$ROOT/skills/generator/orchestrator.mjs" --host claude --repo "$TMP/repo" \

@@ -22,8 +22,8 @@ for (let i = 2; i < process.argv.length; i += 2) {
 if (!['claude', 'codex', 'opencode'].includes(options.host)) fail('--host must be claude, codex, or opencode')
 if (!options.workdir) fail('--workdir is required')
 
-options.workdir = resolve(options.workdir)
-options.repo = resolve(options.repo || options.workdir)
+options.workdir = realpathSync(resolve(options.workdir))
+options.repo = realpathSync(resolve(options.repo || options.workdir))
 const claimScript = options['claim-script'] || resolve(dirname(fileURLToPath(import.meta.url)), 'claim.sh')
 const wanted = (options.features || '').split(',').filter(Boolean)
 const commands = {
