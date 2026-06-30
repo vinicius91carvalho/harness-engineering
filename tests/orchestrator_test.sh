@@ -28,6 +28,9 @@ cat >"$TMP/bin/claude" <<'SH'
 #!/bin/sh
 set -eu
 prompt=""; for arg in "$@"; do prompt=$arg; done
+printf '%s' "$prompt" | grep -q "$PWD/project_specs.xml"
+printf '%s' "$prompt" | grep -q 'verify that the repository contains every structure and file it requires'
+if printf '%s' "$prompt" | grep -q '<injected_project_specs>'; then exit 1; fi
 tmp="$PWD/feature_list.json.tmp"
 commit() { git add feature_list.json; git commit -qm "$1"; }
 case "$prompt" in
@@ -89,6 +92,7 @@ jq -e '.status == "complete" and .nextAction == "release-claim" and .ownerPid ==
 echo 'ok - QA defects produce a persisted Repair Plan used by the next Attempt'
 echo 'ok - each passed Work Item merges and passes Integrated Verification on main'
 echo 'ok - Run State records resumable phase, result, and next action'
+echo 'ok - every workflow agent receives the spec reference and verifies the generated structure'
 
 bash "$ROOT/skills/generator/claim.sh" release "$TMP/repo" core >/dev/null
 PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" HARNESS_TEST_QA_COUNT="$TMP/qa-count" HARNESS_TEST_CODE_COUNT="$TMP/code-count" \

@@ -7,16 +7,20 @@ test -s "$HTML"
 test -s "$ROOT/site/styles.css"
 test -s "$ROOT/.github/workflows/pages.yml"
 
-for id in features learn lesson-1 lesson-5 lesson-8 customize limitations quick-start; do
+for id in install plugin hermes telegram plan scaffold run notify verify operate files; do
   grep -q "id=\"$id\"" "$HTML"
 done
 while IFS= read -r id; do
   grep -q "id=\"$id\"" "$HTML"
 done < <(sed -n 's/.*href="#\([^"]*\)".*/\1/p' "$HTML")
-[ "$(grep -c 'class="mermaid"' "$HTML")" -ge 4 ]
-grep -q 'mermaid@11.4.1' "$HTML"
+
+grep -q 'assets/banner.svg' "$HTML"
+grep -q -- '--cli opencode --no' "$HTML"
+grep -q '/harness-planner' "$HTML"
+grep -q '/harness-generator' "$HTML"
+grep -q 'goal:true' "$HTML"
 grep -q 'path: site' "$ROOT/.github/workflows/pages.yml"
 grep -q 'actions/deploy-pages@v4' "$ROOT/.github/workflows/pages.yml"
 ! grep -Eq '(href|src)="/[^/]+' "$HTML"
 
-echo 'ok - static learning site contains the required sections, diagrams, and project-safe paths'
+echo 'ok - static site documents the Hermes, Telegram, and OpenCode setup path'

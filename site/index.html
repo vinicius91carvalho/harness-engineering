@@ -3,476 +3,202 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="A plain-language guide to the Harness Engineering workflow: plan, build, verify, resume, and supervise long-running AI software work.">
-  <meta name="theme-color" content="#101826">
-  <title>Harness Engineering — AI work that can explain itself</title>
+  <meta name="description" content="Install and run Harness Engineering end to end with Hermes, Telegram, and OpenCode.">
+  <meta name="theme-color" content="#0d1117">
+  <title>Harness Engineering — setup and operations</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <a class="skip-link" href="#main">Skip to content</a>
-
-  <header class="site-header">
-    <a class="brand" href="#top" aria-label="Harness Engineering home">
-      <span class="brand-mark" aria-hidden="true">H</span>
-      <span>Harness Engineering</span>
-    </a>
-    <nav aria-label="Main navigation">
-      <a href="#features">Features</a>
-      <a href="#learn">Learn</a>
-      <a href="#customize">Customize</a>
-      <a class="nav-github" href="https://github.com/vinicius91carvalho/harness-engineering">GitHub ↗</a>
+  <a class="skip" href="#main">Skip to setup</a>
+  <header>
+    <a class="wordmark" href="#top">Harness Engineering</a>
+    <nav aria-label="Primary navigation">
+      <a href="#install">Install</a>
+      <a href="#run">Run</a>
+      <a href="#telegram">Telegram</a>
+      <a href="#verify">Verify</a>
+      <a href="https://github.com/vinicius91carvalho/harness-engineering">GitHub ↗</a>
     </nav>
   </header>
 
   <main id="main">
     <section class="hero" id="top">
-      <div class="hero-copy">
-        <p class="eyebrow"><span></span> Long-running AI, with receipts</p>
-        <h1>Give it a goal.<br><em>Keep the proof.</em></h1>
-        <p class="hero-lede">Harness Engineering turns a product idea into small, independently checked pieces of work. It can run in parallel, recover after interruption, and tell you exactly why it stopped.</p>
-        <div class="hero-actions">
-          <a class="button primary" href="#lesson-1">Start the lessons</a>
-          <a class="button secondary" href="#quick-start">See the commands</a>
-        </div>
-        <p class="hero-note">Works with Claude Code, Codex, and OpenCode. Long-lived agents such as Hermes, nanobot, or pi can supervise it.</p>
-      </div>
-
-      <div class="hero-panel" aria-label="Workflow overview">
-        <div class="panel-head">
-          <span>PROJECT JOURNEY</span>
-          <span class="live"><i></i> RESUMABLE</span>
-        </div>
-        <ol class="journey">
-          <li><span>01</span><div><strong>Describe the outcome</strong><small>A plain-language product goal</small></div></li>
-          <li><span>02</span><div><strong>Define the proof</strong><small>Stable acceptance checks</small></div></li>
-          <li><span>03</span><div><strong>Build in safe lanes</strong><small>Parallel, isolated worktrees</small></div></li>
-          <li><span>04</span><div><strong>Inspect independently</strong><small>QA outside the coding agent</small></div></li>
-          <li><span>05</span><div><strong>Test everything together</strong><small>Integrated verification</small></div></li>
-          <li><span>06</span><div><strong>Review the whole goal</strong><small>Completion requires evidence</small></div></li>
-        </ol>
-        <div class="panel-foot"><code>goal:true</code><span>only after the final review</span></div>
-      </div>
-    </section>
-
-    <div class="proof-strip" aria-label="Workflow guarantees">
-      <div><strong>3</strong><span>bounded attempts</span></div>
-      <div><strong>1</strong><span>shared state machine</span></div>
-      <div><strong>15m</strong><span>progress heartbeat</span></div>
-      <div><strong>0</strong><span>chat history required</span></div>
-    </div>
-
-    <section class="section feature-section" id="features">
-      <div class="section-heading">
-        <p class="eyebrow"><span></span> What the workflow provides</p>
-        <h2>Not just agents. A system of checks and handoffs.</h2>
-        <p>Each part has one job. Together they keep a large task understandable after hours, retries, parallel work, and new conversations.</p>
-      </div>
-
-      <div class="feature-grid">
-        <article class="feature featured">
-          <span class="feature-number">01</span>
-          <h3>Goal-first planning</h3>
-          <p>The planner converts an idea into one observable Project Goal and stable Acceptance Checks: the proof needed before anyone can say “done.”</p>
-          <span class="tag">project_specs.xml</span>
-        </article>
-        <article class="feature">
-          <span class="feature-number">02</span>
-          <h3>Dependency-aware queue</h3>
-          <p>Checks become Work Items. Only work whose prerequisites are complete becomes ready, so independent work moves without ignoring real dependencies.</p>
-          <span class="tag">feature_list.json</span>
-        </article>
-        <article class="feature">
-          <span class="feature-number">03</span>
-          <h3>Safe parallel work</h3>
-          <p>Each context gets its own branch, folder, port, and Claim Lease. Multiple workers can move quickly without editing the same collision area.</p>
-          <span class="tag">isolated worktrees</span>
-        </article>
-        <article class="feature">
-          <span class="feature-number">04</span>
-          <h3>Independent QA</h3>
-          <p>The agent that writes the code does not grade its own work. QA checks behavior through a real browser or HTTP boundary and stores evidence.</p>
-          <span class="tag">expected vs observed</span>
-        </article>
-        <article class="feature">
-          <span class="feature-number">05</span>
-          <h3>Planned repairs</h3>
-          <p>A failure becomes a Defect Report. The orchestrator diagnoses it, writes a bounded Repair Plan, and gives that plan to the next coding attempt.</p>
-          <span class="tag">maximum 3 attempts</span>
-        </article>
-        <article class="feature featured">
-          <span class="feature-number">06</span>
-          <h3>Proof after integration</h3>
-          <p>Passing alone is not enough. Every Work Item is merged into the latest <code>main</code>, checked again, then the complete Project Goal receives a final review.</p>
-          <span class="tag">Goal Review</span>
-        </article>
-        <article class="feature">
-          <span class="feature-number">07</span>
-          <h3>Durable memory</h3>
-          <p>Machine state, a concise human journal, and separate evidence survive closed chats. A new session reads the files instead of guessing from memory.</p>
-          <span class="tag">resume, don't restart</span>
-        </article>
-        <article class="feature">
-          <span class="feature-number">08</span>
-          <h3>Governed supervision</h3>
-          <p>A singleton supervisor limits new workers using CPU, memory, system load, and provider quota. It can send progress and Input Requests through Telegram.</p>
-          <span class="tag">harness-control</span>
-        </article>
-        <article class="feature">
-          <span class="feature-number">09</span>
-          <h3>Portable hosts</h3>
-          <p>Claude Code, Codex, and OpenCode use the same workflow semantics. The adapter changes how the agent starts—not how completion is decided.</p>
-          <span class="tag">one state machine</span>
-        </article>
-      </div>
-
-      <div class="supporting-tools">
-        <p>Also in the project</p>
-        <div><strong>One-command setup</strong><span>Install the harness and selected plugins.</span></div>
-        <div><strong>Configuration backup</strong><span>Save portable settings without copying secrets.</span></div>
-        <div><strong>Learning loop</strong><span>Turn repeated session lessons into durable automation.</span></div>
-      </div>
-    </section>
-
-    <section class="learn-intro" id="learn">
+      <img src="https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/assets/banner.svg" alt="Harness Engineering, with pixel-art Gandalf">
       <div>
-        <p class="eyebrow light"><span></span> Documentation as a course</p>
-        <h2>Learn the system by following one idea from request to proof.</h2>
+        <p class="kicker">Hermes + Telegram + OpenCode</p>
+        <h1>One path from idea to verified code.</h1>
+        <p>Hermes receives the goal and reports through Telegram. OpenCode runs the workers. The harness owns planning, parallel work, QA, retries, integration, and the final Goal Review.</p>
+        <a class="button" href="#install">Start setup</a>
       </div>
-      <p>No software-engineering background is assumed. Every technical file is translated into the question it answers.</p>
     </section>
 
-    <div class="docs-layout">
-      <aside class="lesson-nav" aria-label="Lesson navigation">
-        <p>Course map</p>
-        <a href="#lesson-1"><span>01</span>The mental model</a>
-        <a href="#lesson-2"><span>02</span>Goal and proof</a>
-        <a href="#lesson-3"><span>03</span>The work queue</a>
-        <a href="#lesson-4"><span>04</span>Parallel lanes</a>
-        <a href="#lesson-5"><span>05</span>Build, QA, repair</a>
-        <a href="#lesson-6"><span>06</span>Integration and completion</a>
-        <a href="#lesson-7"><span>07</span>Memory and recovery</a>
-        <a href="#lesson-8"><span>08</span>Long-running control</a>
-        <a href="#customize"><span>09</span>Customization</a>
-        <a href="#limitations"><span>10</span>Limitations</a>
-        <a href="#quick-start"><span>11</span>Quick start</a>
-      </aside>
+    <blockquote>“It's the job that's never started as takes longest to finish.”</blockquote>
 
-      <article class="lessons">
-        <section class="lesson" id="lesson-1">
-          <header><span>Lesson 01</span><p>About 4 minutes</p></header>
-          <h2>The mental model: a workshop with an independent inspector</h2>
-          <p class="lesson-lede">Imagine hiring a workshop to build a house. You would not accept “the builders look finished” as proof. You would keep the brief, divide the work, inspect each room, test the whole house, and record what remains.</p>
+    <section class="topic" id="before">
+      <p class="step">Before you start</p>
+      <h2>What runs where</h2>
+      <div class="roles">
+        <article><strong>Telegram</strong><span>Your remote chat and notification channel.</span></article>
+        <article><strong>Hermes</strong><span>The always-on control host that receives goals and relays events.</span></article>
+        <article><strong>Harness</strong><span>The durable scheduler, state machine, QA loop, and evidence store.</span></article>
+        <article><strong>OpenCode</strong><span>The authenticated worker CLI that edits and tests the project.</span></article>
+      </div>
+      <p class="note">Run all commands on the same Linux, macOS, or WSL machine that has the target Git repository. You need Git, Bash, Node.js, <code>jq</code>, and an LLM provider for both Hermes and OpenCode.</p>
+    </section>
 
-          <div class="analogy-grid">
-            <div><span>In a workshop</span><strong>Architect's brief</strong><p>What outcome the building must provide.</p></div>
-            <div><span>In the harness</span><strong>Project Goal</strong><p>What users must be able to observe.</p></div>
-            <div><span>In a workshop</span><strong>Inspection checklist</strong><p>Specific evidence that the result is acceptable.</p></div>
-            <div><span>In the harness</span><strong>Acceptance Checks</strong><p>Stable IDs attached to observable behavior.</p></div>
-          </div>
+    <section class="topic" id="install">
+      <p class="step">Step 1</p>
+      <h2>Install Hermes and OpenCode</h2>
+      <p>Install both CLIs, reload your shell, then configure one model provider in each.</p>
+      <pre><code>curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+curl -fsSL https://opencode.ai/install | bash
 
-          <div class="diagram-card">
-            <div class="diagram-title"><span>The complete journey</span><small>Read from left to right</small></div>
-            <pre class="mermaid">
-flowchart LR
-  A["Your product idea"] --> B["Planner&lt;br/&gt;defines goal + proof"]
-  B --> C["Work Items&lt;br/&gt;enter the queue"]
-  C --> D["Coding agent&lt;br/&gt;builds one area"]
-  D --> E["QA agent&lt;br/&gt;checks behavior"]
-  E --> F["Integrated&lt;br/&gt;verification"]
-  F --> G["Goal Review&lt;br/&gt;checks the whole"]
-  G -->|"goal: true"| H["Complete"]
-  E -->|"defect"| I["Repair Plan"]
-  I --> D
-            </pre>
-          </div>
+source ~/.zshrc  # use ~/.bashrc when running Bash
+hermes setup
+opencode         # then run /connect and exit</code></pre>
+      <div class="output"><strong>Check</strong><code>hermes doctor</code><code>opencode --version</code></div>
+      <p class="files"><strong>Created:</strong> <code>~/.hermes/config.yaml</code>, <code>~/.hermes/.env</code>, and OpenCode's user configuration.</p>
+    </section>
 
-          <div class="takeaway"><strong>Keep this idea:</strong> agents perform work; files and observable checks decide what is true.</div>
-        </section>
+    <section class="topic" id="plugin">
+      <p class="step">Step 2</p>
+      <h2>Install the harness for OpenCode</h2>
+      <p>The non-interactive command installs only the harness and targets OpenCode explicitly.</p>
+      <pre><code>curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh \
+  | sh -s -- --cli opencode --no</code></pre>
+      <div class="output"><strong>Check</strong><code>test -f ~/.config/opencode/skills/harness-planner/SKILL.md</code><code>test -f ~/.config/opencode/commands/harness-generator.md</code></div>
+      <p class="files"><strong>Created:</strong> namespaced skills, agents, and commands under <code>~/.config/opencode/</code>.</p>
+    </section>
 
-        <section class="lesson" id="lesson-2">
-          <header><span>Lesson 02</span><p>The completion contract</p></header>
-          <h2>First define the outcome and its proof</h2>
-          <p class="lesson-lede">The planner writes <code>project_specs.xml</code>. XML is simply labeled text: opening and closing labels tell people and programs what each paragraph means.</p>
+    <section class="topic" id="hermes">
+      <p class="step">Step 3</p>
+      <h2>Give Hermes the control skills</h2>
+      <p>Keep one checkout as the source of truth and symlink the three sibling skills. Their relative script paths must stay together.</p>
+      <pre><code>git clone https://github.com/vinicius91carvalho/harness-engineering.git \
+  ~/harness-engineering
+mkdir -p ~/.hermes/skills
+ln -s ~/harness-engineering/skills/control-host ~/.hermes/skills/control-host
+ln -s ~/harness-engineering/skills/planner ~/.hermes/skills/planner
+ln -s ~/harness-engineering/skills/generator ~/.hermes/skills/generator
 
-          <div class="file-explainer">
-            <div class="file-label"><span>XML</span><strong>project_specs.xml</strong></div>
-            <div><strong>Question answered</strong><p>What are we building, and what visible behavior proves it works?</p></div>
-            <div><strong>Written by</strong><p>The planner, with product decisions from the user.</p></div>
-            <div><strong>Read by</strong><p>The initializer, reconciler, workers, QA, and final Goal Review.</p></div>
-          </div>
+hermes skills list</code></pre>
+      <p class="files"><strong>Created:</strong> three links under <code>~/.hermes/skills/</code>. The scripts remain in <code>~/harness-engineering/skills/</code>.</p>
+    </section>
 
-          <pre class="code-block" aria-label="Example project specification"><code>&lt;project_goal&gt;
-  A visitor can publish a note and find it again after reloading.
-&lt;/project_goal&gt;
+    <section class="topic" id="telegram">
+      <p class="step">Step 4</p>
+      <h2>Connect Hermes to Telegram</h2>
+      <ol>
+        <li>In Telegram, open <strong>@BotFather</strong>, run <code>/newbot</code>, and copy the bot token.</li>
+        <li>Run the gateway wizard, select Telegram, and paste the token.</li>
+        <li>Install and start the gateway service, then message your bot.</li>
+        <li>If Hermes returns a pairing code, approve it locally.</li>
+      </ol>
+      <pre><code>hermes gateway setup
+hermes gateway install
+hermes gateway start
+hermes gateway status
 
-&lt;acceptance_check
-  id="AC-001"
-  context="notes"
-  category="functional"
-  depends_on=""&gt;
-  &lt;description&gt;
-    A visitor publishes a note, reloads the page,
-    and sees the same title and text.
-  &lt;/description&gt;
-&lt;/acceptance_check&gt;</code></pre>
+# Only when the bot sends a pairing code:
+hermes pairing approve telegram YOUR_PAIRING_CODE</code></pre>
+      <p class="warning"><strong>Security:</strong> do not enable public access. Pair your own account or set <code>TELEGRAM_ALLOWED_USERS</code> in <code>~/.hermes/.env</code>.</p>
+      <p class="files"><strong>Created:</strong> Telegram credentials in <code>~/.hermes/.env</code>, gateway settings, and a user service.</p>
+    </section>
 
-          <div class="callout-grid">
-            <div><strong><code>id="AC-001"</code></strong><p>A permanent name for this piece of proof. It should never be reused or silently changed.</p></div>
-            <div><strong><code>context="notes"</code></strong><p>The work area. Things likely to edit the same files belong in the same context.</p></div>
-            <div><strong><code>depends_on=""</code></strong><p>Which other checks must pass first. Empty means this work can start immediately.</p></div>
-          </div>
+    <section class="topic" id="plan">
+      <p class="step">Step 5</p>
+      <h2>Plan the project</h2>
+      <p>Start OpenCode in the target repository. Invoke the namespaced planner command and describe observable user outcomes.</p>
+      <pre><code>cd /path/to/your-project
+opencode
 
-          <div class="takeaway"><strong>Good check:</strong> “Publish a note, reload, and see the same content.” <strong>Weak check:</strong> “Notes are implemented.”</div>
-        </section>
+/harness-planner Build a notes app where a user can create a note,
+reload the page, and still find it.</code></pre>
+      <p>Review the generated checks before continuing. Each check should describe behavior that QA can actually observe.</p>
+      <p class="files"><strong>Created:</strong> <code>project_specs.xml</code> — the goal, design decisions, and stable Acceptance Checks.</p>
+    </section>
 
-        <section class="lesson" id="lesson-3">
-          <header><span>Lesson 03</span><p>Turning proof into work</p></header>
-          <h2>The queue is a list of work—not the definition of success</h2>
-          <p class="lesson-lede"><code>reconcile.mjs</code> makes sure every Acceptance Check has a matching Work Item in <code>feature_list.json</code>. JSON is a strict list of named values that programs can update safely.</p>
+    <section class="topic" id="scaffold">
+      <p class="step">Step 6</p>
+      <h2>Create the execution queue</h2>
+      <p>In the same OpenCode session, invoke the generator once. It initializes Git state, maps checks into Work Items, and can start the first worker.</p>
+      <pre><code>/harness-generator</code></pre>
+      <p class="files"><strong>Created:</strong> <code>feature_list.json</code>, <code>CONTEXT.md</code>, <code>harness-progress/</code>, and Run State under <code>.git/harness-runs/</code>.</p>
+    </section>
 
-          <pre class="code-block" aria-label="Example work item"><code>{
-  "id": "WI-AC-001",
-  "context": "notes",
-  "description": "A published note survives reload",
-  "acceptance_checks": ["AC-001"],
-  "depends_on": [],
-  "implementation": false,
-  "qa": false,
-  "integration": false,
-  "retries": 0
-}</code></pre>
+    <section class="topic" id="run">
+      <p class="step">Step 7</p>
+      <h2>Hand the long run to Hermes</h2>
+      <p>From Telegram, send Hermes a concrete instruction. The skill inspects existing state, starts the detached supervisor, and uses OpenCode for worker processes.</p>
+      <pre><code>/control-host
+Run the harness for /path/to/your-project with OpenCode workers.
+Use at most 2 workers. Report progress and blockers in this chat.</code></pre>
+      <p>Hermes should run the equivalent of:</p>
+      <pre><code>CONTROL=~/harness-engineering/skills/control-host/scripts/harness-control.mjs
+node "$CONTROL" start --repo /path/to/your-project --host opencode \
+  --max-workers 2 --quota-workers 2
+node "$CONTROL" status --repo /path/to/your-project</code></pre>
+      <p class="files"><strong>Created:</strong> supervisor state and events under <code>.git/harness-control/</code>; per-context branches, worktrees, journals, and evidence as work proceeds.</p>
+    </section>
 
-          <div class="three-flags">
-            <div><span>1</span><strong>implementation</strong><p>The coding agent says its change is ready for inspection.</p></div>
-            <div><span>2</span><strong>qa</strong><p>An independent agent observed the behavior in the isolated work area.</p></div>
-            <div><span>3</span><strong>integration</strong><p>The same behavior still works after joining the latest shared product.</p></div>
-          </div>
+    <section class="topic" id="notify">
+      <p class="step">Step 8</p>
+      <h2>Keep Telegram synchronized</h2>
+      <p>The control-host skill tells Hermes to poll durable events at least once per minute, deliver them, then acknowledge them. Ask Hermes to create that recurring job:</p>
+      <pre><code>Poll harness events for /path/to/your-project every minute using the
+control-host skill. Deliver progress and input requests here. Acknowledge
+an event only after it has been delivered.</code></pre>
+      <p>For direct inspection, these are the underlying commands:</p>
+      <pre><code>node "$CONTROL" events --repo /path/to/your-project \
+  --consumer hermes-telegram
+node "$CONTROL" ack --repo /path/to/your-project \
+  --consumer hermes-telegram --event EVENT_ID</code></pre>
+      <p class="files"><strong>Created:</strong> the Hermes cron entry in <code>~/.hermes/cron/jobs.json</code> and the delivery cursor in <code>.git/harness-control/cursors/hermes-telegram.json</code>.</p>
+    </section>
 
-          <p>These values are progress markers. They do not replace the Project Goal. Even when every item says <code>integration:true</code>, the whole product must still pass Goal Review.</p>
-        </section>
+    <section class="topic" id="verify">
+      <p class="step">Step 9</p>
+      <h2>Verify the whole chain</h2>
+      <div class="checks">
+        <article><span>1</span><div><strong>Gateway is online</strong><code>hermes gateway status</code></div></article>
+        <article><span>2</span><div><strong>OpenCode is the worker</strong><code>node "$CONTROL" status --repo /path/to/your-project</code></div></article>
+        <article><span>3</span><div><strong>The plan is valid</strong><code>node ~/harness-engineering/skills/generator/reconcile.mjs /path/to/your-project --check</code></div></article>
+        <article><span>4</span><div><strong>Telegram receives events</strong><code>node "$CONTROL" events --repo /path/to/your-project --consumer hermes-telegram</code></div></article>
+        <article><span>5</span><div><strong>The goal actually passed</strong><p>Wait for a durable <code>run_completed</code> event with <code>goal:true</code>. An empty queue or a confident agent message is not completion.</p></div></article>
+      </div>
+    </section>
 
-        <section class="lesson" id="lesson-4">
-          <header><span>Lesson 04</span><p>Safe parallelism</p></header>
-          <h2>Parallel work happens in separate lanes</h2>
-          <p class="lesson-lede">A <strong>context</strong> is a collision boundary: a group of related Work Items likely to touch the same files. Each ready context receives a private Git branch and worktree—an isolated folder containing its version of the project.</p>
+    <section class="topic" id="operate">
+      <p class="step">Operations</p>
+      <h2>Inspect, pause, resume, or stop</h2>
+      <pre><code>node "$CONTROL" status --repo /path/to/your-project
+node "$CONTROL" capacity --repo /path/to/your-project --host opencode
+node "$CONTROL" pause  --repo /path/to/your-project
+node "$CONTROL" resume --repo /path/to/your-project
+node "$CONTROL" stop   --repo /path/to/your-project</code></pre>
+      <p>If a worker blocks, reply in Telegram with guidance tied to the Input Request event ID. The harness preserves the branch, worktree, defect report, repair plan, and evidence.</p>
+    </section>
 
-          <div class="diagram-card">
-            <div class="diagram-title"><span>Three contexts, one shared product</span><small>Merges happen one at a time</small></div>
-            <pre class="mermaid">
-flowchart TB
-  Q["Dependency-aware queue"] --> A["accounts context&lt;br/&gt;worktree A : port 5170"]
-  Q --> B["reports context&lt;br/&gt;worktree B : port 5171"]
-  Q --> C["settings context&lt;br/&gt;worktree C : port 5172"]
-  A --> L["Serialized merge lock"]
-  B --> L
-  C --> L
-  L --> M["latest main"]
-  M --> V["Integrated verification"]
-            </pre>
-          </div>
-
-          <ul class="plain-list">
-            <li><strong>Claim Lease:</strong> only one worker may own a context.</li>
-            <li><strong>Dependency Graph:</strong> a context waits only for checks it truly needs.</li>
-            <li><strong>Merge lock:</strong> parallel building is allowed; combining and checking the shared product is serialized.</li>
-            <li><strong>Resource Governor:</strong> even ready work waits when CPU, memory, load, or provider quota has no safe slot.</li>
-          </ul>
-
-          <div class="takeaway"><strong>More workers are not always faster.</strong> Useful parallelism is limited by ready contexts and real machine/provider capacity.</div>
-        </section>
-
-        <section class="lesson" id="lesson-5">
-          <header><span>Lesson 05</span><p>The quality loop</p></header>
-          <h2>Build, inspect, diagnose, then try again</h2>
-          <p class="lesson-lede">One Attempt contains coding, isolated QA, and—if QA passes—Integrated Verification. A failed inspection does not go straight back to coding with a vague “fix it.”</p>
-
-          <div class="diagram-card">
-            <div class="diagram-title"><span>The bounded repair loop</span><small>Maximum three Attempts</small></div>
-            <pre class="mermaid">
-flowchart TD
-  C["Coding agent"] --> Q["Independent QA"]
-  Q -->|"passes"| P["Checkpoint"]
-  P --> I["Merge + Integrated Verification"]
-  I -->|"passes"| D["Work Item complete"]
-  Q -->|"fails"| R["Defect Report&lt;br/&gt;expected / observed / evidence"]
-  I -->|"fails"| R
-  R --> RP["Orchestrator writes Repair Plan"]
-  RP --> N{"Attempt left?"}
-  N -->|"yes"| C
-  N -->|"no — 3 of 3"| B["Blocked Work Item&lt;br/&gt;ask the user"]
-            </pre>
-          </div>
-
-          <div class="split-explainer">
-            <div><span>QA produces</span><h3>Defect Report</h3><p>Expected behavior, observed behavior, reproduction details, evidence, and affected Acceptance Checks.</p></div>
-            <div><span>Orchestrator produces</span><h3>Repair Plan</h3><p>Likely root cause, bounded actions for the next coding run, and how that fix must be validated.</p></div>
-          </div>
-
-          <p>After the third failed Attempt, the branch, worktree, state, journal, defects, plans, and evidence remain intact. The user receives an Input Request and can retry with guidance, pause, or stop.</p>
-        </section>
-
-        <section class="lesson" id="lesson-6">
-          <header><span>Lesson 06</span><p>What “done” means</p></header>
-          <h2>Completion is a system-level claim</h2>
-          <p class="lesson-lede">A Work Item can pass alone and still break when combined with other work. That is why the workflow has two increasingly broad inspections after coding.</p>
-
-          <div class="proof-levels">
-            <div><span>Local proof</span><h3>Isolated QA</h3><p>Does this behavior work in its private worktree?</p></div>
-            <div><span>Combined proof</span><h3>Integrated Verification</h3><p>Does it still work after merging into the latest <code>main</code>?</p></div>
-            <div><span>Whole-product proof</span><h3>Goal Review</h3><p>Do all checks and primary user journeys prove the Project Goal?</p></div>
-          </div>
-
-          <p>A Goal Review defect reopens the affected Work Items when their Acceptance Check IDs identify the repair area. Ambiguous defects, changed files during review, or exhausted Attempts block for user guidance. Only a persisted <code>run_completed</code> event with <code>goal:true</code> means complete.</p>
-        </section>
-
-        <section class="lesson" id="lesson-7">
-          <header><span>Lesson 07</span><p>Surviving interruption</p></header>
-          <h2>The conversation is disposable; the state is not</h2>
-          <p class="lesson-lede">Closing a chat should not erase the work. The harness stores short machine and human records in the repository, then a new session reads them before claiming anything.</p>
-
-          <div class="file-table-wrap">
-            <table class="file-table">
-              <thead><tr><th>File</th><th>Format</th><th>What it remembers</th></tr></thead>
-              <tbody>
-                <tr><td><code>project_specs.xml</code></td><td>XML</td><td>The product goal, design decisions, and stable Acceptance Checks.</td></tr>
-                <tr><td><code>feature_list.json</code></td><td>JSON</td><td>The Work Item queue, dependencies, three proof flags, and retry count.</td></tr>
-                <tr><td><code>.git/harness-runs/&lt;context&gt;.json</code></td><td>JSON</td><td>Current phase, owner, processes, heartbeat, Attempt, result, and next action.</td></tr>
-                <tr><td><code>harness-progress/&lt;context&gt;.md</code></td><td>Markdown</td><td>A concise journal people can read: transitions, defects, plans, and evidence links.</td></tr>
-                <tr><td><code>.git/harness-runs/evidence/</code></td><td>Artifacts</td><td>Detailed browser, HTTP, command, and runtime output kept outside the journal.</td></tr>
-                <tr><td><code>.git/generator-claims.json</code></td><td>JSON</td><td>Which contexts, branches, worktrees, and ports are currently claimed.</td></tr>
-              </tbody>
-            </table>
-          </div>
-
-          <p>On restart, live process IDs and fresh heartbeats are left alone. Dead local work resumes in the same worktree. A stale claim from another machine asks the user before takeover. Blocked work never resumes without explicit guidance.</p>
-        </section>
-
-        <section class="lesson" id="lesson-8">
-          <header><span>Lesson 08</span><p>Running for hours or days</p></header>
-          <h2>A Control Host watches; the harness decides</h2>
-          <p class="lesson-lede">Hermes, nanobot, pi, or another long-lived agent can accept your goal and talk to Telegram. It does not invent its own scheduling rules. It uses the harness control interface.</p>
-
-          <div class="diagram-card">
-            <div class="diagram-title"><span>Control and notification path</span><small>Messages are durable before delivery</small></div>
-            <pre class="mermaid">
-sequenceDiagram
-  participant U as User on Telegram
-  participant H as Control Host
-  participant S as Harness Supervisor
-  participant W as Governed Workers
-  H->>S: start / status / events
-  S->>W: admit work when capacity allows
-  W-->>S: durable Run State + result
-  S-->>H: 15-minute progress event
-  H-->>U: progress summary
-  S-->>H: immediate Input Request #42
-  H-->>U: reason, evidence, choices
-  U->>H: retry #42 with guidance
-  H->>S: idempotent response for #42
-  S->>W: retry when capacity allows
-            </pre>
-          </div>
-
-          <div class="file-table-wrap">
-            <table class="file-table">
-              <thead><tr><th>Control file</th><th>Purpose</th></tr></thead>
-              <tbody>
-                <tr><td><code>.git/harness-control/state.json</code></td><td>Supervisor status, capacity, workers, progress, and pending Input Requests.</td></tr>
-                <tr><td><code>supervisor.lock/</code></td><td>A singleton lease so two supervisors cannot each spend the full quota.</td></tr>
-                <tr><td><code>events.jsonl</code></td><td>One JSON object per important event, in order. This is not a chat transcript.</td></tr>
-                <tr><td><code>responses/&lt;id&gt;.json</code></td><td>One durable, idempotent user decision for an Input Request.</td></tr>
-                <tr><td><code>cursors/&lt;consumer&gt;.json</code></td><td>The last event successfully delivered to each channel, such as Telegram.</td></tr>
-              </tbody>
-            </table>
-          </div>
-
-          <p>Events are acknowledged only after delivery. If Telegram fails, the cursor does not move, so the message returns on the next poll. A context-level blocker does not stop unrelated ready work. Goal-wide pause is reserved for problems that make all useful work unsafe or impossible.</p>
-        </section>
-
-        <section class="lesson" id="customize">
-          <header><span>Lesson 09</span><p>Make it yours</p></header>
-          <h2>Customize the contracts before the machinery</h2>
-          <p class="lesson-lede">Most useful customization is data, not code. Change what the workflow is asked to prove or how much work it may admit before changing the state machine.</p>
-
-          <div class="customize-grid">
-            <article><span>Safest</span><h3>Goal and checks</h3><p>Edit the planner input and append new Acceptance Checks with new IDs. Make each check observable and keep old IDs stable.</p><code>project_specs.xml</code></article>
-            <article><span>High impact</span><h3>Contexts and dependencies</h3><p>Group collision-prone work together. Add <code>depends_on</code> only when one observable behavior truly requires another.</p><code>context / depends_on</code></article>
-            <article><span>Operational</span><h3>Worker capacity</h3><p>Set maximum workers, provider slots, CPU and memory per worker, reserved memory, and load threshold.</p><code>harness-control start</code></article>
-            <article><span>Behavior</span><h3>Agent instructions</h3><p>Adjust the coding, QA, initializer, planner, or evaluator skill instructions. Keep their JSON and file-state contracts intact.</p><code>agents/ · skills/</code></article>
-            <article><span>Portable</span><h3>Worker host</h3><p>Choose <code>claude</code>, <code>codex</code>, or <code>opencode</code>. The configured model remains under that host's control.</p><code>--host</code></article>
-            <article><span>Communication</span><h3>Notifications</h3><p>Choose the channel consumer name and polling schedule. Deliver immediate events first and acknowledge only after delivery.</p><code>events · ack · respond</code></article>
-          </div>
-
-          <pre class="code-block" aria-label="Example supervisor customization"><code>node harness-control.mjs start \
-  --repo /path/to/project \
-  --host codex \
-  --max-workers 4 \
-  --quota-workers 2 \
-  --cpu-per-worker 2 \
-  --memory-per-worker-mb 2048 \
-  --reserve-memory-mb 2048</code></pre>
-
-          <div class="warning"><strong>Do not edit live generated state by hand.</strong><p>Pause first. Prefer the CLI for capacity, status, responses, pause, resume, and stop. Manual JSON edits can invalidate leases or lose a user decision.</p></div>
-        </section>
-
-        <section class="lesson" id="limitations">
-          <header><span>Lesson 10</span><p>Know the edges</p></header>
-          <h2>What this workflow does not promise</h2>
-          <div class="limits-grid">
-            <article><h3>It cannot rescue a vague goal</h3><p>Automation can repeatedly satisfy the wrong requirement. Review the Project Goal and Acceptance Checks before long execution.</p></article>
-            <article><h3>Flags are not proof by themselves</h3><p>A bad QA agent can still mark a flag. Real browser/HTTP evidence and Goal Review reduce this risk; they do not make testing infallible.</p></article>
-            <article><h3>Provider quotas are not discoverable everywhere</h3><p>The supervisor uses a configured concurrent slot count and reacts to rate-limit errors. It cannot predict undocumented rolling limits.</p></article>
-            <article><h3>Parallelism has a collision boundary</h3><p>Work inside one context is sequential. Poor context design either causes file conflicts or removes useful parallelism.</p></article>
-            <article><h3>Cross-machine recovery needs shared state</h3><p>Another machine must see the same Git state and reliable clocks. Fresh remote leases are intentionally not stolen.</p></article>
-            <article><h3>Native Windows control is limited</h3><p>The supervisor invokes the Bash claim helper. Use Git Bash or WSL for the complete long-running control path.</p></article>
-            <article><h3>It does not store secrets for you</h3><p>Credentials belong in host configuration or environment variables. Backups redact secrets and prompt again during restore.</p></article>
-            <article><h3>GitHub Pages is documentation only</h3><p>This website explains the harness. The workflow itself runs on your machine or infrastructure with authenticated agent CLIs.</p></article>
-          </div>
-        </section>
-
-        <section class="lesson quick-start" id="quick-start">
-          <header><span>Lesson 11</span><p>Put it into practice</p></header>
-          <h2>The shortest path from idea to run</h2>
-          <ol class="run-steps">
-            <li><span>1</span><div><strong>Install the harness</strong><p>Run the installer and choose one available worker host.</p></div></li>
-            <li><span>2</span><div><strong>Plan the product</strong><p>Run <code>/harness:planner</code>. Read the generated goal and checks.</p></div></li>
-            <li><span>3</span><div><strong>Start building</strong><p>Run <code>/harness:generator</code>, or start the supervisor after initialization.</p></div></li>
-            <li><span>4</span><div><strong>Watch durable status</strong><p>Use the status/events commands; respond by Input Request ID when needed.</p></div></li>
-            <li><span>5</span><div><strong>Accept only Goal Review</strong><p>Wait for the persisted <code>run_completed</code> event.</p></div></li>
-          </ol>
-
-          <pre class="code-block install"><code>curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh</code></pre>
-          <div class="final-actions">
-            <a class="button primary" href="https://github.com/vinicius91carvalho/harness-engineering">View the repository</a>
-            <a class="button secondary" href="https://github.com/vinicius91carvalho/harness-engineering/issues">Ask a question</a>
-          </div>
-        </section>
-      </article>
-    </div>
+    <section class="topic compact" id="files">
+      <p class="step">File map</p>
+      <h2>What to inspect when something looks wrong</h2>
+      <table>
+        <thead><tr><th>Path</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>project_specs.xml</code></td><td>What must be true.</td></tr>
+          <tr><td><code>feature_list.json</code></td><td>What is ready, running, or verified.</td></tr>
+          <tr><td><code>harness-progress/&lt;context&gt;.md</code></td><td>Human-readable workflow journal.</td></tr>
+          <tr><td><code>.git/harness-runs/</code></td><td>Worker state, attempts, and evidence.</td></tr>
+          <tr><td><code>.git/harness-control/state.json</code></td><td>Supervisor, capacity, and pending input.</td></tr>
+          <tr><td><code>.git/harness-control/events.jsonl</code></td><td>Ordered notifications, including completion.</td></tr>
+        </tbody>
+      </table>
+    </section>
   </main>
 
   <footer>
-    <a class="brand" href="#top"><span class="brand-mark" aria-hidden="true">H</span><span>Harness Engineering</span></a>
-    <p>Portable, resumable, independently verified AI work.</p>
-    <a href="https://github.com/vinicius91carvalho/harness-engineering">Source on GitHub ↗</a>
+    <p>“All we have to decide is what to do with the time that is given us.”</p>
+    <a href="https://github.com/vinicius91carvalho/harness-engineering">Source and full reference ↗</a>
   </footer>
-
-  <script type="module">
-    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs';
-    mermaid.initialize({
-      startOnLoad: true,
-      securityLevel: 'strict',
-      theme: 'base',
-      themeVariables: {
-        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-        primaryColor: '#e8f0ff',
-        primaryTextColor: '#101826',
-        primaryBorderColor: '#6b7fa6',
-        lineColor: '#6b7fa6',
-        secondaryColor: '#e5f8e9',
-        tertiaryColor: '#fff0d8'
-      }
-    });
-  </script>
 </body>
 </html>

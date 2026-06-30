@@ -137,7 +137,10 @@ async function evidence(id, attempt, kind, detail) {
 }
 
 async function runAgent(kind, prompt, id, attempt, cwd = options.workdir) {
-  const [program, args] = commands[options.host](prompt)
+  const specFile = join(cwd, 'project_specs.xml')
+  try { await readFile(specFile) } catch (error) { fail(`cannot reference project_specs.xml: ${error.message}`) }
+  const referencedPrompt = `${prompt}\n\nBefore acting, read ${specFile} and verify that the repository contains every structure and file it requires. Handle missing scaffold artifacts according to your role.`
+  const [program, args] = commands[options.host](referencedPrompt)
   await writeState({ phase: kind.toLowerCase(), currentFeatureId: id, attempt, childPid: null })
   return await new Promise((resolveRun) => {
     child = spawn(program, args, {

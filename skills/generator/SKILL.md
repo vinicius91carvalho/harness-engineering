@@ -26,7 +26,9 @@ host (`claude`, `codex`, or `opencode`).
 
 If `main:feature_list.json` is absent, first acquire
 `mkdir "${REPO%/}.harness-init.lock"` and run the initializer exactly once in the
-`main` checkout. Another session that cannot acquire it waits and rechecks instead
+`main` checkout. Reference `project_specs.xml` explicitly in the initializer task
+so it can create and verify every spec-required file and directory without relying
+on inherited chat context. Another session that cannot acquire it waits and rechecks instead
 of starting a second initializer. Remove the directory only after initialization
 completes; a lock left by a crashed initializer requires explicit user-confirmed
 takeover. Then, in the checkout of `main`:
@@ -88,7 +90,9 @@ node "$GEN/orchestrator.mjs" --host "$HOST" --repo "$REPO" \
   --features "$COMMA_SEPARATED_IDS" --claim-script "$GEN/claim.sh"
 ```
 
-The engine owns agent communication, heartbeats, Defect Reports, Repair Plans,
+The engine references `project_specs.xml` in every coding, QA, repair, merge,
+integration, and Goal Review agent prompt. Each agent reads it and verifies the
+spec-required project structure before acting. The engine also owns agent communication, heartbeats, Defect Reports, Repair Plans,
 Attempts, concise Journal entries, per-Work-Item merge checkpoints, and Integrated
 Verification. It verifies queue state rather than trusting prose. Diagnostic output
 is stored as separate Evidence Artifacts under the shared Git directory.
