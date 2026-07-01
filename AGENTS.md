@@ -14,6 +14,13 @@ When you change any bundled script (e.g. `scripts/statusline.sh`) or a plugin's
 behavior, update `README.md` in the same change to match. Docs that drift from
 the scripts are worse than no docs.
 
+## Runtime-validate external agent bundles
+
+Static file checks are not sufficient for bundled external-agent formats. When
+changing `omnigent/`, install the bundle and run it headlessly with an
+authenticated harness; add the smallest regression check for any runtime defect
+found.
+
 ## Layout
 
 - `.claude-plugin/marketplace.json` — the marketplace: lists every plugin and its source.
@@ -21,12 +28,15 @@ the scripts are worse than no docs.
 - `.codex-plugin/plugin.json` — manifest for the `harness` plugin (Codex).
 - `opencode.json` — manifest for the `harness` plugin (Opencode).
 - `.mcp.json` — MCP server configuration for Opencode and Codex.
+- `omnigent/harness-engineering/` — optional Omnigent agent bundle, worker
+  templates, skills, and an editable OpenCode-first `roles.example.json` copied
+  by the installers to `~/.omnigent/agents/harness-engineering`.
 - `scripts/` — bundled helpers: `statusline.sh`, `sync-config.sh`, and `jsonc-normalize.js` (string-safe JSONC normalization used before atomic OpenCode writes).
 - `config/settings.json` — committed shareable subset of `~/.claude/settings.json`, merged in by the installer's "shared config" prompt. Regenerate with `/harness:update-project`.
 - `config/mcp.json` — sanitized inventory of locally-configured MCP servers (user/local scope from `~/.claude.json`), written by `/harness:update-project`. Secrets are redacted to `${PLACEHOLDER}`. The installer's "MCP servers" checklist row walks these one by one, prompts (hidden) for each secret, and registers chosen servers at user scope via `claude mcp add-json`; ENTER on a prompt skips that server. Absent until there's an MCP server to back up.
 - `config/home/` — backup of loose user content (`skills/`, `commands/`, `agents/`, `hooks/`, `keybindings.json`, global `CLAUDE.md`) authored directly under `~/.claude`. Populated by `/harness:update-project`, restored by the installer's `restore_home`/`Restore-Home`. Absent until there's something to back up (most setups put everything in plugins).
 - `skills/update-project/SKILL.md` — `/harness:update-project`: a complete backup of the live Claude setup — regenerates `config/settings.json`, reconciles the plugin roster against live `enabledPlugins`, mirrors loose user content into `config/home/`, and reconciles docs.
-- `skills/planner/`, `skills/generator/`, `skills/evaluator/`, `skills/control-host/` + `agents/` — the portable **spec→build→QA→Goal Review pipeline**. `project_specs.xml` owns stable Acceptance Checks; `reconcile.mjs` maps them into the append-only execution queue. `claim.sh` uses atomic-directory leases and resumable Run State. One `orchestrator.mjs` state machine drives every worker host through thin `claude -p`/`codex exec`/`opencode run` adapters. `harness-control.mjs` lets long-lived Control Hosts such as Hermes, nanobot, or pi admit parallel work deterministically, recover durable state, and relay Input Requests without duplicating execution policy. Keep scripts, agent summaries, skills, tests, and README behavior in sync.
+- `skills/planner/`, `skills/generator/`, `skills/evaluator/`, `skills/control-host/` + `agents/` — the portable **spec→build→QA→Goal Review pipeline**. `project_specs.xml` owns stable Acceptance Checks; `reconcile.mjs` maps them into the append-only execution queue. `claim.sh` uses atomic-directory leases and resumable Run State. One `orchestrator.mjs` state machine drives every worker host through thin `claude -p`/`codex exec`/`opencode run` adapters. `harness-control.mjs` lets long-lived Control Hosts such as Omnigent, Hermes, nanobot, or pi admit parallel work deterministically, recover durable state, and relay Input Requests without duplicating execution policy. Keep scripts, agent summaries, skills, tests, and README behavior in sync.
 - `site/` + `.github/workflows/pages.yml` — build-free project landing page and lesson-style workflow documentation, deployed as a static GitHub Pages artifact. Keep it synchronized with workflow behavior and cover structural changes in `tests/site_test.sh`.
 - `.github/workflows/ci.yml` — CI: JSON validity, shell syntax, selftests, skill frontmatter.
 - `.github/workflows/release.yml` — on push to `main`, computes the next semver from Conventional Commits, tags it, publishes a GitHub Release, and (in one `[skip ci]` commit) bumps `.claude-plugin/plugin.json`'s `version` to match and prepends the notes to `CHANGELOG.md`. The plugin version is the install cache key, so that bump is what lets `claude plugin update` reach already-installed machines. No bump = no release. Keep commit subjects conventional (`feat:`, `fix:`, `feat!:`/`BREAKING CHANGE:` for majors).

@@ -8,6 +8,7 @@
 | Status line | Claude | Uses the bundled `scripts/statusline.sh`. No Codex or OpenCode status-line support is claimed. |
 | Shared config | Claude | Atomically merges the sanitized `config/settings.json`, preserving unrelated settings and a backup. |
 | MCP inventory | Claude, Codex, OpenCode | Prompts once for redacted secrets and writes selected servers to every selected host. |
+| Omnigent | Claude, Codex, OpenCode | Installs the optional runtime and refreshes the harness-engineering agent bundle. Projects opt into role routing with `.harness/roles.json`; absence preserves direct CLI execution. See the [simple recipe](../README.md#optional-omnigent-routing-and-mobile-control). |
 
 OpenCode MCP entries use its native local/remote shapes. Codex uses `codex mcp
 add`; Claude uses `claude mcp add-json`.

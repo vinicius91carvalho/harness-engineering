@@ -40,3 +40,11 @@ stages the repository before it needs assets, because `$PSScriptRoot` is empty.
 `codebase-memory-mcp`, Context7, and Playwright are optional MCP integrations on
 all hosts. The memory server's upstream installer runs with `--skip-config`, its
 binary is verified, auto-indexing is enabled, then only selected hosts are configured.
+
+`omnigent` is an optional all-host checklist item. Shell uses Omnigent's official
+bootstrap installer when the runtime is absent; native Windows uses the official
+`uv tool install --python 3.12 omnigent` path. Both replace the
+`~/.omnigent/agents/harness-engineering` bundle atomically enough for repeated
+installs and leave project role and model routing to `.harness/roles.json`. The
+[simple recipe](../../README.md#optional-omnigent-routing-and-mobile-control)
+shows how to run and verify the full workflow.

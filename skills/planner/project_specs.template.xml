@@ -8,6 +8,16 @@
 
   <project_name><!-- short product name --></project_name>
 
+  <!--
+    Optional. Set to `existing-codebase` when scaffolding the harness into a repo
+    that already implements the Project Goal. The generator then runs Work Items
+    verify-first: coding agents confirm the Acceptance Checks against existing
+    code at a real boundary, set implementation=true with no code changes when
+    they pass, and only repair the root cause when a check fails. Omit for new
+    projects (default: implement).
+  -->
+  <mode><!-- existing-codebase | new-project (default) --></mode>
+
   <project_goal>
     <!-- One observable system-level outcome. Goal Review evaluates this directly. -->
   </project_goal>

@@ -13,9 +13,10 @@ $MarketplaceRepo = "vinicius91carvalho/harness-engineering"
 $ClaudeMarketplace = "harness-engineering"
 $CodexMarketplace = "harness-engineering"
 $MemoryInstaller = "https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.ps1"
-$Optional = @("ponytail", "codebase-memory-mcp", "context7", "playwright", "status-line", "shared-config", "mcp-servers")
+$Optional = @("omnigent", "ponytail", "codebase-memory-mcp", "context7", "playwright", "status-line", "shared-config", "mcp-servers")
 $PluginClis = @{
   harness = @("claude", "codex", "opencode")
+  omnigent = @("claude", "codex", "opencode")
   ponytail = @("claude", "codex", "opencode")
   "codebase-memory-mcp" = @("claude", "codex", "opencode")
   context7 = @("claude", "codex", "opencode"); playwright = @("claude", "codex", "opencode")
@@ -129,6 +130,24 @@ function Remove-OpenCodePluginFiles([string]$Name) {
     if (-not (Test-Path $dirPath)) { continue }
     Get-ChildItem "$dirPath/$Name-*" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
   }
+}
+
+function Install-Omnigent {
+  if ($DryRun) {
+    Write-Host "DRY RUN - install Omnigent with the official uv runtime installer"
+    Write-Host "DRY RUN - install agent bundle at $HOME/.omnigent/agents/harness-engineering"
+    return
+  }
+  if (-not (Get-Command omni -ErrorAction SilentlyContinue) -and -not (Get-Command omnigent -ErrorAction SilentlyContinue)) {
+    if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { throw "uv is required for the official Omnigent Windows installation" }
+    Invoke-Native uv @("tool", "install", "--python", "3.12", "omnigent")
+  }
+  $source = Join-Path (Get-Repository) "omnigent/harness-engineering"
+  if (-not (Test-Path (Join-Path $source "config.yaml"))) { throw "Bundled Omnigent agent is missing" }
+  $destination = Join-Path $HOME ".omnigent/agents/harness-engineering"
+  Remove-Item $destination -Recurse -Force -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Force $destination | Out-Null
+  Copy-Item (Join-Path $source "*") $destination -Recurse -Force
 }
 
 function Install-OpenCodePlugin([string]$Name) {
@@ -380,6 +399,7 @@ foreach ($target in $Targets) {
 }
 
 foreach ($item in $Selected) {
+  if ($item -eq "omnigent") { Install-Omnigent; continue }
   if ($item -eq "codebase-memory-mcp") { Install-Memory; continue }
   if ($item -eq "context7" -or $item -eq "playwright") { Install-PortableMcp $item; continue }
   if ($item -eq "status-line") { Enable-ClaudeStatusLine; continue }
@@ -388,7 +408,13 @@ foreach ($item in $Selected) {
   foreach ($target in $Targets) {
     if ($PluginClis[$item] -notcontains $target) { continue }
     switch ($target) {
-      claude { Invoke-Native claude @("plugin", "install", "$item@$ClaudeMarketplace", "--scope", $Scope) }
+      claude {
+        if ($DryRun) { Invoke-Native claude @("plugin", "update", "$item@$ClaudeMarketplace", "--scope", $Scope) }
+        else {
+          & claude plugin update "$item@$ClaudeMarketplace" --scope $Scope
+          if ($LASTEXITCODE -ne 0) { Invoke-Native claude @("plugin", "install", "$item@$ClaudeMarketplace", "--scope", $Scope) }
+        }
+      }
       codex {
         if ($item -eq "ponytail") {
           if ($DryRun) { Invoke-Native codex @("plugin", "marketplace", "upgrade", "ponytail") }

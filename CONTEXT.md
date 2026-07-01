@@ -99,3 +99,7 @@ _Avoid_: Transcript, console output, notification
 **Blocking Scope**:
 The smallest execution boundary stopped by a failure: one context by default, or the entire Project Goal only when shared safety, specification, or infrastructure prevents useful independent work.
 _Avoid_: Global pause, failed task
+
+**Verify-First Mode**:
+A spec mode (`<mode>existing-codebase</mode>`) where coding agents first exercise the Acceptance Checks against existing code at a real external boundary, set `implementation=true` with no code changes when they pass, and only repair the root cause with the smallest possible diff when a check fails. QA and Integrated Verification still independently re-run the checks. Turns `/generator` into a safe audit pass over a working codebase rather than a rewrite.
+_Avoid_: Audit mode, verify-only mode, read-only generator

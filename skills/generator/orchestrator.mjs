@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-import { appendFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { mkdirSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
 import { spawn, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { hostname } from 'node:os'
+import { homedir, hostname } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -31,6 +31,10 @@ const commands = {
   codex: (prompt) => ['codex', ['exec', prompt]],
   opencode: (prompt) => ['opencode', ['run', prompt]],
 }
+const roleNames = {
+  CODING: 'coding', QA: 'validation', INTEGRATION_QA: 'validation',
+  REPAIR_PLAN: 'repairPlanning', MERGE: 'coding', GOAL_REVIEW: 'goalReview',
+}
 const reconcileScript = resolve(dirname(fileURLToPath(import.meta.url)), 'reconcile.mjs')
 
 function command(program, args, cwd = options.workdir, allowFailure = false) {
@@ -41,6 +45,10 @@ function command(program, args, cwd = options.workdir, allowFailure = false) {
 
 function git(args, cwd = options.workdir, allowFailure = false) {
   return command('git', args, cwd, allowFailure)
+}
+
+function gitTopLevel(cwd) {
+  return realpathSync(git(['rev-parse', '--show-toplevel'], cwd).stdout.trim())
 }
 
 const commonGitRaw = git(['rev-parse', '--git-common-dir']).stdout.trim()
@@ -54,7 +62,17 @@ const stateFile = join(runDir, `${stateContext.replace(/[^a-zA-Z0-9_-]/g, '_')}.
 const leaseToken = randomUUID()
 let child = null
 let state = {}
+const verifyFirstCache = new Map()
+const codingHarnesses = new Map()
 let heartbeatTimer
+
+function terminateChild(signal = 'SIGTERM') {
+  if (!child?.pid) return
+  try {
+    if (process.platform === 'win32') child.kill(signal)
+    else process.kill(-child.pid, signal)
+  } catch { try { child.kill(signal) } catch {} }
+}
 
 async function readJson(file, fallback) {
   try { return JSON.parse(await readFile(file, 'utf8')) } catch { return fallback }
@@ -88,7 +106,7 @@ async function writeState(change = {}) {
 
 function writeInterruptedState(signal) {
   try {
-    if (child?.pid) child.kill('SIGTERM')
+    terminateChild()
     const value = {
       ...state, context, leaseToken, ownerHost: hostname(), ownerPid: null, childPid: null,
       status: 'interrupted', lastResult: `orchestrator received ${signal}`,
@@ -111,6 +129,57 @@ async function readFeatures(workdir = options.workdir) {
   return { file, parsed, list: parsed }
 }
 
+async function isVerifyFirst(workdir = options.workdir) {
+  try {
+    const spec = await readFile(join(workdir, 'project_specs.xml'), 'utf8')
+    return /<mode>\s*existing-codebase\s*<\/mode>/.test(spec)
+  } catch { return false }
+}
+
+async function readRoles(workdir = options.workdir) {
+  const file = join(workdir, '.harness', 'roles.json')
+  let roles
+  try { roles = JSON.parse(await readFile(file, 'utf8')) } catch (error) {
+    if (error.code === 'ENOENT') return null
+    fail(`cannot read ${file}: ${error.message}`)
+  }
+  const normalized = {}
+  for (const role of ['coding', 'validation', 'repairPlanning', 'goalReview']) {
+    if (!Array.isArray(roles[role]) || !roles[role].length) fail(`${file}: ${role} must be a non-empty array`)
+    normalized[role] = roles[role].map((value) => {
+      const candidate = typeof value === 'string' ? { harness: value } : value
+      if (!candidate || !['claude', 'codex', 'opencode'].includes(candidate.harness)) {
+        fail(`${file}: ${role} candidates must use claude, codex, or opencode`)
+      }
+      if (candidate.model !== undefined && (typeof candidate.model !== 'string' || !candidate.model.trim())) {
+        fail(`${file}: ${role} model must be a non-empty string`)
+      }
+      return { harness: candidate.harness, ...(candidate.model ? { model: candidate.model } : {}) }
+    })
+  }
+  return normalized
+}
+
+async function recentCodingHarness(id) {
+  if (codingHarnesses.has(String(id))) return codingHarnesses.get(String(id))
+  const entries = []
+  try {
+    for (const file of await readdir(runDir)) {
+      if (!file.endsWith('.json')) continue
+      const name = file.slice(0, -5)
+      if (projectId ? !name.startsWith(`${projectId}--`) : name.includes('--')) continue
+      const run = await readJson(join(runDir, file), {})
+      for (const route of run.routeHistory || []) {
+        if (route.kind === 'CODING' && route.outcome === 'selected' && (id === 'goal' || String(route.id) === String(id))) {
+          entries.push({ ...route, heartbeat: run.heartbeat || '' })
+        }
+      }
+    }
+  } catch {}
+  entries.sort((a, b) => a.heartbeat.localeCompare(b.heartbeat))
+  return entries.at(-1)?.harness
+}
+
 async function updateFeature(workdir, id, changes) {
   const { file, parsed, list } = await readFeatures(workdir)
   const feature = list.find((item) => String(item.id) === String(id))
@@ -131,23 +200,28 @@ function parseObject(text) {
   return null
 }
 
-async function evidence(id, attempt, kind, detail) {
+async function evidence(id, attempt, kind, detail, route = null) {
   const dir = join(runDir, 'evidence', context.replace(/[^a-zA-Z0-9_-]/g, '_'))
   await mkdir(dir, { recursive: true })
   const file = join(dir, `${String(id).replace(/[^a-zA-Z0-9_-]/g, '_')}-${attempt}-${kind.toLowerCase()}.log`)
-  await writeFile(file, detail)
+  const header = route ? `route=${JSON.stringify(route)}\n` : ''
+  await writeFile(file, `${header}${detail}`)
   return file
 }
 
-async function runAgent(kind, prompt, id, attempt, cwd = options.workdir) {
-  const specFile = join(cwd, 'project_specs.xml')
-  try { await readFile(specFile) } catch (error) { fail(`cannot reference project_specs.xml: ${error.message}`) }
-  const referencedPrompt = `${prompt}\n\nBefore acting, read ${specFile} and verify that the repository contains every structure and file it requires. Handle missing scaffold artifacts according to your role.`
-  const [program, args] = commands[options.host](referencedPrompt)
-  await writeState({ phase: kind.toLowerCase(), currentFeatureId: id, attempt, childPid: null })
+function fallbackReason(result) {
+  const detail = result.timedOut ? 'timeout' : result.detail || ''
+  if (/\b429\b|rate.?limit/i.test(detail)) return 'rate-limited'
+  if (/auth|credential|unauthorized|forbidden|login/i.test(detail)) return 'authentication-failure'
+  if (/model.{0,40}(unavailable|not available|not found|unknown)|unavailable.{0,20}model/i.test(detail)) return 'model-unavailable'
+  return result.timedOut ? 'launch-timeout' : 'launch-failure'
+}
+
+async function spawnAgent(program, args, cwd) {
   return await new Promise((resolveRun) => {
     child = spawn(program, args, {
       cwd,
+      detached: process.platform !== 'win32',
       env: {
         ...process.env,
         PORT: String(options.port),
@@ -156,31 +230,70 @@ async function runAgent(kind, prompt, id, attempt, cwd = options.workdir) {
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
-    let stdout = '', stderr = '', timedOut = false
-    const registered = writeState({ childPid: child.pid }).catch((error) => child.kill('SIGTERM') || fail(error.message))
-    child.stdout.on('data', (data) => { stdout = `${stdout}${data}`.slice(-1_000_000) })
-    child.stderr.on('data', (data) => { stderr = `${stderr}${data}`.slice(-1_000_000) })
-    const timeout = setTimeout(() => { timedOut = true; child.kill('SIGTERM') }, Number(process.env.HARNESS_AGENT_TIMEOUT_MS || 1_800_000))
+    let stdout = '', stderr = '', timedOut = false, settled = false
+    const finish = (result) => { if (!settled) { settled = true; child = null; resolveRun(result) } }
+    const registered = writeState({ childPid: child.pid || null }).catch((error) => { terminateChild(); fail(error.message) })
+    child.stdout?.on('data', (data) => { stdout = `${stdout}${data}`.slice(-1_000_000) })
+    child.stderr?.on('data', (data) => { stderr = `${stderr}${data}`.slice(-1_000_000) })
+    const timeout = setTimeout(() => { timedOut = true; terminateChild() }, Number(process.env.HARNESS_AGENT_TIMEOUT_MS || 1_800_000))
     child.on('close', async (code) => {
       clearTimeout(timeout)
       await registered
       const detail = (stderr || stdout || '').trim()
-      const parsed = parseObject(stdout || stderr)
-      const diagnostic = parsed
-        ? `${JSON.stringify(parsed, null, 2)}\n`
-        : `${stdout}${stderr ? `\n--- stderr ---\n${stderr}` : ''}`.slice(-16_000)
-      const artifact = await evidence(id, attempt, kind, diagnostic)
-      child = null
-      await writeState({ childPid: null, evidence: artifact })
-      resolveRun({ ok: code === 0 && !timedOut, code, detail, parsed, artifact, timedOut })
+      finish({ ok: code === 0 && !timedOut, code, detail, stdout, stderr, parsed: parseObject(stdout || stderr), timedOut })
     })
     child.on('error', async (error) => {
       clearTimeout(timeout)
-      child = null
-      await writeState({ childPid: null, lastResult: error.message })
-      resolveRun({ ok: false, detail: error.message, parsed: null })
+      await registered
+      finish({ ok: false, detail: error.message, stdout, stderr, parsed: null, timedOut: false })
     })
   })
+}
+
+async function runAgent(kind, prompt, id, attempt, cwd = options.workdir) {
+  const specFile = join(cwd, 'project_specs.xml')
+  try { await readFile(specFile) } catch (error) { fail(`cannot reference project_specs.xml: ${error.message}`) }
+  const referencedPrompt = `${prompt}\n\nBefore acting, read ${specFile} and verify that the repository contains every structure and file it requires. Handle missing scaffold artifacts according to your role.`
+  await writeState({ phase: kind.toLowerCase(), currentFeatureId: id, attempt, childPid: null })
+  const roles = await readRoles(cwd)
+  const direct = !roles
+  const candidates = direct ? [{ harness: options.host }] : [...roles[roleNames[kind]]]
+  const codedBy = await recentCodingHarness(id) || [...(state.routeHistory || [])].reverse()
+    .find((entry) => entry.kind === 'CODING' && String(entry.id) === String(id) && entry.outcome === 'selected')?.harness
+  if (!direct && ['QA', 'INTEGRATION_QA', 'GOAL_REVIEW'].includes(kind)) {
+    const avoid = codedBy || roles.coding[0].harness
+    candidates.sort((a, b) => Number(a.harness === avoid) - Number(b.harness === avoid))
+  }
+  const failures = []
+  for (const candidate of candidates) {
+    const independence = direct ? 'direct-host' : ['QA', 'INTEGRATION_QA', 'GOAL_REVIEW'].includes(kind)
+      ? (candidate.harness === (codedBy || roles?.coding[0].harness) ? 'same-harness-fallback' : 'independent-harness')
+      : 'not-applicable'
+    const route = {
+      adapter: direct ? 'direct' : 'omnigent', kind, id: String(id), harness: candidate.harness,
+      model: candidate.model || null, fallbackReason: failures.at(-1)?.reason || (!direct && independence === 'same-harness-fallback' ? 'no-different-harness-available' : null),
+      independence,
+    }
+    const [program, args] = direct
+      ? commands[candidate.harness](referencedPrompt)
+      : [process.env.HARNESS_OMNIGENT_BIN || 'omni', ['run', join(process.env.HARNESS_OMNIGENT_BUNDLE || join(homedir(), '.omnigent', 'agents', 'harness-engineering'), 'agents', candidate.harness), '--no-session', ...(candidate.model ? ['--model', candidate.model] : []), '--prompt', referencedPrompt]]
+    await writeState({ agentRoute: route, childPid: null })
+    const result = await spawnAgent(program, args, direct ? cwd : gitTopLevel(cwd))
+    if (!direct && !result.ok && candidates.indexOf(candidate) < candidates.length - 1) {
+      const reason = fallbackReason(result)
+      failures.push({ harness: candidate.harness, model: candidate.model || null, reason, detail: result.detail.slice(-1000) })
+      state.routeHistory = [...(state.routeHistory || []), { ...route, outcome: 'fallback', fallbackReason: reason }]
+      await writeState({ routeHistory: state.routeHistory, lastResult: `${candidate.harness}: ${reason}`, childPid: null })
+      continue
+    }
+    const selected = { ...route, outcome: result.ok ? 'selected' : 'failed' }
+    state.routeHistory = [...(state.routeHistory || []), selected]
+    if (kind === 'CODING' && result.ok) codingHarnesses.set(String(id), candidate.harness)
+    const diagnostic = `${failures.length ? `fallbacks=${JSON.stringify(failures)}\n` : ''}${result.parsed ? `${JSON.stringify(result.parsed, null, 2)}\n` : `${result.stdout}${result.stderr ? `\n--- stderr ---\n${result.stderr}` : ''}`.slice(-16_000)}`
+    const artifact = await evidence(id, attempt, kind, diagnostic, selected)
+    await writeState({ childPid: null, evidence: artifact, agentRoute: selected, routeHistory: state.routeHistory })
+    return { ...result, artifact, route: selected }
+  }
 }
 
 async function appPid(workdir) {
@@ -225,9 +338,15 @@ function commitPaths(workdir, paths, message) {
 function featurePrompt(kind, feature, attempt, repairPlan = null, workdir = options.workdir) {
   const base = `WORKDIR=${workdir}\nPORT=${options.port}\nWork Item id=${feature.id} context=${feature.context}\n` +
     `Acceptance Checks=${(feature.acceptance_checks || []).join(',')}\nDescription=${feature.description || ''}\n`
-  if (kind === 'CODING') return `You are the coding-agent. Implement exactly this Work Item, then stop.\n${base}` +
-    `${repairPlan ? `Follow this Repair Plan from the orchestrator:\n${JSON.stringify(repairPlan)}\n` : ''}` +
-    'Read the exact queue entry and Workflow Journal. Bring up the app on the assigned ports, implement the smallest complete fix, run black-box behavior tests, set only this item implementation=true after success, update the journal concisely, and commit. Return one JSON object: {"id":"...","implementation":true|false,"notes":"..."}.'
+  if (kind === 'CODING') {
+    const verifyFirst = verifyFirstCache.get(workdir)
+    const head = verifyFirst
+      ? `You are the coding-agent in VERIFY-FIRST mode (existing codebase). First exercise every mapped Acceptance Check against the EXISTING code at a real external boundary (HTTP or browser). If all pass, set implementation=true and make NO code changes (a zero-diff checkpoint is valid; commit only if you intentionally changed tracked files). If any check fails, fix only the root cause with the smallest possible diff — do not refactor, restructure, or rewrite working code. The bar is "the AC passes at a real boundary," not "the code is idiomatic."\n${base}`
+      : `You are the coding-agent. Implement exactly this Work Item, then stop.\n${base}`
+    return head +
+      `${repairPlan ? `Follow this Repair Plan from the orchestrator:\n${JSON.stringify(repairPlan)}\n` : ''}` +
+      'Read the exact queue entry and Workflow Journal. Bring up the app on the assigned ports, run black-box behavior tests, set only this item implementation=true after success, update the journal concisely, and commit. Return one JSON object: {"id":"...","implementation":true|false,"notes":"..."}.'
+  }
   if (kind === 'QA') return `You are the qa-agent. Independently test exactly this Work Item in its isolated worktree.\n${base}` +
     'Use a real browser for UI or real HTTP for API behavior. On pass set qa=true. On any defect set implementation=false and qa=false. Update the journal concisely and commit. Return only JSON: {"id":"...","qa":true|false,"implementation":true|false,"defects":["expected ...; observed ...; evidence ..."]}.'
   if (kind === 'INTEGRATION_QA') return `You are the qa-agent performing Integrated Verification on latest main.\n${base}` +
@@ -310,13 +429,16 @@ async function integrate(feature, attempt) {
     await writeState({ phase: 'integration-qa', nextAction: 'integration-qa' })
     const verified = await runAgent('INTEGRATION_QA', featurePrompt('INTEGRATION_QA', feature, attempt, null, integrationDir), feature.id, attempt, integrationDir)
     await stopApp(integrationDir)
+    if (verified.ok && verified.parsed?.implementation === true && verified.parsed?.integration === true) {
+      await updateFeature(integrationDir, feature.id, { implementation: true, qa: true, integration: true })
+    }
     const current = (await readFeatures(integrationDir)).list.find((item) => String(item.id) === String(feature.id))
     if (verified.ok && current?.implementation === true && current?.qa === true && current?.integration === true) {
       const file = await journal(integrationDir, 'Integrated Verification passed', {
         Attempt: `${attempt}/3`, WorkItem: feature.id, AcceptanceChecks: feature.acceptance_checks || [],
         Outcome: 'passed on integrated main', Evidence: verified.artifact, NextAction: 'next Ready Work Item',
       })
-      commitPaths(integrationDir, [file], `verify(harness): integrate ${feature.id}`)
+      commitPaths(integrationDir, [join(integrationDir, 'feature_list.json'), file], `verify(harness): integrate ${feature.id}`)
       git(['merge', '--no-edit', 'main'], options.workdir)
       await writeState({ phase: 'integrated', nextAction: 'next-work-item', lastResult: 'Integrated Verification passed' })
       return { passed: true }
@@ -361,6 +483,7 @@ async function runWorkItems() {
   }
   await writeState({ status: 'running', phase: state.phase || 'starting', nextAction: state.nextAction || 'coding', featureIds: wanted })
   heartbeatTimer = setInterval(() => writeState().catch(() => {}), 15_000)
+  verifyFirstCache.set(options.workdir, await isVerifyFirst(options.workdir))
   const initial = await readFeatures()
   const selected = wanted.map((id) => initial.list.find((feature) => String(feature.id) === id))
   if (selected.some((feature) => !feature)) fail(`unknown Work Item id in --features: ${wanted.join(',')}`)
@@ -384,6 +507,10 @@ async function runWorkItems() {
       if (current.implementation !== true) {
         await writeState({ currentFeatureId: current.id, attempt, nextAction: 'coding', repairPlan })
         const coded = await runAgent('CODING', featurePrompt('CODING', current, attempt, repairPlan), current.id, attempt)
+        if (coded.ok && coded.parsed?.implementation === true) {
+          await updateFeature(options.workdir, current.id, { implementation: true })
+          commitPaths(options.workdir, [join(options.workdir, 'feature_list.json')], `chore(harness): record coding ${current.id}`)
+        }
         current = (await readFeatures()).list.find((item) => String(item.id) === String(original.id))
         if (!coded.ok || current.implementation !== true) {
           operationalFailures++
@@ -397,6 +524,10 @@ async function runWorkItems() {
       if (current.qa !== true) {
         await writeState({ nextAction: 'qa', phase: 'qa' })
         const checked = await runAgent('QA', featurePrompt('QA', current, attempt), current.id, attempt)
+        if (checked.ok && checked.parsed?.implementation === true && checked.parsed?.qa === true) {
+          await updateFeature(options.workdir, current.id, { implementation: true, qa: true })
+          commitPaths(options.workdir, [join(options.workdir, 'feature_list.json')], `chore(harness): record QA ${current.id}`)
+        }
         current = (await readFeatures()).list.find((item) => String(item.id) === String(original.id))
         if (!checked.ok && !checked.parsed) {
           operationalFailures++
@@ -447,7 +578,7 @@ async function runGoalReviewLocked() {
   const incomplete = list.filter((item) => item.integration !== true)
   if (incomplete.length) fail(`Goal Review requires every Work Item integrated; incomplete: ${incomplete.map((item) => item.id).join(', ')}`)
   state = await readJson(stateFile, {})
-  const dirtyBefore = git(['status', '--porcelain'], options.workdir).stdout.trim()
+  const dirtyBefore = git(['status', '--porcelain', '--', '.'], options.workdir).stdout.trim()
   if (dirtyBefore) fail('Goal Review requires a clean integrated main checkout')
   const headBefore = git(['rev-parse', 'HEAD'], options.workdir).stdout.trim()
   if (state.status === 'complete' && state.phase === 'complete' && state.reviewedHead === headBefore) {
@@ -458,7 +589,7 @@ async function runGoalReviewLocked() {
   const prompt = 'You are the independent Goal Review agent. Read project_specs.xml, especially Project Goal and every stable Acceptance Check. On integrated main, exercise every check and cross-feature primary journeys through a real browser or real HTTP. Do not trust existing flags. Do not modify product code. Return only JSON: {"goal":true|false,"summary":"...","acceptanceCheckIds":["AC-..."],"defects":["expected ...; observed ...; evidence ..."]}.'
   const reviewed = await runAgent('GOAL_REVIEW', prompt, 'goal', 1)
   const verdict = reviewed.parsed
-  const dirtyAfter = git(['status', '--porcelain'], options.workdir).stdout.trim()
+  const dirtyAfter = git(['status', '--porcelain', '--', '.'], options.workdir).stdout.trim()
   const headAfter = git(['rev-parse', 'HEAD'], options.workdir).stdout.trim()
   if (dirtyAfter || headAfter !== headBefore) {
     clearInterval(heartbeatTimer)

@@ -68,6 +68,13 @@ root as `PROJECT` and do not create the registry.
    reconcile only harness files (including the inventory); retain stable Acceptance Check IDs and preserve
    unrelated worktree changes.
 
+The planner writes `<mode>existing-codebase</mode>` into `project_specs.xml`
+during step 3. The generator honors it as **verify-first**: coding agents first
+exercise the Acceptance Checks against the existing code at a real boundary, set
+`implementation=true` with no code changes when they pass, and only repair the
+root cause when a check fails. This makes `/generator` a safe audit pass over a
+working codebase rather than a rewrite.
+
 Finish by listing the harness files created and tell the user to review
 each project-local `project_specs.xml`, then run `/generator` from that project
 directory when ready to build. At the Git root, print the registry as a routing

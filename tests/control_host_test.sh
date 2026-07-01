@@ -30,9 +30,6 @@ set -eu
 prompt=""; for arg in "$@"; do prompt=$arg; done
 case "$prompt" in
   *"Integrated Verification"*)
-    jq 'map(if .id=="WI-AC-001" then .implementation=true | .qa=true | .integration=true else . end)' feature_list.json >feature_list.json.tmp
-    mv feature_list.json.tmp feature_list.json
-    git add feature_list.json && git commit -qm integration
     printf '%s\n' '{"id":"WI-AC-001","implementation":true,"integration":true,"defects":[]}'
     ;;
   *"independent Goal Review agent"*)
@@ -40,15 +37,9 @@ case "$prompt" in
     printf '%s\n' '{"goal":true,"summary":"integrated goal observed","acceptanceCheckIds":["AC-001"],"defects":[]}'
     ;;
   *"coding-agent"*)
-    jq 'map(if .id=="WI-AC-001" then .implementation=true else . end)' feature_list.json >feature_list.json.tmp
-    mv feature_list.json.tmp feature_list.json
-    git add feature_list.json && git commit -qm coding
     printf '%s\n' '{"id":"WI-AC-001","implementation":true,"notes":"implemented"}'
     ;;
   *"qa-agent"*)
-    jq 'map(if .id=="WI-AC-001" then .implementation=true | .qa=true else . end)' feature_list.json >feature_list.json.tmp
-    mv feature_list.json.tmp feature_list.json
-    git add feature_list.json && git commit -qm qa
     printf '%s\n' '{"id":"WI-AC-001","implementation":true,"qa":true,"defects":[]}'
     ;;
 esac
@@ -67,6 +58,44 @@ EVENTS="$TMP/repo/.git/harness-control/events.jsonl"
 jq -e '.status == "complete" and .supervisorPid == null and .progress.integrated == 1' "$STATE" >/dev/null || { cat "$STATE"; exit 1; }
 jq -s -e 'any(.[]; .kind == "progress") and any(.[]; .kind == "goal_review_started") and any(.[]; .kind == "run_completed" and .immediate)' "$EVENTS" >/dev/null
 echo 'ok - supervisor claims, builds, verifies, releases, and runs governed Goal Review'
+
+mkdir -p "$TMP/installed/skills/harness-control-host/scripts"
+cp "$CONTROL" "$TMP/installed/skills/harness-control-host/scripts/harness-control.mjs"
+cp -R "$ROOT/skills/generator" "$TMP/installed/skills/harness-generator"
+git clone -q "$TMP/repo" "$TMP/namespaced"
+PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" "$NODE" \
+  "$TMP/installed/skills/harness-control-host/scripts/harness-control.mjs" run \
+  --repo "$TMP/namespaced" --host claude --poll-ms 250 --quota-workers 1 \
+  --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100
+jq -e '.status == "complete"' "$TMP/namespaced/.git/harness-control/state.json" >/dev/null
+echo 'ok - OpenCode namespaced control host resolves its generator sibling'
+
+mkdir -p "$TMP/monorepo/app"
+cp "$TMP/repo/project_specs.xml" "$TMP/monorepo/app/project_specs.xml"
+cp "$TMP/repo/feature_list.json" "$TMP/monorepo/app/feature_list.json"
+jq 'map(.implementation=false | .qa=false | .integration=false)' \
+  "$TMP/monorepo/app/feature_list.json" >"$TMP/monorepo/app/feature_list.json.tmp"
+mv "$TMP/monorepo/app/feature_list.json.tmp" "$TMP/monorepo/app/feature_list.json"
+git -C "$TMP/monorepo" init -b main -q
+git -C "$TMP/monorepo" config user.name test
+git -C "$TMP/monorepo" config user.email test@example.invalid
+git -C "$TMP/monorepo" add .
+git -C "$TMP/monorepo" commit -qm init
+touch "$TMP/monorepo/unrelated.txt"
+bash "$ROOT/skills/generator/claim.sh" select-claim \
+  "$TMP/monorepo/app" all '' 999999 >"$TMP/monorepo-claim.json"
+jq '.heartbeatEpoch=1' "$TMP/monorepo/.git/harness-runs/app--core.json" \
+  >"$TMP/monorepo/.git/harness-runs/app--core.json.tmp"
+mv "$TMP/monorepo/.git/harness-runs/app--core.json.tmp" \
+  "$TMP/monorepo/.git/harness-runs/app--core.json"
+PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" "$NODE" "$CONTROL" run \
+  --repo "$TMP/monorepo/app" --host claude --poll-ms 250 --quota-workers 1 \
+  --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100
+jq -e '.status == "complete" and .phase == "complete"' \
+  "$TMP/monorepo/.git/harness-runs/app--goal-review.json" >/dev/null
+jq -e '.status == "complete"' "$TMP/monorepo/.git/harness-control/app/state.json" >/dev/null
+echo 'ok - nested projects recover and complete project-namespaced Run State'
+test -f "$TMP/monorepo/unrelated.txt"
 
 "$NODE" "$CONTROL" start --repo "$TMP/repo" --host claude | jq -e '.started == false and .status == "complete"' >/dev/null
 git clone -q "$TMP/repo" "$TMP/detached"

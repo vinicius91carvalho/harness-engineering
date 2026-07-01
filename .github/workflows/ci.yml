@@ -9,7 +9,7 @@ jobs:
 
       - name: JSON valid
         run: |
-          jq empty .claude-plugin/*.json .codex-plugin/*.json .agents/plugins/marketplace.json config/*.json opencode.json
+          jq empty .claude-plugin/*.json .codex-plugin/*.json .agents/plugins/marketplace.json config/*.json opencode.json omnigent/harness-engineering/roles.example.json
 
       - name: Catalog and asset contracts
         run: |
@@ -29,6 +29,7 @@ jobs:
           bash tests/orchestrator_test.sh
           bash tests/control_host_test.sh
           bash tests/site_test.sh
+          bash tests/omnigent_test.sh
           bash tests/reconcile_test.sh
           bash tests/setup_inventory_test.sh
           bash tests/claim_test.sh
@@ -55,6 +56,7 @@ jobs:
       - run: bash tests/orchestrator_test.sh
       - run: bash tests/control_host_test.sh
       - run: bash tests/site_test.sh
+      - run: bash tests/omnigent_test.sh
       - run: bash tests/reconcile_test.sh
       - run: bash tests/setup_inventory_test.sh
       - run: bash tests/claim_test.sh

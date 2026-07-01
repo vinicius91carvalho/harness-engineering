@@ -155,8 +155,156 @@ grep -q 'Explicit Resume' "$BLOCKED_WT/harness-progress/core.md"
 grep -q 'apply the reviewed fallback' "$BLOCKED_WT/harness-progress/core.md"
 echo 'ok - explicit guidance is journaled and starts a fresh bounded Attempt cycle'
 
+mkdir -p "$TMP/omni/.harness"
+git -C "$TMP/omni" init -b main -q
+git -C "$TMP/omni" config user.name test
+git -C "$TMP/omni" config user.email test@example.invalid
+cp "$TMP/repo/project_specs.xml" "$TMP/omni/project_specs.xml"
+cat >"$TMP/omni/feature_list.json" <<'JSON'
+[{"id":"WI-AC-001","context":"core","description":"health works","steps":["verify health"],"acceptance_checks":["AC-001"],"depends_on":[],"implementation":false,"qa":false,"integration":false,"retries":0}]
+JSON
+cat >"$TMP/omni/.harness/roles.json" <<'JSON'
+{
+  "coding": [
+    {"harness":"claude","model":"rate-limit"},
+    {"harness":"opencode","model":"auth-fail"},
+    {"harness":"claude","model":"missing-model"},
+    {"harness":"claude","model":"missing-cli"},
+    {"harness":"opencode","model":"launch-fail"},
+    {"harness":"codex"}
+  ],
+  "validation": [{"harness":"codex"},{"harness":"claude"}],
+  "repairPlanning": [{"harness":"opencode"}],
+  "goalReview": [{"harness":"claude"},{"harness":"codex"}]
+}
+JSON
+git -C "$TMP/omni" add . && git -C "$TMP/omni" commit -qm init
+
+cat >"$TMP/bin/omni" <<'SH'
+#!/bin/sh
+set -eu
+target=$2; shift 2; model=; prompt=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --model) model=$2; shift 2 ;;
+    --prompt) prompt=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+harness=$(basename "$target")
+case "$model" in
+  rate-limit) echo 'HTTP 429 rate limit' >&2; exit 1 ;;
+  auth-fail) echo 'authentication credential rejected' >&2; exit 1 ;;
+  missing-model) echo 'model is unavailable' >&2; exit 1 ;;
+  missing-cli) echo 'claude: command not found' >&2; exit 127 ;;
+  launch-fail) echo 'worker launch failed' >&2; exit 1 ;;
+esac
+kind=unknown
+case "$prompt" in
+  *"orchestrator repair planner"*) kind=repair ;;
+  *"Integrated Verification"*) kind=integration ;;
+  *"coding-agent"*) kind=coding ;;
+  *"qa-agent"*) kind=qa ;;
+esac
+printf '%s %s %s\n' "$kind" "$harness" "${model:-default}" >>"$HARNESS_TEST_OMNI_LOG"
+tmp="$PWD/feature_list.json.tmp"
+commit() { git add feature_list.json; git commit -qm "$1"; }
+case "$kind" in
+  repair) printf '%s\n' '{"summary":"repair","rootCause":"defect","actions":["fix"],"validation":["check"]}' ;;
+  coding)
+    jq 'map(if .id=="WI-AC-001" then .implementation=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
+    commit coding; printf '%s\n' '{"id":"WI-AC-001","implementation":true}' ;;
+  qa)
+    count=0; [ ! -f "$HARNESS_TEST_OMNI_QA" ] || count=$(cat "$HARNESS_TEST_OMNI_QA")
+    count=$((count + 1)); printf '%s' "$count" >"$HARNESS_TEST_OMNI_QA"
+    if [ "$count" -eq 1 ]; then
+      jq 'map(if .id=="WI-AC-001" then .implementation=false | .qa=false else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
+      commit qa-defect; printf '%s\n' '{"id":"WI-AC-001","qa":false,"implementation":false,"defects":["product defect"]}'
+    else
+      jq 'map(if .id=="WI-AC-001" then .qa=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
+      commit qa-pass; printf '%s\n' '{"id":"WI-AC-001","qa":true,"implementation":true,"defects":[]}'
+    fi ;;
+  integration)
+    jq 'map(if .id=="WI-AC-001" then .integration=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
+    commit integration; printf '%s\n' '{"id":"WI-AC-001","integration":true,"implementation":true,"defects":[]}' ;;
+esac
+SH
+chmod +x "$TMP/bin/omni"
+
+bash "$ROOT/skills/generator/claim.sh" select-claim "$TMP/omni" all '' 5001 >"$TMP/omni-claim.json"
+OMNI_WT=$(jq -r .worktree "$TMP/omni-claim.json")
+PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" HARNESS_OMNIGENT_BUNDLE="$ROOT/omnigent/harness-engineering" \
+  HARNESS_TEST_OMNI_LOG="$TMP/omni.log" HARNESS_TEST_OMNI_QA="$TMP/omni-qa" \
+  "$NODE" "$ROOT/skills/generator/orchestrator.mjs" --host claude --repo "$TMP/omni" \
+  --workdir "$OMNI_WT" --context core --port 5170 --features WI-AC-001 \
+  --claim-script "$ROOT/skills/generator/claim.sh" >"$TMP/omni-result.json"
+jq -e '.passed == 1' "$TMP/omni-result.json" >/dev/null
+OMNI_STATE="$TMP/omni/.git/harness-runs/core.json"
+jq -e '[.routeHistory[] | select(.kind=="CODING" and .outcome=="fallback") | .fallbackReason] | contains(["rate-limited","authentication-failure","model-unavailable","launch-failure"])' "$OMNI_STATE" >/dev/null
+jq -e '.routeHistory | any(.kind=="CODING" and .harness=="codex" and .outcome=="selected")' "$OMNI_STATE" >/dev/null
+jq -e '.routeHistory | any((.kind=="QA" or .kind=="INTEGRATION_QA") and .harness=="claude" and .independence=="independent-harness")' "$OMNI_STATE" >/dev/null
+test "$(grep -c '^qa claude ' "$TMP/omni.log")" -eq 2
+grep -q 'route=.*"harness":"claude"' "$TMP/omni/.git/harness-runs/evidence/core/WI-AC-001-2-qa.log"
+grep -q 'command not found' "$TMP/omni/.git/harness-runs/evidence/core/WI-AC-001-2-coding.log"
+echo 'ok - Omnigent routes ordered candidates and records provider/model fallbacks'
+echo 'ok - validation prefers a different actual harness and product defects enter the repair loop'
+
+mkdir -p "$TMP/single/.harness"
+git -C "$TMP/single" init -b main -q
+git -C "$TMP/single" config user.name test
+git -C "$TMP/single" config user.email test@example.invalid
+cp "$TMP/repo/project_specs.xml" "$TMP/single/project_specs.xml"
+cat >"$TMP/single/feature_list.json" <<'JSON'
+[{"id":"WI-AC-001","context":"core","description":"done","acceptance_checks":["AC-001"],"depends_on":[],"implementation":true,"qa":true,"integration":true,"retries":0}]
+JSON
+cat >"$TMP/single/.harness/roles.json" <<'JSON'
+{"coding":["codex"],"validation":["codex"],"repairPlanning":["codex"],"goalReview":["codex"]}
+JSON
+git -C "$TMP/single" add . && git -C "$TMP/single" commit -qm init
+PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" HARNESS_OMNIGENT_BUNDLE="$ROOT/omnigent/harness-engineering" \
+  HARNESS_TEST_OMNI_LOG="$TMP/omni.log" HARNESS_TEST_OMNI_QA="$TMP/omni-qa" \
+  "$NODE" "$ROOT/skills/generator/orchestrator.mjs" --host claude --repo "$TMP/single" \
+  --workdir "$TMP/single" --mode goal-review --context goal-review --port 5170 \
+  --claim-script "$ROOT/skills/generator/claim.sh" >"$TMP/single-result.json" || true
+jq -e '.agentRoute.harness == "codex" and .agentRoute.independence == "same-harness-fallback" and .agentRoute.fallbackReason == "no-different-harness-available"' "$TMP/single/.git/harness-runs/goal-review.json" >/dev/null
+echo 'ok - single-harness Omnigent records same-harness validation fallback'
+
 if "$NODE" "$ROOT/skills/generator/orchestrator.mjs" --host invalid --workdir "$TMP/repo" 2>"$TMP/err"; then
   echo 'not ok - invalid host accepted' >&2; exit 1
 fi
 grep -q 'claude, codex, or opencode' "$TMP/err"
 echo 'ok - one state machine exposes only the three thin host adapters'
+
+mkdir -p "$TMP/cancel/.harness"
+git -C "$TMP/cancel" init -b main -q
+git -C "$TMP/cancel" config user.name test
+git -C "$TMP/cancel" config user.email test@example.invalid
+cp "$TMP/repo/project_specs.xml" "$TMP/cancel/project_specs.xml"
+cp "$TMP/repo/feature_list.json" "$TMP/cancel/feature_list.json"
+cat >"$TMP/cancel/.harness/roles.json" <<'JSON'
+{"coding":["opencode"],"validation":["codex"],"repairPlanning":["codex"],"goalReview":["codex"]}
+JSON
+git -C "$TMP/cancel" add . && git -C "$TMP/cancel" commit -qm init
+cat >"$TMP/bin/omni" <<'SH'
+#!/bin/sh
+sleep 300 &
+echo "$!" >"$HARNESS_TEST_DESCENDANT_PID"
+wait
+SH
+chmod +x "$TMP/bin/omni"
+bash "$ROOT/skills/generator/claim.sh" select-claim "$TMP/cancel" all '' 6001 >"$TMP/cancel-claim.json"
+CANCEL_WT=$(jq -r .worktree "$TMP/cancel-claim.json")
+PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" HARNESS_TEST_DESCENDANT_PID="$TMP/descendant.pid" \
+  "$NODE" "$ROOT/skills/generator/orchestrator.mjs" --host codex --repo "$TMP/cancel" \
+  --workdir "$CANCEL_WT" --context core --port 5170 --features WI-AC-001 \
+  --claim-script "$ROOT/skills/generator/claim.sh" >"$TMP/cancel-result.json" &
+ORCHESTRATOR_PID=$!
+for _ in $(seq 1 100); do test -s "$TMP/descendant.pid" && break; sleep 0.05; done
+test -s "$TMP/descendant.pid"
+DESCENDANT_PID=$(cat "$TMP/descendant.pid")
+kill -TERM "$ORCHESTRATOR_PID"
+wait "$ORCHESTRATOR_PID" || true
+if kill -0 "$DESCENDANT_PID" 2>/dev/null; then
+  echo 'not ok - interrupted Omnigent descendant remained alive' >&2; exit 1
+fi
+echo 'ok - interruption terminates the complete Omnigent process group'

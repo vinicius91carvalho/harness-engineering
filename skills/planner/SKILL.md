@@ -13,6 +13,10 @@ pipeline turns this file into a working, QA'd application, so it must be complet
 The spec owns the **Project Goal** and its stable **Acceptance Checks**; generated
 work items are only an execution queue.
 
+Always load and follow the bundled `grilling` skill before finalizing a new or
+changed plan. Resolve one decision at a time; inspect the repository instead of
+asking questions it can answer.
+
 Use the current host's native planning surface and configured model. Do not force
 a vendor model ID. Do not write application code or scaffold anything; only
 produce `project_specs.xml` in the user's current working directory.
@@ -33,7 +37,9 @@ Acceptance Check in the owning project instead.
 - **Existing Codebase** — cwd has application files but no `project_specs.xml` →
   inspect the repository, then build the whole spec from the template around its
   current behavior, architecture, commands, tests, and the user's stated goal.
-  Do not invent a replacement stack or describe unrequested rewrites.
+  Do not invent a replacement stack or describe unrequested rewrites. Insert
+  `<mode>existing-codebase</mode>` immediately after `<project_name>` so the
+  generator runs Work Items verify-first (see §Verify-first mode).
 - **Feature** — `project_specs.xml` already exists → ADD only the new feature.
   Append new `<core_features>` and `<acceptance_check>` entries (and any new tables / endpoints / UI it
   needs). **Never rewrite, reorder, or delete existing content** — the generator

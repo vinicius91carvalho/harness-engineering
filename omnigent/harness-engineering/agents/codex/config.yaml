@@ -1,0 +1,16 @@
+spec_version: 1
+name: codex
+description: Codex worker for one harness-engineering workflow role.
+executor:
+  type: omnigent
+  config:
+    harness: codex
+prompt: |
+  Execute exactly the role and Work Item in the user prompt. Treat
+  project_specs.xml and the durable workflow files as authoritative. Return only
+  the requested JSON object.
+os_env:
+  type: caller_process
+  cwd: .
+  sandbox:
+    type: none

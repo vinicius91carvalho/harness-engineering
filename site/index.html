@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Install and run Harness Engineering end to end with Hermes, Telegram, and OpenCode.">
+  <meta name="description" content="Install and run Harness Engineering with optional Omnigent mobile control and OpenCode-first routing.">
   <meta name="theme-color" content="#0d1117">
   <title>Harness Engineering — setup and operations</title>
   <link rel="stylesheet" href="styles.css">
@@ -15,7 +15,7 @@
     <nav aria-label="Primary navigation">
       <a href="#install">Install</a>
       <a href="#run">Run</a>
-      <a href="#telegram">Telegram</a>
+      <a href="#mobile">Mobile</a>
       <a href="#verify">Verify</a>
       <a href="https://github.com/vinicius91carvalho/harness-engineering">GitHub ↗</a>
     </nav>
@@ -25,9 +25,9 @@
     <section class="hero" id="top">
       <img src="https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/assets/banner.svg" alt="Harness Engineering, with pixel-art Gandalf">
       <div>
-        <p class="kicker">Hermes + Telegram + OpenCode</p>
+        <p class="kicker">Omnigent + Tailscale + OpenCode</p>
         <h1>One path from idea to verified code.</h1>
-        <p>Hermes receives the goal and reports through Telegram. OpenCode runs the workers. The harness owns planning, parallel work, QA, retries, integration, and the final Goal Review.</p>
+        <p>Omnigent provides the optional web and mobile surface. OpenCode is the preferred worker. The harness still owns planning, parallel work, QA, retries, integration, and Goal Review.</p>
         <a class="button" href="#install">Start setup</a>
       </div>
     </section>
@@ -38,82 +38,70 @@
       <p class="step">Before you start</p>
       <h2>What runs where</h2>
       <div class="roles">
-        <article><strong>Telegram</strong><span>Your remote chat and notification channel.</span></article>
-        <article><strong>Hermes</strong><span>The always-on control host that receives goals and relays events.</span></article>
+        <article><strong>Omnigent</strong><span>The optional local web, mobile, and multi-harness surface.</span></article>
+        <article><strong>Tailscale</strong><span>Private access from your phone without exposing the server publicly.</span></article>
         <article><strong>Harness</strong><span>The durable scheduler, state machine, QA loop, and evidence store.</span></article>
         <article><strong>OpenCode</strong><span>The authenticated worker CLI that edits and tests the project.</span></article>
       </div>
-      <p class="note">Run all commands on the same Linux, macOS, or WSL machine that has the target Git repository. You need Git, Bash, Node.js, <code>jq</code>, and an LLM provider for both Hermes and OpenCode.</p>
+      <p class="note">Run commands on the machine containing the repository. You need Git, Bash, Node.js, <code>jq</code>, one supported worker CLI, and its model credentials. Omnigent and Tailscale are optional.</p>
     </section>
 
     <section class="topic" id="install">
       <p class="step">Step 1</p>
-      <h2>Install Hermes and OpenCode</h2>
-      <p>Install both CLIs, reload your shell, then configure one model provider in each.</p>
-      <pre><code>curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
-curl -fsSL https://opencode.ai/install | bash
-
+      <h2>Install OpenCode</h2>
+      <p>OpenCode writes the code in the tested setup. Codex plans and performs independent checks. Authenticate both CLIs before continuing.</p>
+      <pre><code>curl -fsSL https://opencode.ai/install | bash
 source ~/.zshrc  # use ~/.bashrc when running Bash
-hermes setup
-opencode         # then run /connect and exit</code></pre>
-      <div class="output"><strong>Check</strong><code>hermes doctor</code><code>opencode --version</code></div>
-      <p class="files"><strong>Created:</strong> <code>~/.hermes/config.yaml</code>, <code>~/.hermes/.env</code>, and OpenCode's user configuration.</p>
+opencode         # run /connect, choose a provider, then exit</code></pre>
+      <div class="output"><strong>Check</strong><code>opencode --version</code></div>
+      <p class="files"><strong>Also check:</strong> <code>codex --version</code>. Claude Code can be used instead when it is authenticated.</p>
     </section>
 
     <section class="topic" id="plugin">
       <p class="step">Step 2</p>
-      <h2>Install the harness for OpenCode</h2>
-      <p>The non-interactive command installs only the harness and targets OpenCode explicitly.</p>
-      <pre><code>curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh \
-  | sh -s -- --cli opencode --no</code></pre>
-      <div class="output"><strong>Check</strong><code>test -f ~/.config/opencode/skills/harness-planner/SKILL.md</code><code>test -f ~/.config/opencode/commands/harness-generator.md</code></div>
-      <p class="files"><strong>Created:</strong> namespaced skills, agents, and commands under <code>~/.config/opencode/</code>.</p>
+      <h2>Install the harness and optional Omnigent bundle</h2>
+      <p>Run the installer normally. Keep <code>harness</code> checked, toggle <code>omnigent</code>, and confirm once.</p>
+      <pre><code>curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh</code></pre>
+      <div class="output"><strong>Check</strong><code>test -f ~/.config/opencode/skills/harness-planner/SKILL.md</code><code>test -f ~/.omnigent/agents/harness-engineering/config.yaml</code></div>
+      <p class="files"><strong>Native-only alternative:</strong> add <code>--cli opencode --no</code> when you do not want Omnigent.</p>
     </section>
 
-    <section class="topic" id="hermes">
+    <section class="topic" id="bundle">
       <p class="step">Step 3</p>
-      <h2>Give Hermes the control skills</h2>
-      <p>Keep one checkout as the source of truth and symlink the three sibling skills. Their relative script paths must stay together.</p>
-      <pre><code>git clone https://github.com/vinicius91carvalho/harness-engineering.git \
-  ~/harness-engineering
-mkdir -p ~/.hermes/skills
-ln -s ~/harness-engineering/skills/control-host ~/.hermes/skills/control-host
-ln -s ~/harness-engineering/skills/planner ~/.hermes/skills/planner
-ln -s ~/harness-engineering/skills/generator ~/.hermes/skills/generator
-
-hermes skills list</code></pre>
-      <p class="files"><strong>Created:</strong> three links under <code>~/.hermes/skills/</code>. The scripts remain in <code>~/harness-engineering/skills/</code>.</p>
+      <h2>Choose project role models</h2>
+      <p>Save this small file as <code>.harness/roles.json</code>. It says: OpenCode codes; Codex checks.</p>
+      <pre><code>{
+  "coding": [{"harness": "opencode"}],
+  "validation": [{"harness": "codex"}],
+  "repairPlanning": [{"harness": "codex"}],
+  "goalReview": [{"harness": "codex"}]
+}</code></pre>
+      <p class="files"><strong>More choices:</strong> copy <code>~/.omnigent/agents/harness-engineering/roles.example.json</code> and edit its ordered fallbacks.</p>
     </section>
 
-    <section class="topic" id="telegram">
+    <section class="topic" id="mobile">
       <p class="step">Step 4</p>
-      <h2>Connect Hermes to Telegram</h2>
-      <ol>
-        <li>In Telegram, open <strong>@BotFather</strong>, run <code>/newbot</code>, and copy the bot token.</li>
-        <li>Run the gateway wizard, select Telegram, and paste the token.</li>
-        <li>Install and start the gateway service, then message your bot.</li>
-        <li>If Hermes returns a pairing code, approve it locally.</li>
-      </ol>
-      <pre><code>hermes gateway setup
-hermes gateway install
-hermes gateway start
-hermes gateway status
-
-# Only when the bot sends a pairing code:
-hermes pairing approve telegram YOUR_PAIRING_CODE</code></pre>
-      <p class="warning"><strong>Security:</strong> do not enable public access. Pair your own account or set <code>TELEGRAM_ALLOWED_USERS</code> in <code>~/.hermes/.env</code>.</p>
-      <p class="files"><strong>Created:</strong> Telegram credentials in <code>~/.hermes/.env</code>, gateway settings, and a user service.</p>
+      <h2>Connect your phone privately</h2>
+      <p>Install Tailscale on the server and phone, sign both into the same tailnet, and proxy the local Omnigent server over private HTTPS.</p>
+      <pre><code>OMNIGENT_WS_ALLOWED_ORIGINS=https://YOUR-MACHINE.ts.net \
+OMNIGENT_ACCOUNTS_BASE_URL=https://YOUR-MACHINE.ts.net \
+  omni server start
+tailscale serve https / http://localhost:8000
+omni host</code></pre>
+      <p class="warning"><strong>Security:</strong> use <code>tailscale serve</code>, not Funnel, for tailnet-only access. The server machine must remain awake.</p>
+      <p class="files"><strong>Open:</strong> <code>https://YOUR-MACHINE.ts.net</code> on the phone. Omnigent's mobile UI carries chat, files, status, and Input Requests.</p>
     </section>
 
     <section class="topic" id="plan">
       <p class="step">Step 5</p>
-      <h2>Plan the project</h2>
-      <p>Start OpenCode in the target repository. Invoke the namespaced planner command and describe observable user outcomes.</p>
-      <pre><code>cd /path/to/your-project
-opencode
+      <h2>Plan with Codex</h2>
+      <p>Start Omnigent from the Git root and ask Codex to create the project specification. Describe behavior that can be tested.</p>
+      <pre><code>cd /path/to/git-root
+omni run ~/.omnigent/agents/harness-engineering --harness codex
 
-/harness-planner Build a notes app where a user can create a note,
-reload the page, and still find it.</code></pre>
+Use the planning skill for /absolute/path/to/project.
+Build a notes app where a user can create a note, reload,
+and still find it. Validate project_specs.xml.</code></pre>
       <p>Review the generated checks before continuing. Each check should describe behavior that QA can actually observe.</p>
       <p class="files"><strong>Created:</strong> <code>project_specs.xml</code> — the goal, design decisions, and stable Acceptance Checks.</p>
       <aside class="note">
@@ -156,63 +144,60 @@ cd /work/acme/services/api
     <section class="topic" id="scaffold">
       <p class="step">Step 6</p>
       <h2>Create the execution queue</h2>
-      <p>In the same OpenCode session, invoke the generator once. It initializes Git state, maps checks into Work Items, and can start the first worker. Skip this step if <code>/harness-setup</code> already created the queue.</p>
-      <pre><code>cd /path/to/your-project  # registered project directory in a monorepo
-/harness-generator</code></pre>
+      <p>Ask Omnigent to reconcile the specification before starting. This creates the queue and checks that every Acceptance Check is mapped.</p>
+      <pre><code>Reconcile project_specs.xml for /absolute/path/to/project.
+Confirm feature_list.json passes the generator check.</code></pre>
       <p class="files"><strong>Created:</strong> <code>feature_list.json</code>, <code>CONTEXT.md</code>, <code>harness-progress/</code>, and Run State under <code>.git/harness-runs/</code>.</p>
     </section>
 
     <section class="topic" id="run">
       <p class="step">Step 7</p>
-      <h2>Hand the long run to Hermes</h2>
-      <p>From Telegram, send Hermes a concrete instruction. The skill inspects existing state, starts the detached supervisor, and uses OpenCode for worker processes.</p>
-      <pre><code>/control-host
-Run the harness for /path/to/your-project with OpenCode workers.
-Use at most 2 workers. Report progress and blockers in this chat.</code></pre>
-      <p>Hermes should run the equivalent of:</p>
-      <pre><code>CONTROL=~/harness-engineering/skills/control-host/scripts/harness-control.mjs
-node "$CONTROL" start --repo /path/to/your-project --host opencode \
-  --max-workers 2 --quota-workers 2
-node "$CONTROL" status --repo /path/to/your-project</code></pre>
-      <p class="files"><strong>Created:</strong> supervisor state and events under <code>.git/harness-control/</code>; per-context branches, worktrees, journals, and evidence as work proceeds.</p>
+      <h2>Start or resume from Omnigent</h2>
+      <p>Start from the Git root. Name the exact project directory, especially in a monorepo.</p>
+      <pre><code>cd /path/to/git-root
+omni run ~/.omnigent/agents/harness-engineering --harness codex
+
+Act as the Control Host for /absolute/path/to/project.
+Start or resume the harness. Use the project role file.
+Continue until input is needed or run_completed is persisted.</code></pre>
+      <p>The engine owns claims, retries, merges, Integrated Verification, and Goal Review. Omnigent is the control screen; it does not create another scheduler.</p>
+      <p class="files"><strong>Created:</strong> per-context branches, worktrees, journals, Run State, routing evidence, and the existing integration checkpoints.</p>
     </section>
 
     <section class="topic" id="notify">
       <p class="step">Step 8</p>
-      <h2>Keep Telegram synchronized</h2>
-      <p>The control-host skill tells Hermes to poll durable events at least once per minute, deliver them, then acknowledge them. Ask Hermes to create that recurring job:</p>
-      <pre><code>Poll harness events for /path/to/your-project every minute using the
-control-host skill. Deliver progress and input requests here. Acknowledge
-an event only after it has been delivered.</code></pre>
-      <p>For direct inspection, these are the underlying commands:</p>
-      <pre><code>node "$CONTROL" events --repo /path/to/your-project \
-  --consumer hermes-telegram
-node "$CONTROL" ack --repo /path/to/your-project \
-  --consumer hermes-telegram --event EVENT_ID</code></pre>
-      <p class="files"><strong>Created:</strong> the Hermes cron entry in <code>~/.hermes/cron/jobs.json</code> and the delivery cursor in <code>.git/harness-control/cursors/hermes-telegram.json</code>.</p>
+      <h2>Answer Input Requests from mobile</h2>
+      <p>The Omnigent status and Input Request skills read durable state. A reply must target the blocked request and enter the existing explicit Resume path.</p>
+      <pre><code>Show current status for /path/to/your-project.
+For Input Request EVENT_ID, retry with this guidance: ...</code></pre>
+      <p>Native operation remains available through <code>/harness-generator</code> and the detached <code>control-host</code> supervisor; Omnigent does not own a second scheduler.</p>
+      <p class="files"><strong>Durability:</strong> unanswered requests remain in Run State and evidence even if the browser, phone, or Omnigent session disconnects.</p>
     </section>
 
     <section class="topic" id="verify">
       <p class="step">Step 9</p>
       <h2>Verify the whole chain</h2>
+      <pre><code>CONTROL=~/.config/opencode/skills/harness-control-host/scripts/harness-control.mjs</code></pre>
       <div class="checks">
-        <article><span>1</span><div><strong>Gateway is online</strong><code>hermes gateway status</code></div></article>
-        <article><span>2</span><div><strong>OpenCode is the worker</strong><code>node "$CONTROL" status --repo /path/to/your-project</code></div></article>
-        <article><span>3</span><div><strong>The plan is valid</strong><code>node ~/harness-engineering/skills/generator/reconcile.mjs /path/to/your-project --check</code></div></article>
-        <article><span>4</span><div><strong>Telegram receives events</strong><code>node "$CONTROL" events --repo /path/to/your-project --consumer hermes-telegram</code></div></article>
-        <article><span>5</span><div><strong>The goal actually passed</strong><p>Wait for a durable <code>run_completed</code> event with <code>goal:true</code>. An empty queue or a confident agent message is not completion.</p></div></article>
+        <article><span>1</span><div><strong>The supervisor finished</strong><code>node "$CONTROL" status --repo /path/to/project</code><p>Look for <code>status: complete</code> and <code>supervisorPid: null</code>.</p></div></article>
+        <article><span>2</span><div><strong>The role config is valid</strong><code>jq . .harness/roles.json</code></div></article>
+        <article><span>3</span><div><strong>The plan is valid</strong><code>node ~/.config/opencode/skills/harness-generator/reconcile.mjs /path/to/your-project --check</code></div></article>
+        <article><span>4</span><div><strong>All three checks passed</strong><code>jq 'all(.[]; .implementation and .qa and .integration)' /path/to/project/feature_list.json</code></div></article>
+        <article><span>5</span><div><strong>Routing is recorded</strong><code>rg '^route=' .git/harness-runs/evidence</code></div></article>
+        <article><span>6</span><div><strong>The goal actually passed</strong><code>node "$CONTROL" events --repo /path/to/project --consumer manual-check</code><p>Wait for a durable event whose <code>kind</code> is <code>run_completed</code>. An empty queue or an agent message is not completion.</p></div></article>
       </div>
     </section>
 
     <section class="topic" id="operate">
       <p class="step">Operations</p>
       <h2>Inspect, pause, resume, or stop</h2>
-      <pre><code>node "$CONTROL" status --repo /path/to/your-project
+      <pre><code>CONTROL=~/.config/opencode/skills/harness-control-host/scripts/harness-control.mjs
+node "$CONTROL" status --repo /path/to/your-project
 node "$CONTROL" capacity --repo /path/to/your-project --host opencode
 node "$CONTROL" pause  --repo /path/to/your-project
 node "$CONTROL" resume --repo /path/to/your-project
 node "$CONTROL" stop   --repo /path/to/your-project</code></pre>
-      <p>If a worker blocks, reply in Telegram with guidance tied to the Input Request event ID. The harness preserves the branch, worktree, defect report, repair plan, and evidence.</p>
+      <p>If a worker blocks, answer the exact Input Request in Omnigent or resume natively with explicit guidance. The harness preserves the branch, worktree, defect report, repair plan, and evidence.</p>
     </section>
 
     <section class="topic compact" id="files">
@@ -225,8 +210,7 @@ node "$CONTROL" stop   --repo /path/to/your-project</code></pre>
           <tr><td><code>feature_list.json</code></td><td>What is ready, running, or verified.</td></tr>
           <tr><td><code>harness-progress/&lt;context&gt;.md</code></td><td>Human-readable workflow journal.</td></tr>
           <tr><td><code>.git/harness-runs/</code></td><td>Worker state, attempts, and evidence.</td></tr>
-          <tr><td><code>.git/harness-control/state.json</code></td><td>Supervisor, capacity, and pending input.</td></tr>
-          <tr><td><code>.git/harness-control/events.jsonl</code></td><td>Ordered notifications, including completion.</td></tr>
+          <tr><td><code>.git/harness-control/</code></td><td>Project-namespaced supervisor state, pending input, and ordered notifications.</td></tr>
         </tbody>
       </table>
     </section>

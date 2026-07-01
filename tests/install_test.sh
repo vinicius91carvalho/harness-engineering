@@ -14,6 +14,13 @@ printf '%s %s\n' "$(basename "$0")" "$*" >>"$HARNESS_TEST_LOG"
 EOF
   chmod +x "$TMP/bin/$cli"
 done
+for cli in omni codebase-memory-mcp; do
+  cat >"$TMP/bin/$cli" <<'EOF'
+#!/bin/sh
+printf '%s %s\n' "$(basename "$0")" "$*" >>"$HARNESS_TEST_LOG"
+EOF
+  chmod +x "$TMP/bin/$cli"
+done
 
 export PATH="$TMP/bin:/usr/bin:/bin"
 export HOME="$TMP/home"
@@ -52,6 +59,8 @@ after=$(find "$HOME" -mindepth 1 -print | sort)
 [ "$before" = "$after" ] || fail 'dry-run wrote into HOME'
 [ ! -s "$HARNESS_TEST_LOG" ] || fail 'dry-run executed a host command'
 grep -q 'codebase-memory-mcp' "$TMP/out" || fail 'dry-run should describe memory integration'
+grep -q 'official runtime installer' "$TMP/out" || fail 'dry-run should describe Omnigent runtime installation'
+grep -q '.omnigent/agents/harness-engineering' "$TMP/out" || fail 'dry-run should describe the Omnigent bundle destination'
 grep -q 'configure context7 MCP for:claude codex opencode' "$TMP/out" || fail 'Context7 should target every host'
 grep -q 'configure playwright MCP for:claude codex opencode' "$TMP/out" || fail 'Playwright should target every host'
 grep -q 'MCP inventory for:claude codex opencode' "$TMP/out" || fail 'MCP inventory should target every selected host'
@@ -62,7 +71,7 @@ pass 'dry-run performs no writes or host commands'
 : >"$HARNESS_TEST_LOG"
 "$ROOT/install.sh" --cli claude --no </dev/null >"$TMP/out"
 grep -q '^claude plugin marketplace' "$HARNESS_TEST_LOG" || fail 'Claude marketplace command missing'
-grep -q '^claude plugin install harness@harness-engineering --scope user$' "$HARNESS_TEST_LOG" || fail 'Claude plugin command is not native'
+grep -q '^claude plugin update harness@harness-engineering --scope user$' "$HARNESS_TEST_LOG" || fail 'Claude plugin refresh command is missing'
 if grep -Eq '^(codex|opencode) ' "$HARNESS_TEST_LOG"; then fail 'unselected host was invoked'; fi
 pass 'only the selected Claude host is changed'
 
@@ -86,6 +95,17 @@ second=$(find "$HOME/.config/opencode" -type f -exec shasum -a 256 {} \; | sort 
 [ "$first" = "$second" ] || fail 'repeated OpenCode install is not idempotent'
 [ ! -s "$HARNESS_TEST_LOG" ] || fail 'OpenCode asset install should not invoke another host'
 pass 'OpenCode assets are namespaced and idempotent'
+
+: >"$HARNESS_TEST_LOG"
+"$ROOT/install.sh" --cli claude --yes </dev/null >"$TMP/out" 2>"$TMP/err"
+test -f "$HOME/.omnigent/agents/harness-engineering/config.yaml" || fail 'Omnigent bundle config missing'
+test -f "$HOME/.omnigent/agents/harness-engineering/agents/opencode/config.yaml" || fail 'Omnigent OpenCode worker missing'
+test -f "$HOME/.omnigent/agents/harness-engineering/roles.example.json" || fail 'Omnigent role example missing'
+first=$(find "$HOME/.omnigent/agents/harness-engineering" -type f -exec shasum -a 256 {} \; | sort | shasum -a 256)
+"$ROOT/install.sh" --cli claude --yes </dev/null >"$TMP/out" 2>"$TMP/err"
+second=$(find "$HOME/.omnigent/agents/harness-engineering" -type f -exec shasum -a 256 {} \; | sort | shasum -a 256)
+[ "$first" = "$second" ] || fail 'repeated Omnigent bundle install is not idempotent'
+pass 'Omnigent bundle installation is complete and idempotent'
 
 if [ -n "$SYSTEM_NODE" ]; then
   printf '%s\n' '{ // comment' '  "url": "https://example.test/a//b",' '  "items": [1, 2,], /* block */' '}' \

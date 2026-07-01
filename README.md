@@ -19,7 +19,7 @@
 Codex. It keeps long-running AI work resumable, independently checked, and
 grounded in durable files instead of chat history.
 
-For a complete Hermes + Telegram + OpenCode walkthrough, use the
+For a complete Omnigent + Tailscale + OpenCode walkthrough, use the
 **[step-by-step setup guide](https://vinicius91carvalho.github.io/harness-engineering/)**.
 
 ### Why use this harness?
@@ -54,8 +54,13 @@ curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineeri
 ```
 
 The installer detects available hosts and lets you choose the harness, optional
-plugins, MCP servers, shared configuration, and status line. Repeated runs are
-safe.
+Omnigent control surface, plugins, MCP servers, shared configuration, and status
+line. Repeated runs refresh installed plugins safely. Choosing `omnigent` uses
+its official runtime installer when needed and refreshes the bundle at
+`~/.omnigent/agents/harness-engineering`.
+
+For the tested Omnigent workflow, authenticate OpenCode and Codex first. Keep
+`harness` checked in the installer, toggle `omnigent`, then confirm once.
 
 For non-interactive OpenCode setup:
 
@@ -77,7 +82,7 @@ The harness has five user-facing skills:
 | `/harness:planner` | Turn an idea into `project_specs.xml` with stable Acceptance Checks. |
 | `/harness:generator` | Build, independently test, integrate, retry, and resume the work. |
 | `/harness:evaluator` | Run the final Goal Review against integrated `main`. |
-| `/harness:control-host` | Let Hermes, nanobot, or pi supervise long-running workers and notifications. |
+| `/harness:control-host` | Run the native detached supervisor and durable notification interface. |
 
 ```text
 idea → project_specs.xml → feature_list.json → coding → QA → integration → Goal Review
@@ -172,6 +177,7 @@ specification only when it has an independently releasable goal. To operate a
 project through the long-running control host, pass that project directory:
 
 ```sh
+CONTROL=~/.config/opencode/skills/harness-control-host/scripts/harness-control.mjs
 node "$CONTROL" start --repo /work/acme/services/api --host opencode
 ```
 
@@ -192,11 +198,98 @@ node "$CONTROL" start --repo /work/acme/services/api --host opencode
    checks against the combined product. Only actual unmerged paths invoke the
    conflict resolver; other merge failures remain operational errors.
 7. **Review the goal:** after every Work Item integrates, an independent Goal
-   Review exercises the whole specification. Only persisted `goal:true` means done.
+   Review exercises the whole specification. Completion requires a complete Goal
+   Review Run State and a persisted `run_completed` control event.
+
+The orchestrator persists successful structured coding, QA, and integrated-QA
+results into `feature_list.json`; workers do not need to duplicate those flag
+writes for the workflow to advance.
+
+For a nested registered project, Goal Review requires that project path to be
+clean but ignores unrelated monorepo changes outside it.
 
 Multiple generator sessions may process different ready contexts concurrently.
 If a session closes, running the generator again resumes durable state instead of
 starting the project over.
+
+### Optional Omnigent routing and mobile control
+
+Omnigent is an optional control screen and worker router. Without it, Claude
+Code, Codex, and OpenCode still run the same workflow directly.
+
+Use this small role file when OpenCode should write code and Codex should do the
+independent checks:
+
+```json
+{
+  "coding": [{"harness": "opencode"}],
+  "validation": [{"harness": "codex"}],
+  "repairPlanning": [{"harness": "codex"}],
+  "goalReview": [{"harness": "codex"}]
+}
+```
+
+Save it as `.harness/roles.json` in the project. You may instead copy and edit
+the larger installed example:
+
+```sh
+mkdir -p .harness
+cp ~/.omnigent/agents/harness-engineering/roles.example.json .harness/roles.json
+```
+
+Start Omnigent from the Git root. For a monorepo, name the registered project
+directory in the request:
+
+```sh
+cd /path/to/git-root
+omni run ~/.omnigent/agents/harness-engineering --harness codex
+```
+
+Then send one plain request:
+
+```text
+Act as the Control Host for /absolute/path/to/project.
+Start or resume the harness. Use the project role file.
+Continue until input is needed or a persisted run_completed event exists.
+```
+
+Omnigent starts the repository's detached supervisor; it does not replace the
+scheduler. The controller and Codex wrapper must be able to launch local tools
+and write Git worktree metadata, so their outer Omnigent OS sandbox is disabled.
+The normal host permissions still apply.
+
+Check the run with the installed OpenCode control script:
+
+```sh
+CONTROL=~/.config/opencode/skills/harness-control-host/scripts/harness-control.mjs
+PROJECT=/absolute/path/to/project
+node "$CONTROL" status --repo "$PROJECT"
+node "$CONTROL" events --repo "$PROJECT" --consumer manual-check
+jq 'all(.[]; .implementation and .qa and .integration)' "$PROJECT/feature_list.json"
+```
+
+Success is simple:
+
+- `status` is `complete` and `supervisorPid` is `null`.
+- Every item has `implementation`, `qa`, and `integration` set to `true`.
+- The Goal Review Run State has `status: complete` and `phase: complete`.
+- The event list contains `kind: run_completed`.
+
+Do not use an empty queue or an agent's message as proof of completion.
+
+For private phone access, run Omnigent locally and expose only to your tailnet:
+
+```sh
+OMNIGENT_WS_ALLOWED_ORIGINS=https://YOUR-MACHINE.ts.net \
+OMNIGENT_ACCOUNTS_BASE_URL=https://YOUR-MACHINE.ts.net \
+  omni server start
+tailscale serve https / http://localhost:8000
+omni host
+```
+
+Open `https://YOUR-MACHINE.ts.net` on a phone signed into the same tailnet.
+Tailscale remains user-managed, and the machine must stay awake. Use a hosted
+Omnigent server only when the control surface must survive the local machine.
 
 ### `project_specs.xml`: the completion contract
 
@@ -281,11 +374,15 @@ The workflow stores its state in:
 | Path | Purpose |
 | --- | --- |
 | `project_specs.xml` | Goal and stable Acceptance Checks. |
+| `.harness/roles.json` | Optional Omnigent role/model candidates; absent means direct host execution. |
 | `.harness-technology-inventory.json` | Setup evidence for material technologies and documentation/code contradictions. |
 | `feature_list.json` | Dependency-aware execution queue. |
 | `harness-progress/` | Human-readable workflow journals. |
 | `.git/harness-runs/` | Project-namespaced worker state, attempts, and evidence. |
 | `.git/harness-control/` | Project-namespaced supervisor state and notification events. |
+
+Stopping a worker terminates its complete host-adapter process group so native
+and Omnigent harness servers are not left running after interruption.
 
 ## Learning loop
 
@@ -296,7 +393,7 @@ rules, agents, or memory only when a useful pattern is likely to recur.
 
 | Guide | Contents |
 | --- | --- |
-| [End-to-end setup](https://vinicius91carvalho.github.io/harness-engineering/) | Hermes, Telegram, OpenCode, commands, generated files, and verification. |
+| [End-to-end setup](https://vinicius91carvalho.github.io/harness-engineering/) | Omnigent, private mobile access, role routing, generated files, and verification. |
 | [Plugins](docs/plugins.md) | Available integrations and host compatibility. |
 | [Extras](docs/extras.md) | Status line, shared config, and MCP servers. |
 | [Installer](docs/installer/README.md) | Host selection, flags, scopes, and dry runs. |

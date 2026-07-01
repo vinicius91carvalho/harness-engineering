@@ -14,8 +14,8 @@ must pass through its Resource Governor.
 Let `REPO` be the selected harness project directory (which may be below the Git
 top-level), `CONTROL` this skill directory, and
 `WORKER_HOST` one authenticated CLI installed on the machine: `claude`, `codex`,
-or `opencode`. Hermes, nanobot, and pi are Control Hosts, not values for
-`WORKER_HOST`.
+or `opencode`. An external control surface is not a `WORKER_HOST`; Omnigent role
+routing is selected by project-local `.harness/roles.json` instead.
 
 At a monorepo root, resolve one project through `.harness/projects.json` before
 starting. Each project has its own specification, queue, supervisor state, and
@@ -35,7 +35,9 @@ reconciliation procedure so both `project_specs.xml` and a valid
 until this validation succeeds:
 
 ```bash
-node "$CONTROL/../generator/reconcile.mjs" "$REPO" --check
+GENERATOR="$CONTROL/../generator"
+[ -d "$GENERATOR" ] || GENERATOR="$CONTROL/../harness-generator"
+node "$GENERATOR/reconcile.mjs" "$REPO" --check
 ```
 
 ## Start or recover
@@ -79,11 +81,11 @@ only from observed available resources and a known concurrent provider quota.
 ## Relay notifications
 
 Create one durable consumer name per delivery channel, such as
-`hermes-telegram`. Poll at least once per minute through the Control Host's native
+`omnigent-mobile`. Poll at least once per minute through the Control Host's native
 heartbeat/cron mechanism:
 
 ```bash
-node "$CONTROL/scripts/harness-control.mjs" events --repo "$REPO" --consumer hermes-telegram
+node "$CONTROL/scripts/harness-control.mjs" events --repo "$REPO" --consumer omnigent-mobile
 ```
 
 For each returned event:
@@ -100,16 +102,16 @@ processed ID. Never acknowledge before delivery:
 
 ```bash
 node "$CONTROL/scripts/harness-control.mjs" ack --repo "$REPO" \
-  --consumer hermes-telegram --event "$EVENT_ID"
+  --consumer omnigent-mobile --event "$EVENT_ID"
 ```
 
-This provides at-least-once relay across agent and gateway restarts. If Telegram
+This provides at-least-once relay across agent and UI restarts. If delivery
 delivery fails, leave the cursor unchanged and retry. Pending Input Requests also
 remain visible in `status`, independent of notification delivery.
 
 ## Relay user decisions
 
-Map a Telegram reply to the exact Input Request ID and one advertised action:
+Map the user's reply to the exact Input Request ID and one advertised action:
 
 ```bash
 node "$CONTROL/scripts/harness-control.mjs" respond --repo "$REPO" \

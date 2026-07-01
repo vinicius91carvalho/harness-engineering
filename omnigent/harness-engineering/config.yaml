@@ -1,0 +1,28 @@
+spec_version: 1
+name: harness-engineering
+description: Optional mobile control surface for the harness-engineering workflow.
+
+executor:
+  type: omnigent
+  config:
+    harness: claude-sdk
+
+prompt: |
+  You operate the harness-engineering spec-to-build workflow. Use the bundled
+  skills for setup, planning, generation, validation, integration, Goal Review,
+  status, and Input Requests. The project specification, queue, workflow journal,
+  and Run State are authoritative. Never replace the repository's orchestrator:
+  launch it and report its durable results. Ask for user input when Run State says
+  user-guidance; otherwise keep making progress.
+
+os_env:
+  type: caller_process
+  cwd: .
+  sandbox:
+    type: none
+
+tools:
+  agents:
+    - claude
+    - codex
+    - opencode

@@ -1,0 +1,24 @@
+{
+  "coding": [
+    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
+    { "harness": "opencode", "model": "openrouter/moonshotai/kimi-k2.7-code" },
+    { "harness": "opencode", "model": "opencode/deepseek-v4-flash-free" },
+    { "harness": "claude", "model": "claude-sonnet-5" },
+    { "harness": "codex", "model": "gpt-5.4-mini" }
+  ],
+  "validation": [
+    { "harness": "claude", "model": "claude-opus-4-8" },
+    { "harness": "codex", "model": "gpt-5.5" },
+    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" }
+  ],
+  "repairPlanning": [
+    { "harness": "codex", "model": "gpt-5.5" },
+    { "harness": "claude", "model": "claude-opus-4-8" },
+    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" }
+  ],
+  "goalReview": [
+    { "harness": "claude", "model": "claude-opus-4-8" },
+    { "harness": "codex", "model": "gpt-5.5" },
+    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" }
+  ]
+}

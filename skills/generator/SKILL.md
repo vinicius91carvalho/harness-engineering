@@ -16,8 +16,8 @@ A QA defect follows:
 `Defect Report → orchestrator Repair Plan → next coding Attempt`
 
 Three failed Attempts block with user-visible evidence. Never delete a blocked
-branch or worktree. The host's configured model is always used; do not select or
-escalate vendor model IDs.
+branch or worktree. Direct execution uses the host's configured model. Only an
+optional project-local `.harness/roles.json` selects or orders model IDs.
 
 Let `PROJECT` be the directory containing `project_specs.xml`, `GIT_ROOT` be its
 Git top-level, `GEN` this skill directory, and `HOST` the current host (`claude`,
@@ -101,6 +101,32 @@ spec-required project structure before acting. The engine also owns agent commun
 Attempts, concise Journal entries, per-Work-Item merge checkpoints, and Integrated
 Verification. It verifies queue state rather than trusting prose. Diagnostic output
 is stored as separate Evidence Artifacts under the shared Git directory.
+
+### Optional Omnigent role routing
+
+When `.harness/roles.json` exists, the same engine runs each role through the
+installed Omnigent worker template. `coding`, `validation`, `repairPlanning`, and
+`goalReview` are non-empty ordered candidate arrays; each entry is a harness name
+or `{ "harness": "opencode", "model": "provider/model" }`. Harnesses are
+`claude`, `codex`, or `opencode`; model is optional. Without this file, `--host`
+keeps the existing direct CLI behavior.
+
+Validation candidates using a harness different from the actual coding harness
+run first. A 429, unavailable model, authentication error, or launch failure tries
+the next candidate. A successful QA response describing a product defect does not
+fall through: it enters the existing Defect Report and Repair Plan loop. Run State
+and Evidence record the chosen harness/model, fallbacks, and independence level.
+
+### Verify-first mode
+
+When `project_specs.xml` contains `<mode>existing-codebase</mode>`, the CODING
+prompt switches from "implement this Work Item" to "first verify the mapped
+Acceptance Checks against the existing code at a real external boundary; if all
+pass, set `implementation=true` with no code changes; only if a check fails, fix
+the root cause with the smallest possible diff." QA and Integrated Verification
+still independently re-run the checks, so a false pass is caught downstream. This
+makes `/generator` a safe audit/regression pass over a working codebase rather
+than a rewrite. The planner writes this mode during Existing Codebase setup.
 
 - `stuck`/`blocked` result: show the user the Run State, three Attempt summaries,
   defects, plans, evidence paths, and next action. Do not merge, release, or clean.

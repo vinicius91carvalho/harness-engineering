@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { appendFile, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { createWriteStream } from 'node:fs'
+import { createWriteStream, existsSync } from 'node:fs'
 import { spawn, spawnSync } from 'node:child_process'
 import { availableParallelism, freemem, hostname, loadavg, totalmem } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
@@ -18,7 +18,9 @@ for (let i = 0; i < rawArgs.length; i += 2) {
 if (!commandName) fatal('usage: harness-control.mjs {start|run|status|capacity|events|ack|respond|quota|pause|resume|stop} --repo <path> ...')
 
 const scriptFile = fileURLToPath(import.meta.url)
-const defaultGenerator = resolve(dirname(scriptFile), '..', '..', 'generator')
+const bundledGenerator = resolve(dirname(scriptFile), '..', '..', 'generator')
+const namespacedGenerator = resolve(dirname(scriptFile), '..', '..', 'harness-generator')
+const defaultGenerator = existsSync(bundledGenerator) ? bundledGenerator : namespacedGenerator
 const repo = resolve(options.repo || '.')
 const generatorDir = resolve(options['generator-dir'] || defaultGenerator)
 const claimScript = join(generatorDir, 'claim.sh')
@@ -53,6 +55,11 @@ const logDir = join(root, 'logs')
 const supervisorLog = join(root, 'supervisor.log')
 const supervisorLock = join(root, 'supervisor.lock')
 const supervisorOwner = join(supervisorLock, 'owner.json')
+
+function runStateFile(context) {
+  const name = context.replace(/[^a-zA-Z0-9_-]/g, '_')
+  return join(commonGit, 'harness-runs', projectPrefix ? `${projectId}--${name}.json` : `${name}.json`)
+}
 
 async function readJson(file, fallback = null) {
   try { return JSON.parse(await readFile(file, 'utf8')) } catch { return fallback }
@@ -278,16 +285,17 @@ class Supervisor {
       if (item.integration === true) counts.integrated++
     }
     counts.blocked = Object.values(claims).filter((claim) => claim.status === 'blocked').length
-    return { counts, claims: Object.keys(claims), queue }
+    return { counts, claims: Object.values(claims).map((claim) => claim.context), queue }
   }
 
   async inspectClaims() {
     const claims = await readJson(join(commonGit, 'generator-claims.json'), {})
     let external = 0
     const recoverable = []
-    for (const [context, claim] of Object.entries(claims)) {
+    for (const [claimKey, claim] of Object.entries(claims)) {
+      const context = claim.context || claimKey
       if (this.workers.has(context)) continue
-      const runState = await readJson(join(commonGit, 'harness-runs', `${context.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`), {})
+      const runState = await readJson(runStateFile(context), {})
       if (this.state.retryQueue?.[context]) continue
       if (claim.status === 'blocked' || runState.status === 'blocked') {
         await this.input('context', runState.lastResult || 'Work Item blocked', { nextAction: runState.nextAction, attempt: runState.attempt, evidence: runState.evidence }, context)
@@ -348,7 +356,7 @@ class Supervisor {
     try { tail = (await readFile(worker.logFile, 'utf8')).slice(-64_000) || tail } catch {}
     let result = parseObject(tail)
     if (!result) {
-      const runState = await readJson(join(commonGit, 'harness-runs', `${key.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`), {})
+      const runState = await readJson(runStateFile(key), {})
       if (key === 'goal-review' && runState.status === 'complete' && runState.phase === 'complete') {
         result = { goal: true, summary: runState.lastResult, durable: true }
       } else if (key === 'goal-review' && runState.status === 'complete' && runState.phase === 'defects-found') {
@@ -441,7 +449,7 @@ class Supervisor {
     this.lastSummary = now
     const contexts = []
     for (const context of snapshot.claims) {
-      const runState = await readJson(join(commonGit, 'harness-runs', `${context.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`), {})
+      const runState = await readJson(runStateFile(context), {})
       contexts.push({ context, status: runState.status, phase: runState.phase, attempt: runState.attempt, nextAction: runState.nextAction })
     }
     await this.emit('progress', { ...snapshot.counts, workers: this.workers.size, capacity: cap, contexts })

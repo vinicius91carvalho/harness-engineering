@@ -3,9 +3,10 @@
 The implementation follows the official host contracts:
 
 - [Claude Code plugin reference](https://code.claude.com/docs/en/plugins-reference):
-  add/update the marketplace, then `claude plugin install name@marketplace
-  --scope ...`. Only Claude has installer scope selection and the bundled status
-  line/shared settings extras. The Git URL form preserves the marketplace's
+  add/update the marketplace, then `claude plugin update name@marketplace
+  --scope ...`, falling back to `plugin install` when needed. Only Claude has
+  installer scope selection and the bundled status line/shared settings extras.
+  The Git URL form preserves the marketplace's
   declared name; the `owner/repo` shorthand is not used.
 - [Codex plugin authoring](https://developers.openai.com/codex/plugins/build):
   `.codex-plugin/plugin.json` is the manifest; the compatible catalog lives at
@@ -16,6 +17,10 @@ The implementation follows the official host contracts:
   plural directories below `~/.config/opencode`. Local MCP servers use the
   [native `mcp` shape](https://opencode.ai/docs/mcp-servers): `type: "local"` and
   an array-valued `command`.
+- [Omnigent installation](https://github.com/omnigent-ai/omnigent#quick-start):
+  POSIX uses the official bootstrap; native Windows uses the documented `uv tool
+  install --python 3.12 omnigent` command. Its directory agent format provides
+  `config.yaml`, `agents/`, and `skills/`.
 
 Maintained decisions:
 
@@ -31,6 +36,7 @@ Maintained decisions:
   platform binary is installed through upstream `--skip-config`, then configured
   host-by-host with auto-indexing enabled. It replaces the removed Claude-only LSP
   plugins. Context7 and Playwright use their upstream host-neutral MCP servers.
-- Existing model choices win. No manifest or workflow pins vendor model IDs.
+- Existing model choices win unless a project opts into model candidates through
+  `.harness/roles.json`; the installed example is editable and never a global pin.
 - JSON configuration writes retain a pre-normalization backup and replace files
   atomically while preserving unrelated keys.

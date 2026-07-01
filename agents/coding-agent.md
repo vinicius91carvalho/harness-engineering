@@ -77,6 +77,29 @@ Write the frontend/backend code for the assigned feature. Then verify it
 - Fix everything you find, including UI defects (contrast, overflow, stray chars,
   wrong timestamps, missing hover/focus states, console errors).
 
+### Verify-first mode (existing codebase)
+
+When `project_specs.xml` contains `<mode>existing-codebase</mode>`, the code under
+test already exists and likely satisfies its Acceptance Checks. Do NOT rewrite
+working code. Instead:
+
+1. Bring up the app as below and exercise every mapped Acceptance Check at a real
+   external boundary (HTTP or browser), exactly as QA would.
+2. If **all** checks pass, set `implementation=true` and make **no code changes**.
+   Commit only if `git status` shows tracked file changes you intentionally made;
+   otherwise skip the commit (a zero-diff checkpoint is valid).
+3. If **any** check fails, fix the **root cause** with the smallest possible diff
+   — a guard in the shared function beats a guard in every caller. Do not refactor,
+   restructure, or "improve" unrelated code. Re-verify the failing check and any
+   sibling checks that route through the same code.
+4. Never delete or rewrite code solely because it differs from how you would have
+   written it. The bar is "the AC passes at a real boundary," not "the code is
+   idiomatic."
+
+The QA and Integration agents still independently re-run the checks, so a false
+"passes" is caught downstream. Your job is to confirm the existing behavior, not
+to reimplement it.
+
 ## STEP 4: Write specification-style tests
 
 Write automated tests for the feature — and write them as **specifications of

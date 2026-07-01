@@ -7,7 +7,8 @@ CLAUDE_MARKETPLACE="harness-engineering"
 CODEX_MARKETPLACE="harness-engineering"
 REPO_URL="https://github.com/$MARKETPLACE_REPO.git"
 MEMORY_INSTALLER="https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh"
-OPTIONAL="ponytail codebase-memory-mcp context7 playwright status-line shared-config mcp-servers"
+OMNIGENT_INSTALLER="https://raw.githubusercontent.com/omnigent-ai/omnigent/main/scripts/install_oss.sh"
+OPTIONAL="omnigent ponytail codebase-memory-mcp context7 playwright status-line shared-config mcp-servers"
 
 ASSUME=""
 DRY=""
@@ -185,7 +186,7 @@ if [ -n "$SCOPE" ] && [ "$CLI" != claude ]; then die '--scope is only valid when
 
 plugin_clis() {
   case "$1" in
-    harness|ponytail) echo 'claude codex opencode' ;;
+    harness|omnigent|ponytail) echo 'claude codex opencode' ;;
     codebase-memory-mcp|context7|playwright) echo 'claude codex opencode' ;;
     mcp-servers) echo 'claude codex opencode' ;;
     status-line|shared-config) echo claude ;;
@@ -225,6 +226,26 @@ ensure_repo() {
   TEMP_REPO=$(mktemp -d "${TMPDIR:-/tmp}/harness-installer.XXXXXX")
   OWN_TEMP_REPO=$TEMP_REPO
   git clone --depth 1 "$REPO_URL" "$TEMP_REPO" || die 'could not download the harness repository'
+}
+
+install_omnigent() {
+  if [ -n "$DRY" ]; then
+    echo "DRY RUN — install Omnigent with the official runtime installer"
+    echo "DRY RUN — install agent bundle at $HOME/.omnigent/agents/harness-engineering"
+    return
+  fi
+  if ! command -v omni >/dev/null 2>&1 && ! command -v omnigent >/dev/null 2>&1; then
+    command -v curl >/dev/null 2>&1 || die 'curl is required to install Omnigent'
+    installer=$(mktemp "${TMPDIR:-/tmp}/omnigent-install.XXXXXX")
+    curl -fsSL "$OMNIGENT_INSTALLER" -o "$installer" || die 'Omnigent installer download failed'
+    sh "$installer" || { rm -f "$installer"; die 'Omnigent runtime installation failed'; }
+    rm -f "$installer"
+  fi
+  ensure_repo
+  source=$TEMP_REPO/omnigent/harness-engineering
+  [ -f "$source/config.yaml" ] || die 'bundled Omnigent agent is missing'
+  dest=$HOME/.omnigent/agents/harness-engineering
+  rm -rf "$dest"; mkdir -p "$dest"; cp -R "$source"/. "$dest"/
 }
 
 install_claude_marketplace() {
@@ -279,7 +300,10 @@ install_plugin() {
   name=$1; cli=$2
   has_word "$(plugin_clis "$name")" "$cli" || return 0
   case "$cli" in
-    claude) run claude plugin install "$name@$CLAUDE_MARKETPLACE" --scope "$SCOPE" ;;
+    claude)
+      if [ -n "$DRY" ]; then run claude plugin update "$name@$CLAUDE_MARKETPLACE" --scope "$SCOPE"
+      else claude plugin update "$name@$CLAUDE_MARKETPLACE" --scope "$SCOPE" || claude plugin install "$name@$CLAUDE_MARKETPLACE" --scope "$SCOPE"
+      fi ;;
     codex)
       if [ "$name" = ponytail ]; then
         if [ -n "$DRY" ]; then run codex plugin marketplace upgrade ponytail
@@ -453,6 +477,7 @@ done
 
 for item in $SELECTED; do
   case "$item" in
+    omnigent) install_omnigent ;;
     codebase-memory-mcp) install_memory ;;
     context7|playwright) install_portable_mcp "$item" ;;
     status-line) enable_status_line ;;
