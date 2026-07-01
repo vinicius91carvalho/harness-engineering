@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### [0.18.2](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.18.1...v0.18.2) (2026-07-01)
+
+
+### Bug Fixes
+
+* docs, workflow and scopes ([34e84b0](https://github.com/vinicius91carvalho/harness-engineering/commit/34e84b00e15b6eefeef8a3c43f309135c76331be))
+
 ### [0.18.1](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.18.0...v0.18.1) (2026-07-01)
 
 
