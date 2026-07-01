@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### [0.18.1](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.18.0...v0.18.1) (2026-07-01)
+
+
+### Bug Fixes
+
+* make control-host test portable ([23085b3](https://github.com/vinicius91carvalho/harness-engineering/commit/23085b33d00cd684bdb6772271836108839d7865))
+
 ## [0.18.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.17.2...v0.18.0) (2026-07-01)
 
 
