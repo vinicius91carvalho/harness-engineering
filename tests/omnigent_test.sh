@@ -10,6 +10,35 @@ jq -e '
       ["claude","codex","opencode"] | index($h)))
 ' "$BUNDLE/roles.example.json" >/dev/null
 
+jq -e '
+  . == {
+    "coding": [
+      {"harness":"opencode","model":"llama.cpp/qwen3.6-35b-a3b"},
+      {"harness":"opencode","model":"openrouter/z-ai/glm-5.2"},
+      {"harness":"opencode","model":"opencode-go/kimi-k2.7-code"},
+      {"harness":"claude","model":"claude-sonnet-5"}
+    ],
+    "validation": [
+      {"harness":"claude","model":"claude-opus-4-8"},
+      {"harness":"codex","model":"gpt-5.5"},
+      {"harness":"opencode","model":"openrouter/z-ai/glm-5.2"},
+      {"harness":"opencode","model":"llama.cpp/qwen3.6-35b-a3b"}
+    ],
+    "repairPlanning": [
+      {"harness":"codex","model":"gpt-5.5"},
+      {"harness":"claude","model":"claude-opus-4-8"},
+      {"harness":"opencode","model":"openrouter/z-ai/glm-5.2"},
+      {"harness":"opencode","model":"llama.cpp/qwen3.6-35b-a3b"}
+    ],
+    "goalReview": [
+      {"harness":"claude","model":"claude-opus-4-8"},
+      {"harness":"codex","model":"gpt-5.5"},
+      {"harness":"opencode","model":"openrouter/z-ai/glm-5.2"},
+      {"harness":"opencode","model":"llama.cpp/qwen3.6-35b-a3b"}
+    ]
+  }
+' "$BUNDLE/roles.example.json" >/dev/null
+
 for harness in claude codex opencode; do
   file="$BUNDLE/agents/$harness/config.yaml"
   test -s "$file"
@@ -31,5 +60,6 @@ for skill in setup monorepo-setup planning generation validation integration goa
   grep -q '^description:' "$file"
 done
 grep -q 'Always load `grilling` first' "$BUNDLE/skills/planning/SKILL.md"
+grep -q 'Do not start or recommend validation of all mapped features' "$BUNDLE/skills/setup/SKILL.md"
 
 echo 'ok - Omnigent bundle, worker templates, skills, and role example are structurally valid'

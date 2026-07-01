@@ -1,6 +1,8 @@
 # Installer behavior
 
 The shell and PowerShell installers target Claude Code, Codex, and OpenCode.
+Both require Node.js 18 or newer and stop before making changes when it is
+missing or too old.
 
 ```sh
 ./install.sh --cli claude --no
@@ -46,5 +48,5 @@ bootstrap installer when the runtime is absent; native Windows uses the official
 `uv tool install --python 3.12 omnigent` path. Both replace the
 `~/.omnigent/agents/harness-engineering` bundle atomically enough for repeated
 installs and leave project role and model routing to `.harness/roles.json`. The
-[simple recipe](../../README.md#optional-omnigent-routing-and-mobile-control)
+[complete guide](../../README.md#optional-omnigent-control-and-routing)
 shows how to run and verify the full workflow.

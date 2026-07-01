@@ -25,6 +25,14 @@ $PluginClis = @{
 }
 
 if ($Yes -and $No) { throw "-Yes and -No are mutually exclusive" }
+$Node = Get-Command node -ErrorAction SilentlyContinue
+if (-not $Node) { throw "Node.js 18 or newer is required." }
+$NodeVersion = & node -p "process.versions.node.split('.')[0]"
+$NodeMajor = 0
+if ($LASTEXITCODE -ne 0 -or -not [int]::TryParse(([string]$NodeVersion).Trim(), [ref]$NodeMajor) -or $NodeMajor -lt 18) {
+  throw "Node.js 18 or newer is required."
+}
+
 function Test-CliInstalled([string]$Name) {
   if (Get-Command $Name -ErrorAction SilentlyContinue) { return $true }
   if ($Name -ne "opencode") { return $false }

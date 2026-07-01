@@ -54,6 +54,10 @@ done
 case "$CLI_REQUEST" in ""|claude|codex|opencode|all) ;; *) die "invalid --cli value: $CLI_REQUEST" ;; esac
 case "$SCOPE" in ""|user|project|local) ;; *) die "invalid --scope value: $SCOPE" ;; esac
 
+command -v node >/dev/null 2>&1 || die 'Node.js 18 or newer is required'
+NODE_MAJOR=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null) || die 'could not determine the Node.js version'
+[ "$NODE_MAJOR" -ge 18 ] 2>/dev/null || die 'Node.js 18 or newer is required'
+
 cli_installed() {
   cli=$1
   command -v "$cli" >/dev/null 2>&1 && return 0

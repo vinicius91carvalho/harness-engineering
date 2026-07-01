@@ -30,6 +30,27 @@ export HARNESS_TEST_LOG="$TMP/commands.log"
 fail() { printf 'not ok - %s\n' "$1" >&2; exit 1; }
 pass() { printf 'ok - %s\n' "$1"; }
 
+mkdir -p "$TMP/nonode"
+ln -s "$(command -v dirname)" "$TMP/nonode/dirname"
+if PATH="$TMP/nonode" "$ROOT/install.sh" --cli opencode --no --dry-run >"$TMP/out" 2>"$TMP/err"; then
+  fail 'missing Node.js must fail before installation'
+fi
+grep -q 'Node.js 18 or newer' "$TMP/err" || fail 'missing Node.js error should state the requirement'
+
+cat >"$TMP/bin/node" <<'EOF'
+#!/bin/sh
+printf '17\n'
+EOF
+chmod +x "$TMP/bin/node"
+if "$ROOT/install.sh" --cli opencode --no --dry-run >"$TMP/out" 2>"$TMP/err"; then
+  fail 'Node.js older than 18 must fail before installation'
+fi
+grep -q 'Node.js 18 or newer' "$TMP/err" || fail 'old Node.js error should state the requirement'
+rm "$TMP/bin/node"
+[ -n "$SYSTEM_NODE" ] || fail 'installer tests require a current Node.js runtime'
+ln -s "$SYSTEM_NODE" "$TMP/bin/node"
+pass 'installer requires Node.js 18 or newer'
+
 if "$ROOT/install.sh" --no </dev/null >"$TMP/out" 2>"$TMP/err"; then
   fail 'multiple CLIs without --cli must fail without a TTY'
 fi

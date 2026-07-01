@@ -46,4 +46,4 @@ Run these only on disposable user profiles after authenticating each real CLI:
    Review to Codex. Start Omnigent as the Control Host. The check passes only
    when all three queue flags are `true`, Goal Review is complete, and the
    control event stream contains `run_completed`. The exact commands are in the
-   [README recipe](../../README.md#optional-omnigent-routing-and-mobile-control).
+   [README guide](../../README.md#optional-omnigent-control-and-routing).

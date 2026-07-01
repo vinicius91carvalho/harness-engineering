@@ -8,6 +8,11 @@ allowed-tools: Bash, Read, Write, Glob, Skill, AskUserQuestion
 
 Set up the harness in an existing codebase without changing application code.
 
+This command is argument-free. Derive the product and setup scope from the
+repository. If the invocation includes a goal, feature request, or scope text,
+do not interpret it; explain that setup maps the existing codebase and ask the
+user to rerun `/harness:setup` without arguments. Use `planner` for a new goal.
+
 ## Resolve monorepo projects first
 
 Treat the Git top-level and the harness project root as separate directories. At
@@ -69,13 +74,17 @@ root as `PROJECT` and do not create the registry.
    unrelated worktree changes.
 
 The planner writes `<mode>existing-codebase</mode>` into `project_specs.xml`
-during step 3. The generator honors it as **verify-first**: coding agents first
+during step 3. If the user later requests an audit, the generator honors it as
+**verify-first**: coding agents first
 exercise the Acceptance Checks against the existing code at a real boundary, set
 `implementation=true` with no code changes when they pass, and only repair the
 root cause when a check fails. This makes `/generator` a safe audit pass over a
-working codebase rather than a rewrite.
+working codebase rather than a rewrite. Setup does not start or recommend that
+audit automatically.
 
 Finish by listing the harness files created and tell the user to review
-each project-local `project_specs.xml`, then run `/generator` from that project
-directory when ready to build. At the Git root, print the registry as a routing
-table with project ID, path, and the command directory.
+each project-local `project_specs.xml`. Do not tell them to validate every mapped
+feature. If they ask to audit existing behavior, offer `/generator` from the
+project directory and let them select one task, a set, or all. At the Git root,
+print the registry as a routing table with project ID, path, and the command
+directory.

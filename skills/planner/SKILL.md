@@ -15,7 +15,9 @@ work items are only an execution queue.
 
 Always load and follow the bundled `grilling` skill before finalizing a new or
 changed plan. Resolve one decision at a time; inspect the repository instead of
-asking questions it can answer.
+asking questions it can answer. Grilling is a planner capability, not a separate
+workflow step to recommend. A user may request it naturally with language such as
+"grill me."
 
 Use the current host's native planning surface and configured model. Do not force
 a vendor model ID. Do not write application code or scaffold anything; only
@@ -39,7 +41,8 @@ Acceptance Check in the owning project instead.
   current behavior, architecture, commands, tests, and the user's stated goal.
   Do not invent a replacement stack or describe unrequested rewrites. Insert
   `<mode>existing-codebase</mode>` immediately after `<project_name>` so the
-  generator runs Work Items verify-first (see §Verify-first mode).
+  generator can run user-selected audit Work Items verify-first when requested
+  (see §Verify-first mode).
 - **Feature** — `project_specs.xml` already exists → ADD only the new feature.
   Append new `<core_features>` and `<acceptance_check>` entries (and any new tables / endpoints / UI it
   needs). **Never rewrite, reorder, or delete existing content** — the generator
@@ -119,9 +122,12 @@ the generator rejects missing mappings, unknown dependencies, and dependency cyc
 ## Finish
 
 - Write/update `project_specs.xml` in the resolved project root.
-- **New Project or Existing Codebase**: tell the user to review the file, then open a NEW session and
+- **New Project**: tell the user to review the file, then open a NEW session and
   run **`/generator`** — it scaffolds the project (via the initializer agent) on
   first run, then implements and QA's features. Multiple `/generator` sessions can
   run in parallel, each claiming a different `context`.
+- **Existing Codebase**: report that mapping is complete. Do not recommend a full
+  validation pass by default. If the user asks for an audit, tell them to run
+  `/generator` and select one task, a set, or all.
 - **Feature**: tell the user the new `context`(s) added; `/generator` will pick
   them up on its next run.

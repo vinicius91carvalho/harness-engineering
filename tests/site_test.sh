@@ -2,12 +2,15 @@
 set -euo pipefail
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 HTML="$ROOT/site/index.html"
+README="$ROOT/README.md"
+ROLES="$ROOT/omnigent/harness-engineering/roles.example.json"
+ROLES_URL='https://github.com/vinicius91carvalho/harness-engineering/blob/main/omnigent/harness-engineering/roles.example.json'
 
 test -s "$HTML"
 test -s "$ROOT/site/styles.css"
 test -s "$ROOT/.github/workflows/pages.yml"
 
-for id in install plugin bundle mobile plan monorepo scaffold run notify verify operate files; do
+for id in why architecture workflow prerequisites install commands start worked-example files monorepo omnigent routing local-model run-omnigent mobile operate maintenance help; do
   grep -q "id=\"$id\"" "$HTML"
 done
 while IFS= read -r id; do
@@ -15,22 +18,61 @@ while IFS= read -r id; do
 done < <(sed -n 's/.*href="#\([^"]*\)".*/\1/p' "$HTML")
 
 grep -q 'assets/banner.svg' "$HTML"
-grep -q -- '--cli opencode --no' "$HTML"
-grep -q '/harness-planner' "$HTML"
-grep -q '/harness-generator' "$HTML"
-grep -q '/harness-setup' "$HTML"
-grep -q '.harness/projects.json' "$HTML"
-grep -q 'apps/web/project_specs.xml' "$HTML"
 grep -q 'path: site' "$ROOT/.github/workflows/pages.yml"
 grep -q 'actions/deploy-pages@v4' "$ROOT/.github/workflows/pages.yml"
 ! grep -Eq '(href|src)="/[^/]+' "$HTML"
 
-grep -q 'roles.example.json' "$HTML"
+next_heading=$(awk '/^## Framework$/{found=1; next} found && /^## /{print; exit}' "$README")
+test "$next_heading" = '## How the workflow runs'
+grep -Fq 'Node.js 18 or newer' "$README"
+grep -Fq 'Node.js 18 or newer' "$HTML"
+grep -Fq '/harness:setup` | `/harness-setup' "$README"
+grep -Fq '/harness:setup</code></td><td><code>/harness-setup' "$HTML"
+grep -Fq 'run setup **without a goal, feature, scope, or other text**' "$README"
+grep -Fq 'with no goal, feature, scope, or other text' "$HTML"
+! grep -Eq '/harness[:-]setup +(Add|Your|Build)' "$README" "$HTML"
+! grep -Fiq 'For non-interactive OpenCode setup' "$README" "$HTML"
+! grep -Fq '/harness:grilling' "$README" "$HTML"
+grep -Fq 'by asking “grill me.”' "$README"
+grep -Fq 'by asking “grill me.”' "$HTML"
+grep -Fq 'does not require a generator run' "$README"
+grep -Fq 'does not validate every feature' "$HTML"
+grep -Fq 'No coding tool launches and no Acceptance Check runs' "$HTML"
+grep -Fq 'false queue flags mean “not yet proved,” not “the application is broken.”' "$HTML"
+grep -Fq 'Other mapped Work Items stay untouched' "$HTML"
+grep -Fq 'Add reversible note archiving' "$HTML"
+grep -Fq '* `implementation` means coding completed.' "$README"
+grep -Fq '* `qa` means isolated QA passed.' "$README"
+grep -Fq '* `integration` means the behavior passed after merging.' "$README"
+grep -Fq '**route coding, validation, repair planning, and Goal Review to ordered' "$README"
+grep -Fq '<strong>route coding, validation, repair planning, and Goal Review to ordered tool/model candidates;</strong>' "$HTML"
+grep -Fq 'https://omnigent.ai/' "$README" "$HTML"
+grep -Fq 'https://tailscale.com/' "$README" "$HTML"
+grep -Fq 'https://developers.openai.com/codex/' "$README" "$HTML"
+grep -Fq 'Grilling is a planner capability' "$ROOT/skills/planner/SKILL.md"
+grep -Fq 'Do not tell them to validate every mapped' "$ROOT/skills/setup/SKILL.md"
+grep -Fq 'not required to plan' "$README"
+grep -Fq 'without Omnigent' "$HTML"
+
+diff -u <(jq -S . "$ROLES") <(
+  awk '/^The complete example is maintained at:/{section=1} section && /^```json$/{json=1; next} json && /^```$/{exit} json' "$README" | jq -S .
+)
+diff -u <(jq -S . "$ROLES") <(
+  sed -n '/id="routing"/,/id="local-model"/p' "$HTML" |
+    sed -n '/<pre><code>{/,/}<\/code><\/pre>/p' |
+    sed '1s/.*<pre><code>//; $s/<\/code><\/pre>.*//' |
+    jq -S .
+)
+
+for file in "$README" "$HTML"; do
+  grep -Fq "$ROLES_URL" "$file"
+  grep -Fq 'Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf' "$file"
+  grep -Fq '.harness/projects.json' "$file"
+  grep -Fq 'run_completed' "$file"
+  grep -Fq 'implementation and .qa and .integration' "$file"
+done
+
 grep -q 'tailscale serve' "$HTML"
-grep -q 'status: complete' "$HTML"
-grep -q 'kind.*run_completed' "$HTML"
-grep -q 'implementation and .qa and .integration' "$HTML"
-grep -q 'OpenCode codes; Codex checks' "$HTML"
 ! grep -Eq 'Hermes|Telegram' "$HTML"
 
-echo 'ok - static site documents optional Omnigent, private mobile access, and OpenCode-first routing'
+echo 'ok - README and site document the complete harness workflow and optional Omnigent routing'
