@@ -63,9 +63,11 @@ mkdir -p "$TMP/installed/skills/harness-control-host/scripts"
 cp "$CONTROL" "$TMP/installed/skills/harness-control-host/scripts/harness-control.mjs"
 cp -R "$ROOT/skills/generator" "$TMP/installed/skills/harness-generator"
 git clone -q "$TMP/repo" "$TMP/namespaced"
+git -C "$TMP/namespaced" config user.name test
+git -C "$TMP/namespaced" config user.email test@example.invalid
 PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" "$NODE" \
   "$TMP/installed/skills/harness-control-host/scripts/harness-control.mjs" run \
-  --repo "$TMP/namespaced" --host claude --poll-ms 250 --quota-workers 1 \
+  --repo "$TMP/namespaced" --host claude --once true --poll-ms 250 --quota-workers 1 \
   --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100
 jq -e '.status == "complete"' "$TMP/namespaced/.git/harness-control/state.json" >/dev/null
 echo 'ok - OpenCode namespaced control host resolves its generator sibling'
