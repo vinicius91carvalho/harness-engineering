@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [0.18.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.17.2...v0.18.0) (2026-07-01)
+
+
+### Features
+
+* add Omnigent control-host workflow ([3335dde](https://github.com/vinicius91carvalho/harness-engineering/commit/3335dde51212bc69bc63e688e05c7fdf6c5d4632))
+
 ### [0.17.2](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.17.1...v0.17.2) (2026-06-30)
 
 

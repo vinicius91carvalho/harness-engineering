@@ -1,7 +1,7 @@
 {
   "name": "harness",
   "description": "My harness engineering plugin for Claude Code",
-  "version": "0.17.2",
+  "version": "0.18.0",
   "author": {
     "name": "Vinicius Carvalho"
   }
