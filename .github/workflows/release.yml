@@ -1,6 +1,11 @@
 name: release
+# Release only runs after the `ci` workflow completes successfully on main,
+# so a broken build never ships a tag. Pushes the bump commit via
+# GITHUB_TOKEN ([skip ci]), which doesn't re-trigger ci, so no loop.
 on:
-  push:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
     branches: [main]
 
 permissions:
@@ -8,11 +13,13 @@ permissions:
 
 jobs:
   release:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0   # full history so the tagger can read past tags/commits
+          ref: ${{ github.event.workflow_run.head_sha }}   # the exact commit ci tested
 
       # Compute the next semver from Conventional Commits and create the tag.
       - name: Tag from commit messages
