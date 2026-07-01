@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### [0.18.3](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.18.2...v0.18.3) (2026-07-01)
+
+
+### Bug Fixes
+
+* gate release on ci success via workflow_run ([53a072b](https://github.com/vinicius91carvalho/harness-engineering/commit/53a072bfca4aafa811be15d87cec811e2f2d5b3a))
+
 ### [0.18.2](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.18.1...v0.18.2) (2026-07-01)
 
 
