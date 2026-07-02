@@ -53,6 +53,20 @@ grep -Fq 'Grilling is a planner capability' "$ROOT/skills/planner/SKILL.md"
 grep -Fq 'Do not tell them to validate every mapped' "$ROOT/skills/setup/SKILL.md"
 grep -Fq 'not required to plan' "$README"
 grep -Fq 'without Omnigent' "$HTML"
+for file in "$README" "$HTML"; do
+  grep -Fq 'ignores the AGENT spec' "$file"
+  grep -Fq -- '--harness opencode' "$file"
+  grep -Fq 'worker route' "$file"
+  grep -Fq 'omnigent-ai/omnigent/issues/1816' "$file"
+  grep -Fq 'Tailscale Magic DNS hostname' "$file"
+  grep -Fq '127.0.0.1' "$file"
+  grep -Fq 'localhost:6767' "$file"
+  grep -Fq 'omnigent stop' "$file"
+  grep -Fq 'owns the runner in-process' "$file"
+done
+grep -Fq 'Background server already running' "$HTML"
+# The obsolete, incorrect port must NOT appear in the mobile flow:
+! grep -Fq 'localhost:8000' "$HTML"
 
 diff -u <(jq -S . "$ROLES") <(
   awk '/^The complete example is maintained at:/{section=1} section && /^```json$/{json=1; next} json && /^```$/{exit} json' "$README" | jq -S .
@@ -72,7 +86,9 @@ for file in "$README" "$HTML"; do
   grep -Fq 'implementation and .qa and .integration' "$file"
 done
 
-grep -q 'tailscale serve' "$HTML"
+grep -q 'sudo tailscale serve --bg http://localhost:6767' "$HTML"
+# The obsolete pre-1.52 syntax must NOT appear:
+! grep -Fq 'serve https / http://' "$HTML"
 ! grep -Eq 'Hermes|Telegram' "$HTML"
 
 echo 'ok - README and site document the complete harness workflow and optional Omnigent routing'

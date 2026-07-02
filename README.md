@@ -362,21 +362,78 @@ Continue until input is needed or a persisted run_completed event exists.
 Omnigent starts the repository's supervisor; the harness still owns claims,
 retries, merges, integrated verification, Goal Review, and completion state.
 
+> **Limitation:** the agent bundle only loads under a **headless** harness —
+> `codex` or `claude`. `--harness opencode` launches the interactive OpenCode
+> TUI and ignores the AGENT spec, so Omnigent rejects the combination
+> (`omni run <agent> --harness opencode` errors). OpenCode still runs as a
+> **worker route** per `.harness/roles.json` — the supervisor spawns
+> `opencode run` per phase — it just can't be the Control Host. To use OpenCode
+> as the host, run `opencode` directly and invoke the harness skills (attached,
+> no Omnigent relay). Tracked upstream at
+> <https://github.com/omnigent-ai/omnigent/issues/1816>.
+
 ### Optional private phone access
 
+You do not need Tailscale to watch a run. Local observation uses the control
+script directly: `status`, `events`, `pause`, `resume`, `stop` (see
+[Operate and verify](#operate-and-verify)). The steps below add a web/mobile
+control surface only — for reaching the project machine from a phone over a
+private tailnet. If you only work from the same machine, skip this section.
+
 Install [Tailscale](https://tailscale.com/) on the project machine and phone,
-sign both into the same tailnet, then expose only the local Omnigent service:
+sign both into the same tailnet, then run these from the project machine.
+`omni run` starts the Control Host **and** the embedded Omnigent web UI
+together — there is no separate `omni server start` or `omni host` to run (a
+standalone `omni server start` only collides: it prints "Background server
+already running" and leaves the old one up).
 
 ```sh
+# 1. Find the project machine's Tailscale hostname (YOUR-MACHINE):
+tailscale status | grep "$(hostname)"
+#    e.g. "mybox" -> mybox.ts.net (or your tailnet's custom domain).
+
+# 2. Stop any Omnigent daemon already running WITHOUT the tailnet env vars
+#    (omni run REUSES a running daemon and won't pick up new env vars on its
+#    own line):
+omnigent stop
+
+# 3. Start the Control Host + embedded web UI, scoped to the tailnet. The env
+#    vars must be on THIS command so the fresh daemon inherits them:
 OMNIGENT_WS_ALLOWED_ORIGINS=https://YOUR-MACHINE.ts.net \
 OMNIGENT_ACCOUNTS_BASE_URL=https://YOUR-MACHINE.ts.net \
-  omni server start
-tailscale serve https / http://localhost:8000
-omni host
+  omni run ~/.omnigent/agents/harness-engineering --harness codex
+
+# 4. In a second terminal, expose the daemon's port to the tailnet over HTTPS:
+sudo tailscale serve --bg http://localhost:6767
 ```
 
-Open `https://YOUR-MACHINE.ts.net` from the phone. Use `tailscale serve`, not
-Funnel, for tailnet-only access. The project machine must remain awake.
+Open `https://YOUR-MACHINE.ts.net` from the phone. The Control Host and its
+web UI both run in step 3 (the daemon owns the runner in-process, so no
+`omni host`); step 4 just proxies the phone's HTTPS to the daemon's local
+port. `tailscale serve` must target `localhost:6767` — the native daemon's
+port — **not** 8000 (that's the Docker-Compose container port from
+Omnigent's Tailscale guide, which doesn't apply to `omni run`). The `--bg`
+flag runs the proxy persistently in the background; HTTPS is the default
+frontend, so the phone reaches `https://YOUR-MACHINE.ts.net`. (Tailscale
+1.52+ removed the old `serve https / http://...` syntax — use the form above.)
+
+**What is `YOUR-MACHINE`?** It is the Tailscale Magic DNS hostname of the
+project machine, *not* `127.0.0.1` or `localhost`. Tailscale assigns every
+device on your tailnet a name like `mybox`, reachable as `mybox.ts.net` (or
+your tailnet's custom domain). Find it with `tailscale status` or in the
+[Tailscale admin console](https://login.tailscale.com/admin/machines). The
+phone can't reach the machine's loopback (`127.0.0.1`), so the phone-side URL
+must be the tailnet name; only the `tailscale serve` backend uses
+`localhost:6767`, because that proxy runs on the project machine itself.
+
+> **Limitation:** step 3 only accepts the `codex` or `claude` harness.
+> `--harness opencode` launches the OpenCode TUI and ignores the agent bundle,
+> so it can't drive the Control Host from the phone. To run the supervisor
+> while you watch it on mobile, pick a headless harness; OpenCode remains
+> available as a worker route via `.harness/roles.json`.
+
+Use `tailscale serve`, not Funnel, for tailnet-only access. The project
+machine must remain awake.
 
 ## Operate and verify
 

@@ -1,6 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "opencode-go/deepseek-v4-pro",
+  "model": "z-ai/glm-5.2",
   "instructions": ["AGENTS.md"],
   "plugin": ["opencode-rate-limit-fallback"]
 }
