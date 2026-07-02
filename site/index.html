@@ -252,7 +252,7 @@ claude --version  # or: codex --version / opencode --version</code></pre>
         <li>relay durable Input Requests.</li>
       </ul>
       <p>It does not own claims, retries, merges, QA policy, or Goal Review.</p>
-      <p>A project-local <code>.harness/roles.json</code> enables routing. Removing it returns to direct tool execution. The schema's existing <code>harness</code> key selects a Claude Code, Codex, or OpenCode adapter; the complete workflow remains the harness.</p>
+      <p>A project-local <code>.harness/roles.json</code> enables routing. Removing it returns to direct tool execution. The schema's existing <code>harness</code> key selects a Claude Code, Codex, OpenCode, or Pi adapter; the complete workflow remains the harness.</p>
     </section>
 
     <section class="topic" id="routing">
@@ -263,7 +263,7 @@ claude --version  # or: codex --version / opencode --version</code></pre>
       <p class="source"><strong>Full source:</strong> <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/omnigent/harness-engineering/roles.example.json">https://github.com/vinicius91carvalho/harness-engineering/blob/main/omnigent/harness-engineering/roles.example.json</a></p>
       <pre><code>{
   "coding": [
-    { "harness": "opencode", "model": "llama.cpp/qwen3.6-35b-a3b" },
+    { "harness": "pi", "model": "llama.cpp/ornith-1.0-9b-code" },
     { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
     { "harness": "opencode", "model": "opencode-go/kimi-k2.7-code" },
     { "harness": "claude", "model": "claude-sonnet-5" }
@@ -271,20 +271,17 @@ claude --version  # or: codex --version / opencode --version</code></pre>
   "validation": [
     { "harness": "claude", "model": "claude-opus-4-8" },
     { "harness": "codex", "model": "gpt-5.5" },
-    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
-    { "harness": "opencode", "model": "llama.cpp/qwen3.6-35b-a3b" }
+    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" }
   ],
   "repairPlanning": [
     { "harness": "codex", "model": "gpt-5.5" },
     { "harness": "claude", "model": "claude-opus-4-8" },
-    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
-    { "harness": "opencode", "model": "llama.cpp/qwen3.6-35b-a3b" }
+    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" }
   ],
   "goalReview": [
     { "harness": "claude", "model": "claude-opus-4-8" },
     { "harness": "codex", "model": "gpt-5.5" },
-    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
-    { "harness": "opencode", "model": "llama.cpp/qwen3.6-35b-a3b" }
+    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" }
   ]
 }</code></pre>
       <pre><code>mkdir -p .harness
@@ -294,27 +291,28 @@ cp ~/.omnigent/agents/harness-engineering/roles.example.json .harness/roles.json
 
     <section class="topic" id="local-model">
       <p class="step">Local fallback</p>
-      <h2>Run Qwen3.6 through <a href="https://github.com/ggml-org/llama.cpp">llama-server</a> and <a href="https://opencode.ai/">OpenCode</a></h2>
+      <h2>Run Ornith through <a href="https://github.com/ggml-org/llama.cpp">llama-server</a> and <a href="https://pi.dev/">Pi</a></h2>
       <pre><code>llama-server \
-  -m /path/to/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf \
-  --port 8080</code></pre>
-      <p>Merge this provider into the applicable OpenCode configuration:</p>
+  -m /path/to/ornith-1.0-9b-code-UD-Q4_K_XL.gguf \
+  --port 8081</code></pre>
+      <p>Merge this provider into Pi's model config at <code>~/.pi/agent/models.json</code>:</p>
       <pre><code>{
-  "$schema": "https://opencode.ai/config.json",
-  "provider": {
+  "providers": {
     "llama.cpp": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "llama-server (local)",
-      "options": {"baseURL": "http://127.0.0.1:8080/v1"},
-      "models": {
-        "qwen3.6-35b-a3b": {
-          "name": "Qwen3.6 35B A3B Q4_K_XL (local)"
-        }
-      }
+      "baseUrl": "http://127.0.0.1:8081/v1",
+      "api": "openai-completions",
+      "apiKey": "llama",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
+      "models": [
+        { "id": "ornith-1.0-9b-code", "name": "Ornith 1.0 9B Code (local)" }
+      ]
     }
   }
 }</code></pre>
-      <p>OpenCode addresses it as <code>llama.cpp/qwen3.6-35b-a3b</code>. Keep the server running while that route is available. Authenticate <a href="https://openrouter.ai/">OpenRouter</a>, <a href="https://opencode.ai/docs/go/">OpenCode Go</a>, and <a href="https://code.claude.com/docs/en/overview">Claude Code</a> before depending on the hosted fallbacks.</p>
+      <p>Pi addresses it as <code>llama.cpp/ornith-1.0-9b-code</code> and loads the compressed <code>harness-master</code> skill for its small context. Keep the server running while that route is available. Authenticate <a href="https://openrouter.ai/">OpenRouter</a>, <a href="https://opencode.ai/docs/go/">OpenCode Go</a>, and <a href="https://code.claude.com/docs/en/overview">Claude Code</a> before depending on the hosted fallbacks.</p>
     </section>
 
     <section class="topic" id="run-omnigent">

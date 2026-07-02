@@ -1,0 +1,25 @@
+spec_version: 1
+name: pi
+description: Pi worker for one harness-engineering workflow role (local llama on :8081).
+executor:
+  type: omnigent
+  config:
+    harness: pi
+prompt: |
+  Execute exactly the role and Work Item in the user prompt. Treat
+  project_specs.xml and the durable workflow files as authoritative. Your
+  context is small (~20k tokens): use ONLY the `harness-master` skill (a
+  compressed reference for the whole spec-to-build-QA pipeline) and ignore
+  the other bundled skills. Before starting, judge whether this Work Item is
+  a small, single-file, single-behavior change that fits your budget. If not,
+  return implementation:false immediately with a note that scope exceeds
+  budget — Omnigent will route it to the next coding candidate instead.
+  Bring up the app on the assigned ports, run black-box behavior tests, and
+  return only the requested JSON object.
+os_env:
+  type: caller_process
+  cwd: .
+  sandbox:
+    write_paths: [.]
+    cwd_allow_hidden: [.git, .harness]
+    allow_network: true

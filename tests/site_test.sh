@@ -80,7 +80,7 @@ diff -u <(jq -S . "$ROLES") <(
 
 for file in "$README" "$HTML"; do
   grep -Fq "$ROLES_URL" "$file"
-  grep -Fq 'Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf' "$file"
+  grep -Fq 'ornith-1.0-9b-code-UD-Q4_K_XL.gguf' "$file"
   grep -Fq '.harness/projects.json' "$file"
   grep -Fq 'run_completed' "$file"
   grep -Fq 'implementation and .qa and .integration' "$file"

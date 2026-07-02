@@ -1,6 +1,6 @@
 {
   "coding": [
-    { "harness": "opencode", "model": "llama.cpp/qwen3.6-35b-a3b" },
+    { "harness": "pi", "model": "llama.cpp/ornith-1.0-9b-code" },
     { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
     { "harness": "opencode", "model": "opencode-go/kimi-k2.7-code" },
     { "harness": "claude", "model": "claude-sonnet-5" }
@@ -8,19 +8,16 @@
   "validation": [
     { "harness": "claude", "model": "claude-opus-4-8" },
     { "harness": "codex", "model": "gpt-5.5" },
-    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
-    { "harness": "opencode", "model": "llama.cpp/qwen3.6-35b-a3b" }
+    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" }
   ],
   "repairPlanning": [
     { "harness": "codex", "model": "gpt-5.5" },
     { "harness": "claude", "model": "claude-opus-4-8" },
-    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
-    { "harness": "opencode", "model": "llama.cpp/qwen3.6-35b-a3b" }
+    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" }
   ],
   "goalReview": [
     { "harness": "claude", "model": "claude-opus-4-8" },
     { "harness": "codex", "model": "gpt-5.5" },
-    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
-    { "harness": "opencode", "model": "llama.cpp/qwen3.6-35b-a3b" }
+    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" }
   ]
 }
