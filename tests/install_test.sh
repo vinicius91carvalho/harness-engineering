@@ -148,3 +148,70 @@ if grep -q 'BRIGHTDATA_TOKEN' "$ROOT/.mcp.json" "$ROOT/.codex-plugin/mcp.json"; 
 fi
 grep -q 'BRIGHTDATA_TOKEN' "$ROOT/config/mcp.json" || fail 'Bright Data must remain in the prompted MCP inventory'
 pass 'secret-backed MCP servers are installed only through the prompted inventory'
+
+# Regression: a "remote" install (no local checkout next to install.sh, as with
+# `curl | sh`) clones into a temp dir that its own cleanup trap deletes on
+# exit. The statusline command must survive that cleanup, so it has to be a
+# persistent copy rather than a path into the ephemeral clone.
+: >"$HARNESS_TEST_LOG"
+mkdir -p "$TMP/remote" "$TMP/systmp"
+cp "$ROOT/install.sh" "$TMP/remote/install.sh"
+chmod +x "$TMP/remote/install.sh"
+cat >"$TMP/bin/git" <<EOF
+#!/bin/sh
+if [ "\$1" = clone ]; then
+  dest=\$5
+  mkdir -p "\$dest"
+  cp -R "$ROOT/." "\$dest/"
+else
+  echo "unsupported git invocation: \$*" >&2
+  exit 1
+fi
+EOF
+chmod +x "$TMP/bin/git"
+TMPDIR="$TMP/systmp" "$TMP/remote/install.sh" --cli claude --yes </dev/null >"$TMP/out" 2>"$TMP/err" \
+  || fail 'remote-style install should succeed'
+cmd=$(jq -r '.statusLine.command' "$HOME/.claude/settings.json")
+script_path=${cmd#bash }
+[ -f "$script_path" ] || fail 'statusline script must survive installer temp-dir cleanup'
+cmp -s "$script_path" "$ROOT/scripts/statusline.sh" || fail 'persisted statusline script must match the bundled one'
+[ -z "$(find "$TMP/systmp" -mindepth 1 -maxdepth 1 -name 'harness-installer.*' 2>/dev/null)" ] \
+  || fail 'installer temp clone should have been cleaned up'
+pass 'statusline persists after the installer cleans up its temp clone'
+
+# Regression: Codex's native status line is a config.toml upsert, not a
+# script. Cover a fresh file, an existing [tui] table with unrelated keys
+# (TOML forbids redefining a table, so this is the riskiest surface), and
+# idempotent re-runs.
+: >"$HARNESS_TEST_LOG"
+rm -rf "$HOME/.codex"
+"$ROOT/install.sh" --cli codex --yes </dev/null >"$TMP/out" 2>"$TMP/err" || fail 'Codex --yes install should succeed'
+grep -q '^\[tui\]$' "$HOME/.codex/config.toml" || fail 'fresh Codex config should gain a [tui] table'
+grep -q '^status_line = \["model", "current-dir", "git-branch", "context-used", "five-hour-limit", "weekly-limit"\]$' \
+  "$HOME/.codex/config.toml" || fail 'fresh Codex config should gain the expected status_line array'
+pass 'Codex status line is added to a fresh config.toml'
+
+cat >"$HOME/.codex/config.toml" <<'EOF'
+model = "gpt-5"
+
+[tui]
+theme = "dark"
+animations = true
+
+[sandbox]
+mode = "workspace-write"
+EOF
+"$ROOT/install.sh" --cli codex --yes </dev/null >"$TMP/out" 2>"$TMP/err" || fail 'Codex install on an existing config should succeed'
+[ "$(grep -c '^\[tui\]$' "$HOME/.codex/config.toml")" = 1 ] || fail 'existing [tui] table must not be duplicated'
+[ "$(grep -c '^status_line = ' "$HOME/.codex/config.toml")" = 1 ] || fail 'status_line must appear exactly once'
+grep -q '^theme = "dark"$' "$HOME/.codex/config.toml" || fail 'unrelated existing tui keys must survive'
+grep -q '^\[sandbox\]$' "$HOME/.codex/config.toml" || fail 'other tables must survive'
+awk '/^\[tui\]/{t=1} /^\[sandbox\]/{s=1} t && !s && /^status_line = /{found=1} END{exit !found}' \
+  "$HOME/.codex/config.toml" || fail 'status_line must be inserted inside the existing [tui] table, before [sandbox]'
+pass 'Codex status line is inserted into an existing [tui] table without disturbing it'
+
+first=$(shasum -a 256 "$HOME/.codex/config.toml")
+"$ROOT/install.sh" --cli codex --yes </dev/null >"$TMP/out" 2>"$TMP/err" || fail 'repeated Codex install should succeed'
+second=$(shasum -a 256 "$HOME/.codex/config.toml")
+[ "$first" = "$second" ] || fail 'repeated Codex status-line install is not idempotent'
+pass 'Codex status line install is idempotent'

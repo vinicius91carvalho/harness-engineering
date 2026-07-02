@@ -193,7 +193,8 @@ plugin_clis() {
     harness|omnigent|ponytail) echo 'claude codex opencode' ;;
     codebase-memory-mcp|context7|playwright) echo 'claude codex opencode' ;;
     mcp-servers) echo 'claude codex opencode' ;;
-    status-line|shared-config) echo claude ;;
+    status-line) echo 'claude codex' ;;
+    shared-config) echo claude ;;
   esac
 }
 
@@ -338,7 +339,45 @@ enable_status_line() {
   [ -n "$DRY" ] && { echo 'DRY RUN — atomically enable the Claude status line'; return; }
   ensure_repo; script=$TEMP_REPO/scripts/statusline.sh
   [ -f "$script" ] || die 'bundled statusline.sh is missing'
-  atomic_claude_filter '.statusLine = {type:"command", command:$command}' --arg command "bash $script"
+  dest=$HOME/.claude/statusline.sh
+  mkdir -p "$HOME/.claude"; cp "$script" "$dest"
+  atomic_claude_filter '.statusLine = {type:"command", command:$command}' --arg command "bash $dest"
+}
+
+# ponytail: assumes any existing `status_line = [...]` line is single-line
+# (matches what this installer and Codex itself write); a hand-edited
+# multi-line array would leave orphaned continuation lines behind.
+enable_codex_status_line() {
+  [ -n "$DRY" ] && { echo 'DRY RUN — atomically enable the Codex status line'; return; }
+  dir=$HOME/.codex; cfg=$dir/config.toml; mkdir -p "$dir"
+  [ -f "$cfg" ] || : >"$cfg"
+  cp "$cfg" "$cfg.pre-harness.bak"
+  items='"model", "current-dir", "git-branch", "context-used", "five-hour-limit", "weekly-limit"'
+  tmp=$(mktemp "$dir/config.toml.XXXXXX")
+  awk -v items="$items" '
+    /^\[tui\]/ {
+      print
+      in_tui = 1
+      next
+    }
+    /^\[/ {
+      if (in_tui && !done) { print "status_line = [" items "]"; done = 1 }
+      in_tui = 0
+      print
+      next
+    }
+    in_tui && /^status_line[ \t]*=/ {
+      print "status_line = [" items "]"
+      done = 1
+      next
+    }
+    { print }
+    END {
+      if (in_tui && !done) { print "status_line = [" items "]"; done = 1 }
+      if (!done) { print ""; print "[tui]"; print "status_line = [" items "]" }
+    }
+  ' "$cfg" >"$tmp"
+  mv "$tmp" "$cfg"
 }
 
 apply_shared_config() {
@@ -475,6 +514,11 @@ install_portable_mcp() {
   done
 }
 
+[ -n "$DRY" ] || case " $SELECTED " in
+  *' status-line '*|*' shared-config '*|*' mcp-servers '*|*' context7 '*|*' playwright '*|*' codebase-memory-mcp '*)
+    ensure_jq ;;
+esac
+
 for cli in $CLI; do
   case "$cli" in claude) install_claude_marketplace ;; codex) install_codex_marketplace ;; esac
 done
@@ -484,7 +528,7 @@ for item in $SELECTED; do
     omnigent) install_omnigent ;;
     codebase-memory-mcp) install_memory ;;
     context7|playwright) install_portable_mcp "$item" ;;
-    status-line) enable_status_line ;;
+    status-line) for cli in $CLI; do case "$cli" in claude) enable_status_line ;; codex) enable_codex_status_line ;; esac; done ;;
     shared-config) apply_shared_config ;;
     mcp-servers) install_mcp_inventory ;;
     *) for cli in $CLI; do install_plugin "$item" "$cli"; done ;;

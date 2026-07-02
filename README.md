@@ -107,8 +107,9 @@ node --version
 claude --version  # or: codex --version / opencode --version
 ```
 
-The installer adds `jq` when it is missing. Omnigent, Tailscale, and additional
-plugins are optional.
+The installer requires `jq`; install it via your package manager (e.g. `apt
+install jq`, `brew install jq`) if it's missing. Omnigent, Tailscale, and
+additional plugins are optional.
 
 ## Install
 
@@ -120,7 +121,8 @@ curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineeri
 
 The installer detects available tools and shows one checklist. Keep `harness`
 selected; optionally select Omnigent, plugins, MCP servers, shared configuration,
-or the status line. Re-running the installer safely refreshes installed content.
+or the status line (Claude and Codex; OpenCode has no native status-line hook
+yet). Re-running the installer safely refreshes installed content.
 
 Native Windows users can run [`install.ps1`](install.ps1). See the
 [installer reference](docs/installer/README.md) for flags, scopes, and dry runs.

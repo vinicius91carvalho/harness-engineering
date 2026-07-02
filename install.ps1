@@ -21,7 +21,7 @@ $PluginClis = @{
   "codebase-memory-mcp" = @("claude", "codex", "opencode")
   context7 = @("claude", "codex", "opencode"); playwright = @("claude", "codex", "opencode")
   "mcp-servers" = @("claude", "codex", "opencode")
-  "status-line" = @("claude"); "shared-config" = @("claude")
+  "status-line" = @("claude", "codex"); "shared-config" = @("claude")
 }
 
 if ($Yes -and $No) { throw "-Yes and -No are mutually exclusive" }
@@ -247,7 +247,38 @@ function Enable-ClaudeStatusLine {
   if ($DryRun) { Write-Host "DRY RUN - atomically enable the Claude status line"; return }
   $repo = Get-Repository; $script = Join-Path $repo "scripts/statusline.sh"
   if (-not (Test-Path $script)) { throw "Bundled statusline.sh is missing" }
-  Write-ClaudeSettings { param($json) $json | Add-Member -Force NoteProperty statusLine ([pscustomobject]@{ type="command"; command="bash $script" }) }
+  $dir = Join-Path $HOME ".claude"; New-Item -ItemType Directory -Force $dir | Out-Null
+  $dest = Join-Path $dir "statusline.sh"
+  Copy-Item $script $dest -Force
+  Write-ClaudeSettings { param($json) $json | Add-Member -Force NoteProperty statusLine ([pscustomobject]@{ type="command"; command="bash $dest" }) }
+}
+
+# ponytail: assumes any existing `status_line = [...]` line is single-line
+# (matches what this installer and Codex itself write); a hand-edited
+# multi-line array would leave orphaned continuation lines behind.
+function Enable-CodexStatusLine {
+  if ($DryRun) { Write-Host "DRY RUN - atomically enable the Codex status line"; return }
+  $dir = Join-Path $HOME ".codex"; $cfg = Join-Path $dir "config.toml"
+  New-Item -ItemType Directory -Force $dir | Out-Null
+  if (-not (Test-Path $cfg)) { "" | Set-Content $cfg -Encoding utf8 }
+  Copy-Item $cfg "$cfg.pre-harness.bak" -Force
+  $statusLine = 'status_line = ["model", "current-dir", "git-branch", "context-used", "five-hour-limit", "weekly-limit"]'
+  $output = [System.Collections.Generic.List[string]]::new()
+  $inTui = $false; $done = $false
+  foreach ($line in (Get-Content $cfg)) {
+    if ($line -match '^\[tui\]') { $output.Add($line); $inTui = $true; continue }
+    if ($line -match '^\[') {
+      if ($inTui -and -not $done) { $output.Add($statusLine); $done = $true }
+      $inTui = $false; $output.Add($line); continue
+    }
+    if ($inTui -and $line -match '^status_line\s*=') { $output.Add($statusLine); $done = $true; continue }
+    $output.Add($line)
+  }
+  if ($inTui -and -not $done) { $output.Add($statusLine); $done = $true }
+  if (-not $done) { $output.Add(""); $output.Add("[tui]"); $output.Add($statusLine) }
+  $temp = "$cfg.$PID.tmp"
+  $output | Set-Content $temp -Encoding utf8
+  Move-Item $temp $cfg -Force
 }
 
 function Apply-ClaudeSharedConfig {
@@ -410,7 +441,13 @@ foreach ($item in $Selected) {
   if ($item -eq "omnigent") { Install-Omnigent; continue }
   if ($item -eq "codebase-memory-mcp") { Install-Memory; continue }
   if ($item -eq "context7" -or $item -eq "playwright") { Install-PortableMcp $item; continue }
-  if ($item -eq "status-line") { Enable-ClaudeStatusLine; continue }
+  if ($item -eq "status-line") {
+    foreach ($target in $Targets) {
+      if ($target -eq "claude") { Enable-ClaudeStatusLine }
+      if ($target -eq "codex") { Enable-CodexStatusLine }
+    }
+    continue
+  }
   if ($item -eq "shared-config") { Apply-ClaudeSharedConfig; continue }
   if ($item -eq "mcp-servers") { Install-McpInventory; continue }
   foreach ($target in $Targets) {
