@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### [0.18.4](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.18.3...v0.18.4) (2026-07-02)
+
+
+### Bug Fixes
+
+* add section explainig that omnigent can't call opencode directly for supervisor role ([777cb13](https://github.com/vinicius91carvalho/harness-engineering/commit/777cb133195c6e68956874cd43fae73eaacf2d21))
+
 ### [0.18.3](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.18.2...v0.18.3) (2026-07-01)
 
 
