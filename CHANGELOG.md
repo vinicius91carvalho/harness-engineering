@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### [1.1.1](https://github.com/vinicius91carvalho/harness-engineering/compare/v1.1.0...v1.1.1) (2026-07-03)
+
+
+### Bug Fixes
+
+* add verify false parameter on monorepo initialization ([673fc1c](https://github.com/vinicius91carvalho/harness-engineering/commit/673fc1c5fd6dea64e8106c5b22afbe79074a608f))
+
 ## [1.1.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v1.0.1...v1.1.0) (2026-07-03)
 
 
