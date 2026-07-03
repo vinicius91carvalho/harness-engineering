@@ -11,6 +11,23 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [0.19.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.18.4...v0.19.0) (2026-07-03)
+
+
+### Features
+
+* add pi as a small-context coding harness with a context-budget fallback ([8794494](https://github.com/vinicius91carvalho/harness-engineering/commit/8794494fd4f65871052059d661a00f1419c2b6c2))
+
+
+### Bug Fixes
+
+* persist the statusline script so it survives installer cleanup ([9ce12fc](https://github.com/vinicius91carvalho/harness-engineering/commit/9ce12fc4a4f3ae349c559c8c1c4cba27e4322a19))
+
+
+### Documentation
+
+* make README and site friendlier for new users ([a2fffe9](https://github.com/vinicius91carvalho/harness-engineering/commit/a2fffe9289772936bb7975082cbc8e88d4cac257))
+
 ### [0.18.4](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.18.3...v0.18.4) (2026-07-02)
 
 
