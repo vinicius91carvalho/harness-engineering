@@ -11,6 +11,14 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [1.1.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v1.0.1...v1.1.0) (2026-07-03)
+
+
+### Features
+
+* **harness:** add command router, delimited verdict contract, and lease/worktree hardening ([f032e82](https://github.com/vinicius91carvalho/harness-engineering/commit/f032e821408a46dcd1d948ce33c826e1910083ca))
+* **harness:** make pi a first-class harness pointing at GLM 5.2 ([de28742](https://github.com/vinicius91carvalho/harness-engineering/commit/de28742cf7834f026f9074bf97edce10be9bb1b8))
+
 ### [1.0.1](https://github.com/vinicius91carvalho/harness-engineering/compare/v1.0.0...v1.0.1) (2026-07-03)
 
 
