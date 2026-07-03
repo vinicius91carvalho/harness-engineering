@@ -14,20 +14,21 @@
 
 The whole thing in four steps — each one is explained in full further down.
 
+**1. Install** (macOS, Linux, Git Bash, or WSL) — requires `jq`. A menu appears: keep `harness` checked (up/down to move, space to toggle, enter to confirm).
 ```sh
-# 1. Install (macOS, Linux, Git Bash, or WSL) — requires `jq`. A menu appears:
-#    keep `harness` checked (up/down to move, space to toggle, enter to confirm).
 curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh
 ```
 
 Steps 2 and 3 are typed **inside your coding tool's chat** (Claude Code, Codex,
 or OpenCode) — not in a terminal:
 
+**2. Describe** what you want, in plain language.
 ```text
-# 2. Describe what you want, in plain language.
 /harness:planner Build a notes app where a user can publish a note and find it after reloading.
+```
 
-# 3. Build it. Generator asks what to build — answer "All" for a new project.
+**3. Build** it. Generator asks what to build — answer "All" for a new project.
+```text
 /harness:generator
 ```
 
@@ -478,3 +479,8 @@ See the [release history](https://github.com/vinicius91carvalho/harness-engineer
 
 Feedback and contributions are welcome through
 [issues](https://github.com/vinicius91carvalho/harness-engineering/issues) and pull requests.
+
+## References
+
+[Effective harnesses for long-running agents](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents) by Justin Young at Anthropic - Nov 26, 2025
+[Harness design for long-running application development](https://www.anthropic.com/engineering/harness-design-long-running-apps) by Prithvi Rajasakeran at Anthropic - Mar 24, 2026
