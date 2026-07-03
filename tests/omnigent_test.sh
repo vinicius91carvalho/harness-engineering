@@ -38,4 +38,9 @@ grep -q 'Do not start or recommend validation of all mapped features' "$BUNDLE/s
 grep -q 'Never refactor while RED' "$BUNDLE/skills/harness-master/SKILL.md"
 grep -q '20k' "$BUNDLE/skills/harness-master/SKILL.md"
 
+grep -q 'grill' "$BUNDLE/config.yaml"
+grep -q 'summary-minutes' "$BUNDLE/config.yaml"
+grep -q 'one question at a time' "$BUNDLE/skills/grilling/SKILL.md"
+grep -q 'Grill at intake' "$BUNDLE/skills/harness-master/SKILL.md"
+
 echo 'ok - Omnigent bundle, worker templates, skills, and role example are structurally valid'

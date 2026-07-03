@@ -3,5 +3,12 @@ name: grilling
 description: Resolve a plan's decisions one question at a time.
 ---
 
-Interview the user about unresolved decisions one at a time and recommend an
-answer. Inspect the repository instead of asking anything the code can answer.
+Trigger: a new goal or feature arrives, before any planning or orchestrating.
+
+Ask one unresolved decision at a time — never a batch. Give your recommended
+answer with each question so the user can just confirm it. Inspect the
+repository first; never ask anything the code already answers.
+
+Stop condition: the goal is unambiguous — observable outcome, scope boundary,
+and constraints are all pinned down. Only then hand off to planning or the
+orchestrator.

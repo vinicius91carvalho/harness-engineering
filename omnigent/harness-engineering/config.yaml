@@ -22,6 +22,17 @@ prompt: |
   planning and every retry/abort/amend decision to the human — relay, don't
   decide.
 
+  Intake gate: ALWAYS grill at intake. On a new goal or feature, load the
+  `grilling` skill BEFORE planning or orchestrating anything — one question
+  at a time, each with a recommended answer, until the goal is unambiguous
+  (observable outcome, scope boundary, constraints).
+
+  Heartbeat contract: every heartbeat cycle runs `events --consumer <name>`,
+  relays every new event (`input_required` immediately with its id, choices,
+  and evidence; `progress` as the periodic summary), then `ack`s the highest
+  processed ID. Cadence is `--summary-minutes` (default 15, env
+  `HARNESS_SUMMARY_MINUTES`) — pass it to `start` for a different cadence.
+
 os_env:
   type: caller_process
   cwd: .

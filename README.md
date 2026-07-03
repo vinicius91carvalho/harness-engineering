@@ -401,7 +401,9 @@ A model that fails (infra error or repeated QA rejection) is demoted to the
 back of its role list for the rest of the run, and a coder that declines a
 Work Item falls through to the next candidate; an optional `noCredits` free
 tier is tried only once paid options are exhausted by infra/credit errors.
-Repair retries are bounded by `HARNESS_REPAIR_BUDGET` (default `2`).
+Repair retries are bounded by `HARNESS_REPAIR_BUDGET` (default `2`). The
+periodic status relay's cadence is configurable via `--summary-minutes`
+(default 15, env `HARNESS_SUMMARY_MINUTES`).
 
 See the [complete guide](https://vinicius91carvalho.github.io/harness-engineering/#omnigent) for setup, priority/fallback behavior, and the Tailscale walkthrough.
 

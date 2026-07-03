@@ -86,6 +86,8 @@ authoritative — never reconstruct state from chat history.
 
 ## 3. Interview / grilling discipline
 
+- **Grill at intake, before planning or orchestrating** — a new goal or
+  feature is never planned or orchestrated before the interview resolves it.
 - **One question at a time** — multiple is bewildering. Give your recommended
   answer with each.
 - **Inspect the repo instead of asking anything the code can answer.**
