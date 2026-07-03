@@ -421,8 +421,10 @@ install_mcp_inventory() {
           else
             command=$(printf '%s' "$json" | jq -r '.command')
             args=$(printf '%s' "$json" | jq -r '.args[]?' | xargs)
+            # ponytail: env values are tokens (no spaces); simple word-split matches the args handling above
+            envflags=$(printf '%s' "$json" | jq -r '(.env // {}) | to_entries[] | "--env \(.key)=\(.value)"')
             # shellcheck disable=SC2086
-            codex mcp add "$name" -- "$command" $args || die "Codex MCP configuration failed for $name"
+            codex mcp add "$name" $envflags -- "$command" $args || die "Codex MCP configuration failed for $name"
           fi ;;
         opencode)
           server=$(printf '%s' "$json" | jq -c 'if .url then {type:"remote",url:.url,enabled:true} else {type:"local",command:([.command]+(.args//[])),enabled:true} + (if .env then {environment:.env} else {} end) end')

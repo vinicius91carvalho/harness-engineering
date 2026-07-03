@@ -30,11 +30,20 @@ the Git top-level:
 
 Paths are Git-root-relative directories; IDs are stable and unique. Preserve
 existing entries and descriptions. Explain the discovered projects, then ask
-which project(s) to set up. Run every remaining step separately with each selected
-project directory as `PROJECT`. At the Git root, never create an aggregate
-`project_specs.xml` or `feature_list.json`; the registry is routing metadata, not
-a completion contract. If only one runnable project exists, use the repository
-root as `PROJECT` and do not create the registry.
+which project(s) to set up.
+
+Writing `.harness/projects.json` is a hard precondition, not an aside: after
+detecting the boundaries and before running any per-`PROJECT` step, write or
+update the registry at the Git top-level, then confirm the file exists and lists
+every selected project. Do not proceed to the numbered steps otherwise. This file
+is the required routing metadata — the planner and generator cannot route a goal
+to the right project without it.
+
+Then run every remaining step separately with each selected project directory as
+`PROJECT`. At the Git root, never create an aggregate `project_specs.xml` or
+`feature_list.json`; the registry is routing metadata, not a completion contract.
+If only one runnable project exists, use the repository root as `PROJECT` and do
+not create the registry.
 
 1. Require a non-empty Git repository. If `PROJECT` is empty, use the
    `planner` skill's New Project mode instead.
@@ -67,10 +76,19 @@ root as `PROJECT` and do not create the registry.
    and fails with a concise missing-technology report. Fix the spec and repeat until
    it passes.
 5. Run only section 1, **Scaffold and reconcile the completion contract**, from
-   the sibling `generator` skill. The initializer must preserve existing source,
-   configuration, tests, documentation, and Git history.
-6. Stop after reconciliation. Do not claim or implement Work Items. Create or
-   reconcile only harness files (including the inventory); retain stable Acceptance Check IDs and preserve
+   the sibling `generator` skill. This step *initializes* the project: the
+   initializer maps every Acceptance Check into `feature_list.json`, scaffolds the
+   PORT-parameterized `init.sh` and any missing structure, and makes the first
+   harness commit — all while preserving existing source, configuration, tests,
+   documentation, and Git history. Do not finish setup until `feature_list.json`
+   exists in `PROJECT` and reconciliation passes; an uninitialized project cannot
+   accept new work.
+6. Stop after reconciliation, leaving the project initialized and ready for new
+   work. Do not claim or implement Work Items, and do not run the verify-first
+   audit — to add a big change or new capability next, the user runs `planner` in
+   **Feature mode** (it appends new Acceptance Checks; the generator then builds
+   only the Work Items the user selects). Create or reconcile only harness files
+   (including the inventory); retain stable Acceptance Check IDs and preserve
    unrelated worktree changes.
 
 The planner writes `<mode>existing-codebase</mode>` into `project_specs.xml`

@@ -43,6 +43,7 @@ stable Acceptance Checks. `project_specs.xml`, not this queue, owns completion.
     "steps": ["Step 1: ...", "Step 2: ...", "Step 3: verify ..."],
     "acceptance_checks": ["AC-001"],
     "depends_on": [],
+    "verify_first": false,
     "implementation": false,
     "qa": false,
     "integration": false,
@@ -69,6 +70,12 @@ Requirements:
   flows, secondary behavior, edge cases, and visual polish. Never place a feature
   before the foundation needed to run and black-box test it.
 - Every entry starts `"implementation": false, "qa": false, "integration": false, "retries": 0`.
+- Set `"verify_first"` per Work Item: when `project_specs.xml` contains
+  `<mode>existing-codebase</mode>`, set `"verify_first": true` on every item you
+  create (these audit already-existing behavior verify-first). Otherwise set
+  `"verify_first": false` (normal build/implement). Later sessions append new
+  features with `verify_first:false`, so a big change added after setup is built in
+  full, while the mapped baseline stays audit-only.
 - Copy Acceptance Check dependencies into `depends_on`; start `integration:false`.
 - Cover every feature in the spec exhaustively.
 - Make each description and its steps self-contained: use plain language, name

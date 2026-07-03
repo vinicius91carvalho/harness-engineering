@@ -124,14 +124,22 @@ fallbacks, and independence level.
 
 ### Verify-first mode
 
-When `project_specs.xml` contains `<mode>existing-codebase</mode>`, the CODING
-prompt switches from "implement this Work Item" to "first verify the mapped
-Acceptance Checks against the existing code at a real external boundary; if all
-pass, set `implementation=true` with no code changes; only if a check fails, fix
-the root cause with the smallest possible diff." QA and Integrated Verification
-still independently re-run the checks, so a false pass is caught downstream. This
-makes `/generator` a safe audit/regression pass over a working codebase rather
-than a rewrite. The planner writes this mode during Existing Codebase setup.
+Verify-first is decided **per Work Item** by its `verify_first` flag. The
+initializer sets `verify_first:true` on the baseline items it maps during Existing
+Codebase setup (spec `<mode>existing-codebase</mode>`); `reconcile.mjs` sets
+`verify_first:false` on items it appends afterward — the new features or refactor a
+later `planner` run adds. Legacy queues that predate the field fall back to the
+spec's `<mode>`, preserving the old whole-project behavior.
+
+For a `verify_first` item the CODING prompt switches from "implement this Work
+Item" to "first verify the mapped Acceptance Checks against the existing code at a
+real external boundary; if all pass, set `implementation=true` with no code
+changes; only if a check fails, fix the root cause with the smallest possible
+diff." Items without the flag build normally. QA and Integrated Verification still
+independently re-run the checks, so a false pass is caught downstream. This makes
+`/generator` a safe audit/regression pass over the mapped baseline **while still
+building new work in full** — a big refactor added after setup is implemented, not
+just audited.
 
 - `stuck`/`blocked` result: show the user the Run State, three Attempt summaries,
   defects, plans, evidence paths, and next action. Do not merge, release, or clean.

@@ -415,7 +415,10 @@ function featurePrompt(kind, feature, attempt, repairPlan = null, workdir = opti
   const base = `WORKDIR=${workdir}\nPORT=${options.port}\nWork Item id=${feature.id} context=${feature.context}\n` +
     `Acceptance Checks=${(feature.acceptance_checks || []).join(',')}\nDescription=${feature.description || ''}\n`
   if (kind === 'CODING') {
-    const verifyFirst = verifyFirstCache.get(workdir)
+    // Per-Work-Item verify_first: baseline items (initializer, existing-codebase) audit;
+    // items appended after the baseline (new features/refactor) build in implement mode.
+    // Fall back to the global spec mode for legacy queues that predate the field.
+    const verifyFirst = feature.verify_first === undefined ? verifyFirstCache.get(workdir) : feature.verify_first === true
     const head = verifyFirst
       ? `You are the coding-agent in VERIFY-FIRST mode (existing codebase). First exercise every mapped Acceptance Check against the EXISTING code at a real external boundary (HTTP or browser). If all pass, set implementation=true and make NO code changes (a zero-diff checkpoint is valid; commit only if you intentionally changed tracked files). If any check fails, fix only the root cause with the smallest possible diff — do not refactor, restructure, or rewrite working code. The bar is "the AC passes at a real boundary," not "the code is idiomatic."\n${base}`
       : `You are the coding-agent. Implement exactly this Work Item, then stop.\n${base}`

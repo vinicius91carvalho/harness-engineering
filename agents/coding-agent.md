@@ -79,9 +79,12 @@ Write the frontend/backend code for the assigned feature. Then verify it
 
 ### Verify-first mode (existing codebase)
 
-When `project_specs.xml` contains `<mode>existing-codebase</mode>`, the code under
-test already exists and likely satisfies its Acceptance Checks. Do NOT rewrite
-working code. Instead:
+When the orchestrator hands you a **VERIFY-FIRST** prompt (the Work Item's
+`verify_first` is true — a baseline item mapped during Existing Codebase setup),
+the code under test already exists and likely satisfies its Acceptance Checks. Do
+NOT rewrite working code. Work Items without that flag — new features or a refactor
+appended after setup — are ordinary "implement this Work Item" work, not audits.
+For a verify-first item:
 
 1. Bring up the app as below and exercise every mapped Acceptance Check at a real
    external boundary (HTTP or browser), exactly as QA would.

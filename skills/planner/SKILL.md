@@ -23,9 +23,13 @@ Use the current host's native planning surface and configured model. Do not forc
 a vendor model ID. Do not write application code or scaffold anything; only
 produce `project_specs.xml` in the user's current working directory.
 
-In a monorepo, first read the Git-root `.harness/projects.json`. If cwd is the Git
-root, list the registered projects and ask which one owns the goal; do not create
-an aggregate root specification. If cwd is inside a registered path, use the
+In a monorepo, first read the Git-root `.harness/projects.json`. If it is missing
+but more than one independently runnable project boundary is detectable (same
+detection as `setup`: workspace manifests, nested package/build manifests, Compose
+services, deployment units), reconstruct the registry at the Git root before
+routing — never ask blindly merely because the registry is absent. If cwd is the
+Git root, list the registered projects and ask which one owns the goal; do not
+create an aggregate root specification. If cwd is inside a registered path, use the
 nearest registered ancestor as the project root and write its `project_specs.xml`.
 The specification may require changes in shared packages or sibling services, but
 one project owns its Acceptance Checks and execution queue. Cross-project queue
@@ -46,7 +50,10 @@ Acceptance Check in the owning project instead.
 - **Feature** — `project_specs.xml` already exists → ADD only the new feature.
   Append new `<core_features>` and `<acceptance_check>` entries (and any new tables / endpoints / UI it
   needs). **Never rewrite, reorder, or delete existing content** — the generator
-  treats the spec as append-only.
+  treats the spec as append-only. Leave any existing `<mode>existing-codebase</mode>`
+  in place; `reconcile.mjs` tags these appended checks `verify_first:false`, so the
+  generator builds the new feature or refactor in full while the mapped baseline
+  stays a verify-first audit.
 
 Read any existing `project_specs.xml` first to decide.
 

@@ -98,6 +98,8 @@ for (const check of missing) {
     steps: [`Verify ${check.id}: ${check.description}`],
     acceptance_checks: [check.id],
     depends_on: check.dependencies,
+    // Appended after the baseline => new work: build/implement, not verify-first audit.
+    verify_first: false,
     implementation: false,
     qa: false,
     integration: false,

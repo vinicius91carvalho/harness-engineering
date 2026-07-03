@@ -340,11 +340,19 @@ function Install-McpInventory {
               if ($LASTEXITCODE -ne 0) { throw "Codex MCP configuration failed for $($property.Name)" }
             }
           }
-          else { Invoke-Native codex (@("mcp", "add", $property.Name, "--", $server.command) + @($server.args)) }
+          else {
+            $envArgs = @()
+            if ($server.env) { $server.env.PSObject.Properties | ForEach-Object { $envArgs += @("--env", "$($_.Name)=$($_.Value)") } }
+            Invoke-Native codex (@("mcp", "add", $property.Name) + $envArgs + @("--", $server.command) + @($server.args))
+          }
         }
         opencode {
           $entry = if ($server.url) { [pscustomobject]@{ type="remote"; url=$server.url; enabled=$true } }
-            else { [pscustomobject]@{ type="local"; command=@($server.command) + @($server.args); enabled=$true } }
+            else {
+              $local = @{ type="local"; command=@($server.command) + @($server.args); enabled=$true }
+              if ($server.env) { $local.environment = $server.env }
+              [pscustomobject]$local
+            }
           Set-OpenCodeMcp $property.Name $entry
         }
       }

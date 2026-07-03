@@ -20,7 +20,7 @@ XML
 printf '[]\n' >"$TMP/feature_list.json"
 node "$ROOT/skills/generator/reconcile.mjs" "$TMP" >"$TMP/result.json"
 jq -e '.addedWorkItems == 2 and .addedIds == ["AC-001","AC-002"]' "$TMP/result.json" >/dev/null
-jq -e 'length == 2 and .[1].acceptance_checks == ["AC-002"] and .[1].depends_on == ["AC-001"] and .[1].integration == false' "$TMP/feature_list.json" >/dev/null
+jq -e 'length == 2 and .[1].acceptance_checks == ["AC-002"] and .[1].depends_on == ["AC-001"] and .[1].integration == false and .[0].verify_first == false and .[1].verify_first == false' "$TMP/feature_list.json" >/dev/null
 node "$ROOT/skills/generator/reconcile.mjs" "$TMP" --check >/dev/null
 echo 'ok - stable Acceptance Checks reconcile deterministically into mapped Work Items'
 
