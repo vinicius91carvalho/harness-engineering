@@ -10,7 +10,7 @@ test -s "$HTML"
 test -s "$ROOT/site/styles.css"
 test -s "$ROOT/.github/workflows/pages.yml"
 
-for id in why architecture workflow prerequisites install commands start worked-example files monorepo omnigent routing local-model run-omnigent mobile operate maintenance help; do
+for id in why architecture workflow prerequisites install commands start worked-example add-feature files monorepo operate troubleshoot advanced omnigent routing local-model run-omnigent mobile maintenance help; do
   grep -q "id=\"$id\"" "$HTML"
 done
 while IFS= read -r id; do
@@ -44,7 +44,6 @@ grep -Fq 'Add reversible note archiving' "$HTML"
 grep -Fq '* `implementation` means coding completed.' "$README"
 grep -Fq '* `qa` means isolated QA passed.' "$README"
 grep -Fq '* `integration` means the behavior passed after merging.' "$README"
-grep -Fq '**route coding, validation, repair planning, and Goal Review to ordered' "$README"
 grep -Fq '<strong>route coding, validation, repair planning, and Goal Review to ordered tool/model candidates;</strong>' "$HTML"
 grep -Fq 'https://omnigent.ai/' "$README" "$HTML"
 grep -Fq 'https://tailscale.com/' "$README" "$HTML"
@@ -53,24 +52,15 @@ grep -Fq 'Grilling is a planner capability' "$ROOT/skills/planner/SKILL.md"
 grep -Fq 'Do not tell them to validate every mapped' "$ROOT/skills/setup/SKILL.md"
 grep -Fq 'not required to plan' "$README"
 grep -Fq 'without Omnigent' "$HTML"
-for file in "$README" "$HTML"; do
-  grep -Fq 'ignores the AGENT spec' "$file"
-  grep -Fq -- '--harness opencode' "$file"
-  grep -Fq 'worker route' "$file"
-  grep -Fq 'omnigent-ai/omnigent/issues/1816' "$file"
-  grep -Fq 'Tailscale Magic DNS hostname' "$file"
-  grep -Fq '127.0.0.1' "$file"
-  grep -Fq 'localhost:6767' "$file"
-  grep -Fq 'omnigent stop' "$file"
-  grep -Fq 'owns the runner in-process' "$file"
+for str in 'ignores the AGENT spec' '--harness opencode' 'worker route' 'omnigent-ai/omnigent/issues/1816' 'Tailscale Magic DNS hostname' '127.0.0.1' 'localhost:6767' 'omnigent stop' 'owns the runner in-process'; do
+  grep -Fq -- "$str" "$HTML"
 done
 grep -Fq 'Background server already running' "$HTML"
 # The obsolete, incorrect port must NOT appear in the mobile flow:
 ! grep -Fq 'localhost:8000' "$HTML"
 
-diff -u <(jq -S . "$ROLES") <(
-  awk '/^The complete example is maintained at:/{section=1} section && /^```json$/{json=1; next} json && /^```$/{exit} json' "$README" | jq -S .
-)
+# README no longer embeds the routing JSON inline (short pointer + link instead);
+# the site keeps the full, verified-against-source block.
 diff -u <(jq -S . "$ROLES") <(
   sed -n '/id="routing"/,/id="local-model"/p' "$HTML" |
     sed -n '/<pre><code>{/,/}<\/code><\/pre>/p' |
@@ -78,17 +68,22 @@ diff -u <(jq -S . "$ROLES") <(
     jq -S .
 )
 
+# README points into the full guide's advanced sections instead of duplicating them:
+for anchor in omnigent routing local-model mobile monorepo; do
+  grep -Fq "vinicius91carvalho.github.io/harness-engineering/#$anchor" "$README"
+done
+
 for file in "$README" "$HTML"; do
   grep -Fq "$ROLES_URL" "$file"
-  grep -Fq 'ornith-1.0-9b-code-UD-Q4_K_XL.gguf' "$file"
   grep -Fq '.harness/projects.json' "$file"
   grep -Fq 'run_completed' "$file"
   grep -Fq 'implementation and .qa and .integration' "$file"
 done
+grep -Fq 'ornith-1.0-9b-code-UD-Q4_K_XL.gguf' "$HTML"
 
 grep -q 'sudo tailscale serve --bg http://localhost:6767' "$HTML"
 # The obsolete pre-1.52 syntax must NOT appear:
 ! grep -Fq 'serve https / http://' "$HTML"
 ! grep -Eq 'Hermes|Telegram' "$HTML"
 
-echo 'ok - README and site document the complete harness workflow and optional Omnigent routing'
+echo 'ok - README is a short quick-start pointing into the complete site, which documents the full workflow and optional Omnigent routing'

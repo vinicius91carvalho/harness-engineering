@@ -10,6 +10,31 @@
 
 <p align="center"><b>A durable spec → build → QA workflow for AI coding tools.</b></p>
 
+## Quickstart
+
+The whole thing in four steps — each one is explained in full further down.
+
+```sh
+# 1. Install (macOS, Linux, Git Bash, or WSL). A menu appears: keep `harness`
+#    checked (up/down to move, space to toggle, enter to confirm).
+curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh
+```
+
+Steps 2 and 3 are typed **inside your coding tool's chat** (Claude Code, Codex,
+or OpenCode) — not in a terminal:
+
+```text
+# 2. Describe what you want, in plain language.
+/harness:planner Build a notes app where a user can publish a note and find it after reloading.
+
+# 3. Build it. Generator asks what to build — answer "All" for a new project.
+/harness:generator
+```
+
+**4. Done** is when the Goal Review passes and every check is marked complete —
+not when the chat runs quiet. The sections below explain each step and how to
+watch, resume, or fix a run.
+
 ## About
 
 `harness-engineering` is a plugin marketplace and a complete software-delivery
@@ -27,17 +52,21 @@ harness workflow.
 
 ### Why use it?
 
+Long AI coding jobs tend to lose the plot: the context resets, a retry quietly
+undoes good work, or the tool declares itself finished when it isn't. The harness
+keeps a durable, checkable record so "done" means the work actually passes.
+
 - **The specification decides completion.** Agent confidence and an empty task
   list are not proof.
 - **Coding and QA are separate.** The implementation tool does not approve its
   own work when another tool is available.
 - **Integration is verified.** Checks run in the worker branch and again after
   merging into current `main`.
-- **Failures are actionable.** Evidence and a Repair Plan are recorded before a
+- **Failures are actionable.** Evidence and a fix plan are recorded before a
   bounded retry.
 - **State is durable.** Claims, attempts, evidence, and pending input survive
   sessions and context resets.
-- **Parallel work is governed.** Dependencies, leases, resource limits, and
+- **Parallel work is governed.** Dependencies, claims, resource limits, and
   serialized merges prevent workers from colliding.
 - **Tools are replaceable.** The same workflow runs through Claude Code, Codex,
   OpenCode, or optional Omnigent routing.
@@ -74,8 +103,8 @@ project_specs.xml → feature_list.json → coding → QA → integration → Go
    dependency-aware Acceptance Checks in `project_specs.xml`.
 2. **Reconcile:** generator maps every check to an append-only Work Item in
    `feature_list.json`. Missing mappings block execution.
-3. **Claim:** each ready context receives an atomic lease, branch, worktree,
-   port, and durable Run State.
+3. **Claim:** each ready context receives an atomic lease, its own Git branch and
+   worktree, a port (so parallel dev servers don't clash), and durable Run State.
 4. **Build and inspect:** a coding tool implements the Work Item; independent QA
    exercises the result through a browser or real HTTP boundary.
 5. **Repair:** a defect records expected and observed behavior, evidence, and a
@@ -88,6 +117,19 @@ project_specs.xml → feature_list.json → coding → QA → integration → Go
 
 Multiple generator sessions may claim independent contexts concurrently. A new
 session resumes durable state rather than restarting the project.
+
+### Key terms
+
+| Term | Meaning |
+| --- | --- |
+| Work Item | One Acceptance Check being implemented and QA'd; an entry in `feature_list.json`. |
+| Acceptance Check | A stable, ID'd pass/fail contract in `project_specs.xml`. |
+| Context | A group of related Acceptance Checks claimed and built together. |
+| Lease | A heartbeat-timestamped claim that stops two sessions building the same context. |
+| Run State | Durable JSON tracking one context's phase, attempt, and next action. |
+| Repair Plan | The orchestrator's fix plan issued after a QA defect, before the next attempt. |
+| Goal Review | The final independent check of the whole Project Goal on integrated `main`. |
+| Control Host | The long-running supervisor that governs worker admission and relays status. |
 
 ## Prerequisites
 
@@ -119,7 +161,8 @@ macOS, Linux, Git Bash, or WSL:
 curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh
 ```
 
-The installer detects available tools and shows one checklist. Keep `harness`
+The installer detects available tools and shows one checklist — an arrow-key menu
+(space toggles a row, enter confirms). Keep `harness`
 selected; optionally select Omnigent, plugins, MCP servers, shared configuration,
 or the status line (Claude and Codex; OpenCode has no native status-line hook
 yet). Re-running the installer safely refreshes installed content.
@@ -146,7 +189,8 @@ The examples below use the colon form. Substitute the OpenCode form when needed.
 
 ## Start a project
 
-Choose one path after installation.
+Choose one path after installation. Type each `/harness:...` command below into
+your coding tool's chat session, not a terminal.
 
 ### New project or new product goal
 
@@ -162,6 +206,12 @@ an observable result. Then run:
 ```text
 /harness:generator
 ```
+
+Generator asks whether to build **1 task**, **a set**, or **All** — choose
+**All** for a new project. When the run finishes, the Goal Review passes and
+every Work Item shows `implementation`, `qa`, and `integration` complete. See
+[Monitor a run](#monitor-a-run) to watch progress or resume after closing your
+session.
 
 ### Existing codebase
 
@@ -189,8 +239,25 @@ If you want an audit, run generator and select one task, a set, or all:
 That opt-in audit uses verify-first mode: coding first exercises the selected
 Acceptance Checks against the current product, records already-passing work
 without rewriting it, and fixes only failed checks. Independent QA and integrated
-verification rerun only the selected work. To add a feature instead, describe it
-to planner and then run generator for the new context.
+verification rerun only the selected work.
+
+## Add a feature
+
+Describe the feature to planner from the project directory. It appends new
+Acceptance Checks to `project_specs.xml`; existing ones are never rewritten:
+
+```text
+/harness:planner Add reversible note archiving.
+```
+
+Review the new Acceptance Checks, then build them:
+
+```text
+/harness:generator
+```
+
+Generator lists every unbuilt context, including the new one — select it to
+build only the feature you just described.
 
 ## Files delivered
 
@@ -219,227 +286,23 @@ afterward.
 Run `/harness:setup` once from the Git root. Setup automatically detects
 independently runnable or deployable projects, writes `.harness/projects.json`,
 asks which projects to initialize, and gives each selected project its own
-specification, queue, journals, and Run State. Run later commands from the chosen
-project directory. Git locking and integration remain repository-wide.
+specification, queue, journals, and Run State. Run later commands from the
+chosen project directory. Git locking and integration remain repository-wide.
 
-Advanced users may create or maintain the registry manually before running setup:
+Advanced users can maintain the registry manually — see the
+[complete guide](https://vinicius91carvalho.github.io/harness-engineering/#monorepo)
+for the file format.
 
-```json
-{
-  "projects": [
-    {"id": "web", "path": "apps/web", "description": "Customer application"},
-    {"id": "api", "path": "services/api", "description": "HTTP API"}
-  ]
-}
-```
+## Monitor a run
 
-Shared packages do not need registry entries unless they run or deploy
-independently.
+From inside Claude Code, Codex, or OpenCode chat, run `/harness:control-host`
+(or `/harness-control-host` on OpenCode) to watch, pause, resume, or stop a
+run without leaving the session.
 
-## Optional Omnigent control and routing
-
-[Omnigent](https://omnigent.ai/) is not required to plan, generate, validate,
-integrate, or review work. Without it, the selected Claude Code, Codex, or
-OpenCode tool runs the harness directly with its configured model.
-
-When installed, Omnigent can:
-
-- provide a local web/mobile control surface;
-- start and observe the harness's detached supervisor;
-- **route coding, validation, repair planning, and Goal Review to ordered
-  tool/model candidates;**
-- relay durable status and Input Requests without creating a second scheduler.
-
-The project-local `.harness/roles.json` enables routing. Although its existing
-schema calls the selector `harness`, each value selects a Claude Code, Codex,
-OpenCode, or Pi tool adapter. Removing the file returns to direct execution.
-
-### Priority and fallback behavior
-
-Each role array is ordered from highest to lowest priority. The next candidate is
-tried only after a rate limit, authentication failure, unavailable model, launch
-failure, or timeout. A successful QA response that finds a product defect does
-not fall through; it enters the Defect Report and Repair Plan loop.
-
-Validation, integrated QA, and Goal Review first prefer a tool different from the
-one that actually performed coding. Within the independent and same-tool groups,
-the configured order remains stable. Run State and evidence record every selected
-route and fallback reason.
-
-The complete example is maintained at:
-https://github.com/vinicius91carvalho/harness-engineering/blob/main/omnigent/harness-engineering/roles.example.json
-
-```json
-{
-  "coding": [
-    { "harness": "pi", "model": "llama.cpp/ornith-1.0-9b-code" },
-    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
-    { "harness": "opencode", "model": "opencode-go/kimi-k2.7-code" },
-    { "harness": "claude", "model": "claude-sonnet-5" }
-  ],
-  "validation": [
-    { "harness": "claude", "model": "claude-opus-4-8" },
-    { "harness": "codex", "model": "gpt-5.5" },
-    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" }
-  ],
-  "repairPlanning": [
-    { "harness": "codex", "model": "gpt-5.5" },
-    { "harness": "claude", "model": "claude-opus-4-8" },
-    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" }
-  ],
-  "goalReview": [
-    { "harness": "claude", "model": "claude-opus-4-8" },
-    { "harness": "codex", "model": "gpt-5.5" },
-    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" }
-  ]
-}
-```
-
-Copy it into a project only when using Omnigent routing:
-
-```sh
-mkdir -p .harness
-cp ~/.omnigent/agents/harness-engineering/roles.example.json .harness/roles.json
-```
-
-The example requires the listed providers and models to be available to their
-tools. Change or remove candidates that are not configured locally.
-
-### Configure the local Ornith model through llama-server
-
-Pi is the primary coding agent and routes the local model. Start the requested
-GGUF with [llama.cpp](https://github.com/ggml-org/llama.cpp)'s OpenAI-compatible
-server on port 8081:
-
-```sh
-llama-server \
-  -m /path/to/ornith-1.0-9b-code-UD-Q4_K_XL.gguf \
-  --port 8081
-```
-
-Merge this provider into Pi's model config at `~/.pi/agent/models.json`:
-
-```json
-{
-  "providers": {
-    "llama.cpp": {
-      "baseUrl": "http://127.0.0.1:8081/v1",
-      "api": "openai-completions",
-      "apiKey": "llama",
-      "compat": {
-        "supportsDeveloperRole": false,
-        "supportsReasoningEffort": false
-      },
-      "models": [
-        { "id": "ornith-1.0-9b-code", "name": "Ornith 1.0 9B Code (local)" }
-      ]
-    }
-  }
-}
-```
-
-Pi addresses configured models as `provider/model`, which produces the role ID
-`llama.cpp/ornith-1.0-9b-code`. Keep `llama-server` running while the route is in
-use. Configure [OpenRouter](https://openrouter.ai/),
-[OpenCode Go](https://opencode.ai/docs/go/), and
-[Claude Code](https://code.claude.com/docs/en/overview) credentials before
-relying on later fallbacks. Pi's small context loads the compressed
-`harness-master` skill instead of the full skill set.
-
-### Start or resume through Omnigent
-
-Start Omnigent from the Git root and name the exact project directory:
-
-```sh
-cd /path/to/git-root
-omni run ~/.omnigent/agents/harness-engineering --harness codex
-```
-
-```text
-Act as the Control Host for /absolute/path/to/project.
-Start or resume the harness. Use the project role file.
-Continue until input is needed or a persisted run_completed event exists.
-```
-
-Omnigent starts the repository's supervisor; the harness still owns claims,
-retries, merges, integrated verification, Goal Review, and completion state.
-
-> **Limitation:** the agent bundle only loads under a **headless** harness —
-> `codex` or `claude`. `--harness opencode` launches the interactive OpenCode
-> TUI and ignores the AGENT spec, so Omnigent rejects the combination
-> (`omni run <agent> --harness opencode` errors). OpenCode still runs as a
-> **worker route** per `.harness/roles.json` — the supervisor spawns
-> `opencode run` per phase — it just can't be the Control Host. To use OpenCode
-> as the host, run `opencode` directly and invoke the harness skills (attached,
-> no Omnigent relay). Tracked upstream at
-> <https://github.com/omnigent-ai/omnigent/issues/1816>.
-
-### Optional private phone access
-
-You do not need Tailscale to watch a run. Local observation uses the control
-script directly: `status`, `events`, `pause`, `resume`, `stop` (see
-[Operate and verify](#operate-and-verify)). The steps below add a web/mobile
-control surface only — for reaching the project machine from a phone over a
-private tailnet. If you only work from the same machine, skip this section.
-
-Install [Tailscale](https://tailscale.com/) on the project machine and phone,
-sign both into the same tailnet, then run these from the project machine.
-`omni run` starts the Control Host **and** the embedded Omnigent web UI
-together — there is no separate `omni server start` or `omni host` to run (a
-standalone `omni server start` only collides: it prints "Background server
-already running" and leaves the old one up).
-
-```sh
-# 1. Find the project machine's Tailscale hostname (YOUR-MACHINE):
-tailscale status | grep "$(hostname)"
-#    e.g. "mybox" -> mybox.ts.net (or your tailnet's custom domain).
-
-# 2. Stop any Omnigent daemon already running WITHOUT the tailnet env vars
-#    (omni run REUSES a running daemon and won't pick up new env vars on its
-#    own line):
-omnigent stop
-
-# 3. Start the Control Host + embedded web UI, scoped to the tailnet. The env
-#    vars must be on THIS command so the fresh daemon inherits them:
-OMNIGENT_WS_ALLOWED_ORIGINS=https://YOUR-MACHINE.ts.net \
-OMNIGENT_ACCOUNTS_BASE_URL=https://YOUR-MACHINE.ts.net \
-  omni run ~/.omnigent/agents/harness-engineering --harness codex
-
-# 4. In a second terminal, expose the daemon's port to the tailnet over HTTPS:
-sudo tailscale serve --bg http://localhost:6767
-```
-
-Open `https://YOUR-MACHINE.ts.net` from the phone. The Control Host and its
-web UI both run in step 3 (the daemon owns the runner in-process, so no
-`omni host`); step 4 just proxies the phone's HTTPS to the daemon's local
-port. `tailscale serve` must target `localhost:6767` — the native daemon's
-port — **not** 8000 (that's the Docker-Compose container port from
-Omnigent's Tailscale guide, which doesn't apply to `omni run`). The `--bg`
-flag runs the proxy persistently in the background; HTTPS is the default
-frontend, so the phone reaches `https://YOUR-MACHINE.ts.net`. (Tailscale
-1.52+ removed the old `serve https / http://...` syntax — use the form above.)
-
-**What is `YOUR-MACHINE`?** It is the Tailscale Magic DNS hostname of the
-project machine, *not* `127.0.0.1` or `localhost`. Tailscale assigns every
-device on your tailnet a name like `mybox`, reachable as `mybox.ts.net` (or
-your tailnet's custom domain). Find it with `tailscale status` or in the
-[Tailscale admin console](https://login.tailscale.com/admin/machines). The
-phone can't reach the machine's loopback (`127.0.0.1`), so the phone-side URL
-must be the tailnet name; only the `tailscale serve` backend uses
-`localhost:6767`, because that proxy runs on the project machine itself.
-
-> **Limitation:** step 3 only accepts the `codex` or `claude` harness.
-> `--harness opencode` launches the OpenCode TUI and ignores the agent bundle,
-> so it can't drive the Control Host from the phone. To run the supervisor
-> while you watch it on mobile, pick a headless harness; OpenCode remains
-> available as a worker route via `.harness/roles.json`.
-
-Use `tailscale serve`, not Funnel, for tailnet-only access. The project
-machine must remain awake.
-
-## Operate and verify
-
-The installed control script exposes durable status and lifecycle operations:
+The same operations are also available as a script, but the path below is
+OpenCode's namespaced skill install — it exists only if OpenCode is installed
+(as your main tool or alongside it), not for a Claude Code– or Codex–only
+machine:
 
 ```sh
 CONTROL=~/.config/opencode/skills/harness-control-host/scripts/harness-control.mjs
@@ -472,13 +335,61 @@ jq 'all(.[]; .implementation and .qa and .integration)' "$PROJECT/feature_list.j
 node "$CONTROL" events --repo "$PROJECT" --consumer manual-check
 ```
 
+## Fix strange behavior
+
+Start with the live claims view, from the generator skill directory. As with
+monitoring above, this path assumes OpenCode is installed; it is not the same
+directory Claude Code or Codex install their plugin into.
+
+```sh
+GEN=~/.config/opencode/skills/harness-generator
+bash "$GEN/claim.sh" list "$PROJECT"
+```
+
+Each line reports a context's phase, attempt, next action, owner/child process,
+and heartbeat. For any context that looks stuck, read:
+
+- `harness-progress/<context>.md` — the human-readable journal;
+- `.git/harness-runs/<context>.json` — machine Run State (phase, attempt,
+  nextAction, heartbeat, owner);
+- `.git/harness-runs/evidence/<context>/` — Evidence Artifacts from failed QA
+  attempts.
+
+Three failed coding → QA → integration attempts always stop and require your
+input — the harness never guesses past that point. A `blocked` context never
+resumes on its own. After reviewing the evidence and deciding how to proceed:
+
+```sh
+bash "$GEN/claim.sh" resume "$PROJECT" "$CONTEXT" $$ force
+```
+
+The same `force` override takes over a `stale` context (its owner process is no
+longer running), including one owned by a different host. To abandon a context
+instead of resuming it:
+
+```sh
+bash "$GEN/claim.sh" release "$PROJECT" "$CONTEXT"
+```
+
+## Optional: Omnigent control and routing
+
+[Omnigent](https://omnigent.ai/) is not required to plan, generate, validate,
+integrate, or review work. Without it, the selected Claude Code, Codex, or
+OpenCode tool runs the harness directly with its configured model.
+
+Installed and configured, Omnigent adds:
+
+- a local web/mobile [control surface](https://vinicius91carvalho.github.io/harness-engineering/#omnigent);
+- [routing](https://vinicius91carvalho.github.io/harness-engineering/#routing) of coding, validation, repair planning, and Goal Review across ordered tool/model candidates ([`roles.example.json`](https://github.com/vinicius91carvalho/harness-engineering/blob/main/omnigent/harness-engineering/roles.example.json));
+- an optional [local Ornith model](https://vinicius91carvalho.github.io/harness-engineering/#local-model) through llama-server;
+- optional private [phone access](https://vinicius91carvalho.github.io/harness-engineering/#mobile) over [Tailscale](https://tailscale.com/).
+
+See the [complete guide](https://vinicius91carvalho.github.io/harness-engineering/#omnigent) for setup, priority/fallback behavior, and the Tailscale walkthrough.
+
 ## Maintenance
 
 - **Update:** rerun the installer. It refreshes installed plugins and the optional
   Omnigent bundle idempotently.
-- **Inspect:** use control-host `status` and `events`; inspect
-  `harness-progress/`, `.git/harness-runs/`, and `.git/harness-control/` when work
-  blocks or completion evidence is unclear.
 - **Pause or stop safely:** use the control-host commands so child tool processes
   and supervisor state are handled together.
 - **Back up host configuration:** run `/harness:update-project`; secrets and
@@ -490,7 +401,7 @@ node "$CONTROL" events --repo "$PROJECT" --consumer manual-check
 
 | Guide | Contents |
 | --- | --- |
-| [Complete setup and operations](https://vinicius91carvalho.github.io/harness-engineering/) | The same end-to-end workflow in a navigable site. |
+| [Complete guide](https://vinicius91carvalho.github.io/harness-engineering/) | The full workflow, including Omnigent, routing, local models, and Tailscale mobile access. |
 | [Plugins](docs/plugins.md) | Available integrations and tool compatibility. |
 | [Extras](docs/extras.md) | Status line, shared config, and MCP servers. |
 | [Installer](docs/installer/README.md) | Tool selection, flags, scopes, and dry runs. |

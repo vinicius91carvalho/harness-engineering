@@ -13,12 +13,12 @@
   <header>
     <a class="wordmark" href="#top">Harness Engineering</a>
     <nav aria-label="Primary navigation">
-      <a href="#architecture">Architecture</a>
       <a href="#install">Install</a>
       <a href="#start">Run</a>
-      <a href="#worked-example">Example</a>
-      <a href="#omnigent">Omnigent</a>
-      <a href="#maintenance">Maintain</a>
+      <a href="#add-feature">Add a feature</a>
+      <a href="#operate">Monitor</a>
+      <a href="#troubleshoot">Troubleshoot</a>
+      <a href="#advanced">Advanced</a>
       <a href="https://github.com/vinicius91carvalho/harness-engineering">GitHub ↗</a>
     </nav>
   </header>
@@ -64,17 +64,28 @@ project_specs.xml → feature_list.json → coding → QA → integration → Go
 
     <section class="topic" id="workflow">
       <p class="step">How the workflow runs</p>
-      <h2>Seven governed stages</h2>
+      <h2>Seven stages, idea to reviewed</h2>
       <ol>
         <li><strong>Specify:</strong> planner or setup writes the Project Goal and observable Acceptance Checks.</li>
         <li><strong>Reconcile:</strong> generator maps every check into an append-only Work Item.</li>
-        <li><strong>Claim:</strong> a ready context receives a lease, branch, worktree, port, and Run State.</li>
+        <li><strong>Claim:</strong> a ready context receives a lease, its own Git branch and worktree, a port (so parallel dev servers don't clash), and Run State.</li>
         <li><strong>Build and inspect:</strong> coding implements; independent QA exercises a real boundary.</li>
         <li><strong>Repair:</strong> failures produce evidence and a Repair Plan before a bounded retry.</li>
         <li><strong>Integrate:</strong> passing work merges, then its checks run again on current <code>main</code>.</li>
         <li><strong>Review the goal:</strong> an independent Goal Review verifies the complete specification.</li>
       </ol>
       <p class="note">Multiple sessions may claim independent contexts. Closing a session does not erase work: the next generator resumes durable state.</p>
+      <h3>Key terms</h3>
+      <div class="roles" aria-label="Key terms">
+        <article><strong>Work Item</strong><span>One Acceptance Check being implemented and QA'd; an entry in <code>feature_list.json</code>.</span></article>
+        <article><strong>Acceptance Check</strong><span>A stable, ID'd pass/fail contract in <code>project_specs.xml</code>.</span></article>
+        <article><strong>Context</strong><span>A group of related Acceptance Checks claimed and built together.</span></article>
+        <article><strong>Lease</strong><span>A heartbeat-timestamped claim that stops two sessions building the same context.</span></article>
+        <article><strong>Run State</strong><span>Durable JSON tracking one context's phase, attempt, and next action.</span></article>
+        <article><strong>Repair Plan</strong><span>The orchestrator's fix plan issued after a QA defect, before the next attempt.</span></article>
+        <article><strong>Goal Review</strong><span>The final independent check of the whole Project Goal on integrated <code>main</code>.</span></article>
+        <article><strong>Control Host</strong><span>The long-running supervisor that governs worker admission and relays status.</span></article>
+      </div>
     </section>
 
     <section class="topic" id="prerequisites">
@@ -119,6 +130,7 @@ claude --version  # or: codex --version / opencode --version</code></pre>
     <section class="topic" id="start">
       <p class="step">Step 3</p>
       <h2>Choose the new-project or existing-code path</h2>
+      <p>Type each <code>/harness:...</code> command below into your coding tool's chat session, not a terminal.</p>
       <div class="paths">
         <article>
           <h3>New project or new goal</h3>
@@ -126,6 +138,7 @@ claude --version  # or: codex --version / opencode --version</code></pre>
           <pre><code>/harness:planner Build a notes app where a user can publish a note and find it after reloading.</code></pre>
           <p>Review the specification, then build it:</p>
           <pre><code>/harness:generator</code></pre>
+          <p>Generator asks whether to build <strong>1 task</strong>, <strong>a set</strong>, or <strong>All</strong> — answer <strong>All</strong> for a new project. It is done when the Goal Review passes and every check is marked complete.</p>
         </article>
         <article>
           <h3>Existing codebase</h3>
@@ -135,7 +148,7 @@ claude --version  # or: codex --version / opencode --version</code></pre>
           <pre><code>/harness:generator</code></pre>
         </article>
       </div>
-      <p>Setup inventories technologies, reports code/docs contradictions, creates the execution queue, and stops before implementation. An optional audit uses verify-first mode for only the selected work, so passing checks are recorded without a rewrite. To add a feature instead, describe it to planner and run generator for that new context.</p>
+      <p>Setup inventories technologies, reports code/docs contradictions, creates the execution queue, and stops before implementation. An optional audit uses verify-first mode for only the selected work, so passing checks are recorded without a rewrite.</p>
       <p class="files"><strong>OpenCode:</strong> substitute <code>/harness-planner</code>, <code>/harness-setup</code>, or <code>/harness-generator</code> using the command table above.</p>
     </section>
 
@@ -203,6 +216,16 @@ claude --version  # or: codex --version / opencode --version</code></pre>
       <p>Planner loads grilling internally and may ask one decision at a time—for example, whether archived notes disappear from the default list and whether restoring them preserves their original URL. The resulting Acceptance Checks are appended; generator then builds only the new context you select.</p>
     </section>
 
+    <section class="topic" id="add-feature">
+      <p class="step">Add a feature</p>
+      <h2>Describe it to planner, then build only the new context</h2>
+      <p>Planner appends new Acceptance Checks to <code>project_specs.xml</code>; existing ones are never rewritten.</p>
+      <pre><code>/harness:planner Add reversible note archiving.</code></pre>
+      <p>Review the new Acceptance Checks, then build them:</p>
+      <pre><code>/harness:generator</code></pre>
+      <p>Generator lists every unbuilt context, including the new one — select it to build only the feature you just described. Existing, already-integrated contexts stay untouched.</p>
+    </section>
+
     <section class="topic compact-table" id="files">
       <p class="step">Files delivered</p>
       <h2>State you can inspect and resume</h2>
@@ -239,6 +262,56 @@ claude --version  # or: codex --version / opencode --version</code></pre>
   ]
 }</code></pre>
       <p class="files">Shared packages need no entry unless they run or deploy independently.</p>
+    </section>
+
+    <section class="topic" id="operate">
+      <p class="step">Monitor</p>
+      <h2>Watch, pause, resume, and verify a run</h2>
+      <p>From inside Claude Code, Codex, or OpenCode chat, run <code>/harness:control-host</code> (<code>/harness-control-host</code> on OpenCode) to drive the same operations without leaving the session.</p>
+      <p class="files">The script below is OpenCode's namespaced skill install — it exists only if OpenCode is installed, not for a Claude Code– or Codex–only machine.</p>
+      <pre><code>CONTROL=~/.config/opencode/skills/harness-control-host/scripts/harness-control.mjs
+PROJECT=/absolute/path/to/project
+
+node "$CONTROL" status   --repo "$PROJECT"
+node "$CONTROL" capacity --repo "$PROJECT" --host opencode
+node "$CONTROL" pause    --repo "$PROJECT"
+node "$CONTROL" resume   --repo "$PROJECT"
+node "$CONTROL" stop     --repo "$PROJECT"
+node "$CONTROL" events   --repo "$PROJECT" --consumer manual-check</code></pre>
+      <p>If work blocks, answer the exact Input Request through Omnigent or the control host's explicit response/resume path. Branches, worktrees, evidence, and Repair Plans remain available.</p>
+      <div class="checks">
+        <article><span>1</span><div><strong>Supervisor finished</strong><p><code>status: complete</code> and <code>supervisorPid: null</code>.</p></div></article>
+        <article><span>2</span><div><strong>Queue integrated</strong><p>Every item has <code>implementation</code>, <code>qa</code>, and <code>integration</code> set to true.</p></div></article>
+        <article><span>3</span><div><strong>Goal reviewed</strong><p>Goal Review has <code>status: complete</code> and <code>phase: complete</code>.</p></div></article>
+        <article><span>4</span><div><strong>Completion persisted</strong><p>Control events contain <code>kind: run_completed</code>.</p></div></article>
+      </div>
+      <pre><code>node ~/.config/opencode/skills/harness-generator/reconcile.mjs "$PROJECT" --check
+jq 'all(.[]; .implementation and .qa and .integration)' "$PROJECT/feature_list.json"
+node "$CONTROL" events --repo "$PROJECT" --consumer manual-check</code></pre>
+    </section>
+
+    <section class="topic" id="troubleshoot">
+      <p class="step">Troubleshooting</p>
+      <h2>Fix strange behavior</h2>
+      <p>Start with the live claims view, from the generator skill directory. As with <a href="#operate">monitoring</a>, this path assumes OpenCode is installed; it is not the same directory Claude Code or Codex install their plugin into.</p>
+      <pre><code>GEN=~/.config/opencode/skills/harness-generator
+bash "$GEN/claim.sh" list "$PROJECT"</code></pre>
+      <p>Each line reports a context's tasks, port, status, worktree, phase, attempt, next action, owner/child process, and heartbeat. For any context that looks stuck, read:</p>
+      <ul>
+        <li><code>harness-progress/&lt;context&gt;.md</code> — the human-readable journal;</li>
+        <li><code>.git/harness-runs/&lt;context&gt;.json</code> — machine Run State (phase, attempt, nextAction, heartbeat, owner);</li>
+        <li><code>.git/harness-runs/evidence/&lt;context&gt;/</code> — Evidence Artifacts from failed QA attempts.</li>
+      </ul>
+      <p>Three failed coding → QA → integration attempts always stop and require your input — the harness never guesses past that point. A <code>blocked</code> context never resumes on its own. After reviewing the evidence and deciding how to proceed:</p>
+      <pre><code>bash "$GEN/claim.sh" resume "$PROJECT" "$CONTEXT" $$ force</code></pre>
+      <p>The same <code>force</code> override takes over a <code>stale</code> context (its owner process is no longer running), including one owned by a different host. To abandon a context instead of resuming it:</p>
+      <pre><code>bash "$GEN/claim.sh" release "$PROJECT" "$CONTEXT"</code></pre>
+    </section>
+
+    <section class="topic" id="advanced">
+      <p class="step">Advanced</p>
+      <h2>Optional: Omnigent control and routing</h2>
+      <p>Nothing below is required to plan, generate, validate, integrate, or review work — the harness runs completely without Omnigent. The following sections cover its control surface, tool/model routing, the local Ornith model, and private phone access.</p>
     </section>
 
     <section class="topic" id="omnigent">
@@ -361,30 +434,6 @@ sudo tailscale serve --bg http://localhost:6767</code></pre>
       <p>It is the <strong>Tailscale Magic DNS hostname of the project machine</strong>, <em>not</em> <code>127.0.0.1</code> or <code>localhost</code>. Tailscale assigns every device on your tailnet a name like <code>mybox</code>, reachable as <code>mybox.ts.net</code> (or your tailnet's custom domain). Find it with <code>tailscale status</code> or in the <a href="https://login.tailscale.com/admin/machines">Tailscale admin console</a>. The phone can't reach the machine's loopback (<code>127.0.0.1</code>), so the phone-side URL must be the tailnet name; only the <code>tailscale serve</code> backend uses <code>localhost:6767</code> because that proxy runs on the project machine itself.</p>
 
       <p class="warning"><strong><span style="color:#e5c07b">Limitation:</span></strong> step 4 only accepts the <code>codex</code> or <code>claude</code> harness. <code>--harness opencode</code> launches the OpenCode TUI and ignores the agent bundle, so it can't drive the Control Host from the phone. To run the supervisor while you watch it on mobile, pick a headless harness; OpenCode remains available as a worker route via <code>.harness/roles.json</code>. Use <code>tailscale serve</code>, not Funnel, for tailnet-only access. The project machine must remain awake.</p>
-    </section>
-
-    <section class="topic" id="operate">
-      <p class="step">Operations</p>
-      <h2>Inspect, pause, resume, stop, and verify</h2>
-      <pre><code>CONTROL=~/.config/opencode/skills/harness-control-host/scripts/harness-control.mjs
-PROJECT=/absolute/path/to/project
-
-node "$CONTROL" status   --repo "$PROJECT"
-node "$CONTROL" capacity --repo "$PROJECT" --host opencode
-node "$CONTROL" pause    --repo "$PROJECT"
-node "$CONTROL" resume   --repo "$PROJECT"
-node "$CONTROL" stop     --repo "$PROJECT"
-node "$CONTROL" events   --repo "$PROJECT" --consumer manual-check</code></pre>
-      <p>If work blocks, answer the exact Input Request through Omnigent or the control host's explicit response/resume path. Branches, worktrees, evidence, and Repair Plans remain available.</p>
-      <div class="checks">
-        <article><span>1</span><div><strong>Supervisor finished</strong><p><code>status: complete</code> and <code>supervisorPid: null</code>.</p></div></article>
-        <article><span>2</span><div><strong>Queue integrated</strong><p>Every item has <code>implementation</code>, <code>qa</code>, and <code>integration</code> set to true.</p></div></article>
-        <article><span>3</span><div><strong>Goal reviewed</strong><p>Goal Review has <code>status: complete</code> and <code>phase: complete</code>.</p></div></article>
-        <article><span>4</span><div><strong>Completion persisted</strong><p>Control events contain <code>kind: run_completed</code>.</p></div></article>
-      </div>
-      <pre><code>node ~/.config/opencode/skills/harness-generator/reconcile.mjs "$PROJECT" --check
-jq 'all(.[]; .implementation and .qa and .integration)' "$PROJECT/feature_list.json"
-node "$CONTROL" events --repo "$PROJECT" --consumer manual-check</code></pre>
     </section>
 
     <section class="topic" id="maintenance">
