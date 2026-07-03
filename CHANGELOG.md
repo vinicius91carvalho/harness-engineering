@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### [1.0.1](https://github.com/vinicius91carvalho/harness-engineering/compare/v1.0.0...v1.0.1) (2026-07-03)
+
+
+### Bug Fixes
+
+* **omnigent:** make pi a pure bridge; use SSE for brightdata MCP ([dfbe050](https://github.com/vinicius91carvalho/harness-engineering/commit/dfbe050a646a5a440752d2739290e590fba0e63b))
+
 ## [1.0.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.19.0...v1.0.0) (2026-07-03)
 
 
