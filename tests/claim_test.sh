@@ -127,3 +127,10 @@ echo 'ok - strikes floor at 0'
 
 jq -e 'has("never|touched") | not' <(bash "$ROOT/skills/generator/claim.sh" strikes "$TMP/strikes") >/dev/null
 echo 'ok - untouched keys read as absent'
+
+bash "$ROOT/skills/generator/claim.sh" strike "$TMP/repo" 'infra|x|y' 2 >/dev/null
+bash "$ROOT/skills/generator/claim.sh" release "$TMP/repo" alpha >/dev/null
+test -f "$TMP/repo/.git/harness-runs/strikes--root.json"
+bash "$ROOT/skills/generator/claim.sh" release "$TMP/repo" beta >/dev/null
+test ! -f "$TMP/repo/.git/harness-runs/strikes--root.json"
+echo 'ok - the per-run strike scoreboard clears only when the last claim releases'

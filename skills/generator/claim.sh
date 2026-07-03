@@ -186,6 +186,11 @@ release_locked() {
   [ -n "$branch" ] && git -C "$repo" branch -D "$branch" 2>/dev/null || true
   write_claims "$repo" "$(jq --arg c "$key" 'del(.[$c])' <<<"$(read_claims "$repo")")"
   rm -f "$(runstate "$repo" "$key")"
+  # ponytail: strikes are per-run — cleared when the project's LAST claim releases. In serial all-mode a
+  # release between contexts also clears; acceptable, success-healing already decays strikes within a run.
+  local remaining
+  remaining="$(jq --arg p "$(project_id "$repo")" '[to_entries[] | select(.value.project==$p)] | length' <<<"$(read_claims "$repo")")"
+  if [ "$remaining" -eq 0 ]; then rm -f "$(strikefile "$repo")"; fi
   echo "released $ctx"
 }
 
