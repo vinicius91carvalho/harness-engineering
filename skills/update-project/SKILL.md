@@ -49,7 +49,7 @@ Run the same checks as CI:
 jq empty .claude-plugin/*.json .codex-plugin/*.json .agents/plugins/marketplace.json opencode.json config/*.json
 sh -n install.sh && bash -n skills/generator/claim.sh scripts/*.sh
 node --check skills/generator/orchestrator.mjs && node --check skills/generator/reconcile.mjs && node --check skills/supervisor/scripts/harness-control.mjs
-bash tests/install_test.sh && bash tests/reconcile_test.sh && bash tests/orchestrator_test.sh && bash tests/control_host_test.sh && bash tests/site_test.sh && bash tests/claim_test.sh
+bash tests/install_test.sh && bash tests/reconcile_test.sh && bash tests/orchestrator_test.sh && bash tests/supervisor_test.sh && bash tests/site_test.sh && bash tests/claim_test.sh
 bash scripts/statusline.sh --selftest && bash scripts/sync-config.sh --selftest
 ```
 

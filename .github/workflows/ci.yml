@@ -27,7 +27,7 @@ jobs:
         run: |
           bash tests/install_test.sh
           bash tests/orchestrator_test.sh
-          bash tests/control_host_test.sh
+          bash tests/supervisor_test.sh
           bash tests/site_test.sh
           bash tests/omnigent_test.sh
           bash tests/reconcile_test.sh
@@ -54,7 +54,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: bash tests/install_test.sh
       - run: bash tests/orchestrator_test.sh
-      - run: bash tests/control_host_test.sh
+      - run: bash tests/supervisor_test.sh
       - run: bash tests/site_test.sh
       - run: bash tests/omnigent_test.sh
       - run: bash tests/reconcile_test.sh
