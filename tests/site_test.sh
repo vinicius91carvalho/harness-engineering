@@ -80,6 +80,13 @@ for file in "$README" "$HTML"; do
   grep -Fq 'implementation and .qa and .integration' "$file"
 done
 
+# The "one front door" decision table and the symptom->action troubleshoot table
+# must use matching wording between README and the site.
+for str in 'A long unattended run with monitoring/pause/resume' 'To independently re-audit an already-integrated main' 'An existing working app, just adopting the harness (no new goal)' '(existing-codebase mode)' 'still draining its retry queue (up to 5 attempts per context)' 'HARNESS_LEASE_TIMEOUT_SECONDS'; do
+  grep -Fq -- "$str" "$README"
+  grep -Fq -- "$str" "$HTML"
+done
+
 grep -q 'sudo tailscale serve --bg http://localhost:6767' "$HTML"
 # The obsolete pre-1.52 syntax must NOT appear:
 ! grep -Fq 'serve https / http://' "$HTML"

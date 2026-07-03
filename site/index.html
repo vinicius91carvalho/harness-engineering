@@ -145,6 +145,17 @@ claude --version  # or: codex --version / opencode --version</code></pre>
     <section class="topic" id="start">
       <p class="step">Step 3</p>
       <h2>Choose the new-project or existing-code path</h2>
+      <table>
+        <thead><tr><th>You have…</th><th>Start with</th></tr></thead>
+        <tbody>
+          <tr><td>A new idea / new product goal</td><td><code>/harness:planner &lt;goal&gt;</code></td></tr>
+          <tr><td>An existing repo + a new goal to build</td><td><code>/harness:planner &lt;goal&gt;</code> (existing-codebase mode)</td></tr>
+          <tr><td>An existing working app, just adopting the harness (no new goal)</td><td><code>/harness:setup</code> (no args)</td></tr>
+          <tr><td>A reviewed <code>project_specs.xml</code>, ready to build/resume</td><td><code>/harness:generator</code></td></tr>
+          <tr><td>A long unattended run with monitoring/pause/resume</td><td><code>/harness:supervisor</code></td></tr>
+          <tr><td>To independently re-audit an already-integrated main</td><td><code>/harness:evaluator</code></td></tr>
+        </tbody>
+      </table>
       <p>Type each <code>/harness:...</code> command below into your coding tool's chat session, not a terminal.</p>
       <div class="paths">
         <article>
@@ -312,15 +323,16 @@ node "$CONTROL" events --repo "$PROJECT" --consumer manual-check</code></pre>
       <p>Start with the live claims view, from the generator skill directory. As with <a href="#operate">monitoring</a>, this path assumes OpenCode is installed; it is not the same directory Claude Code or Codex install their plugin into.</p>
       <pre><code>GEN=~/.config/opencode/skills/harness-generator
 bash "$GEN/claim.sh" list "$PROJECT"</code></pre>
-      <p>Each line reports a context's tasks, port, status, worktree, phase, attempt, next action, owner/child process, and heartbeat. For any context that looks stuck, read:</p>
-      <ul>
-        <li><code>harness-progress/&lt;context&gt;.md</code> — the human-readable journal;</li>
-        <li><code>.git/harness-runs/&lt;context&gt;.json</code> — machine Run State (phase, attempt, nextAction, heartbeat, owner);</li>
-        <li><code>.git/harness-runs/evidence/&lt;context&gt;/</code> — Evidence Artifacts from failed QA attempts.</li>
-      </ul>
-      <p>Three failed coding → QA → integration attempts always stop and require your input — the harness never guesses past that point. A <code>blocked</code> context never resumes on its own. After reviewing the evidence and deciding how to proceed:</p>
-      <pre><code>bash "$GEN/claim.sh" resume "$PROJECT" "$CONTEXT" $$ force</code></pre>
-      <p>The same <code>force</code> override takes over a <code>stale</code> context (its owner process is no longer running), including one owned by a different host. To abandon a context instead of resuming it:</p>
+      <p>Each line reports a context's tasks, port, status, worktree, phase, attempt, next action, owner/child process, and heartbeat. For any context that looks stuck, read <code>harness-progress/&lt;context&gt;.md</code> (journal), <code>.git/harness-runs/&lt;context&gt;.json</code> (Run State), and <code>.git/harness-runs/evidence/&lt;context&gt;/</code> (Evidence Artifacts).</p>
+      <table>
+        <thead><tr><th>Symptom</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td>Build says <code>blocked</code></td><td>Three failed coding → QA → integration Attempts always stop for input — the harness never guesses past that point, and a <code>blocked</code> context never resumes on its own. Review the journal and evidence above, then explicitly resume with guidance: <code>bash "$GEN/claim.sh" resume "$PROJECT" "$CONTEXT" $$ force</code>, then rerun the orchestrator with a concise <code>--guidance "..."</code> describing how to proceed.</td></tr>
+          <tr><td>Looks done but won't complete</td><td>The supervisor is still draining its retry queue (up to 5 attempts per context) before it can declare the goal complete. Check <code>node "$CONTROL" status --repo "$PROJECT"</code> and wait, or answer any pending Input Request.</td></tr>
+          <tr><td>Worker crashed / stale lease</td><td>Recovery reclaims a <code>stale</code> context automatically once its heartbeat passes the lease timeout (<code>HARNESS_LEASE_TIMEOUT_SECONDS</code>, default 60s) — including one owned by a different host. Force only once you're sure the owning process is actually dead: <code>bash "$GEN/claim.sh" resume "$PROJECT" "$CONTEXT" $$ force</code></td></tr>
+        </tbody>
+      </table>
+      <p>To abandon a context instead of resuming it:</p>
       <pre><code>bash "$GEN/claim.sh" release "$PROJECT" "$CONTEXT"</code></pre>
     </section>
 

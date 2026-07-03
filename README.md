@@ -15,8 +15,8 @@
 The whole thing in four steps — each one is explained in full further down.
 
 ```sh
-# 1. Install (macOS, Linux, Git Bash, or WSL). A menu appears: keep `harness`
-#    checked (up/down to move, space to toggle, enter to confirm).
+# 1. Install (macOS, Linux, Git Bash, or WSL) — requires `jq`. A menu appears:
+#    keep `harness` checked (up/down to move, space to toggle, enter to confirm).
 curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh
 ```
 
@@ -164,6 +164,18 @@ session resumes durable state rather than restarting the project.
 | Goal Review | The final independent check of the whole Project Goal on integrated `main`. |
 | Supervisor | The single long-lived agent per project, chosen via `omni run --harness <tool>` (claude, codex, or pi), that governs worker admission, relays status to the user, and escalates judgment. Engine: `harness-control.mjs`. |
 
+Retries operate at three layers, not a contradiction: the orchestrator allows
+3 attempts per Work Item before blocking; the supervisor's retry queue
+(`harness-control.mjs`) retries a blocked claim up to 5 times before it asks
+for input; Goal Review reopens a Work Item at most 2 times (`retries >= 2`
+exhausts it) before it blocks for guidance.
+
+The worker lease clock (`HARNESS_LEASE_TIMEOUT_SECONDS`, default 60s, in
+`claim.sh`) and the supervisor's external-worker staleness check
+(`lease-timeout-seconds`, default 60) are the same clock and must stay equal;
+`supervisor-lease-seconds` (default 30) is a different clock — the
+supervisor's own self-lock.
+
 ## Prerequisites
 
 Run the harness on the machine containing the Git repository. It requires:
@@ -205,6 +217,18 @@ Native Windows users can run [`install.ps1`](install.ps1). See the
 
 ## Start a project
 
+| You have… | Start with |
+| --- | --- |
+| A new idea / new product goal | `/harness:planner <goal>` |
+| An existing repo + a new goal to build | `/harness:planner <goal>` (existing-codebase mode) |
+| An existing working app, just adopting the harness (no new goal) | `/harness:setup` (no args) |
+| A reviewed `project_specs.xml`, ready to build/resume | `/harness:generator` |
+| A long unattended run with monitoring/pause/resume | `/harness:supervisor` |
+| To independently re-audit an already-integrated main | `/harness:evaluator` |
+
+`generator` runs Goal Review automatically — run `/harness:evaluator` only to
+re-audit an already-integrated `main` or after manual edits.
+
 Choose one path after installation. Type each `/harness:...` command below into
 your coding tool's chat session, not a terminal.
 
@@ -217,7 +241,9 @@ Run the planner with the behavior you want to deliver:
 ```
 
 Review `project_specs.xml`. Every Acceptance Check should describe an action and
-an observable result. Then run:
+an observable result. Check reads weak or wrong? Edit `project_specs.xml`
+directly and re-run `/harness:generator` — its reconcile step validates every
+check before any work is claimed. Then run:
 
 ```text
 /harness:generator
@@ -372,25 +398,18 @@ bash "$GEN/claim.sh" list "$PROJECT"
 ```
 
 Each line reports a context's phase, attempt, next action, owner/child process,
-and heartbeat. For any context that looks stuck, read:
+and heartbeat. Read `harness-progress/<context>.md` (journal),
+`.git/harness-runs/<context>.json` (Run State), and
+`.git/harness-runs/evidence/<context>/` (Evidence Artifacts) for any context
+that looks stuck.
 
-- `harness-progress/<context>.md` — the human-readable journal;
-- `.git/harness-runs/<context>.json` — machine Run State (phase, attempt,
-  nextAction, heartbeat, owner);
-- `.git/harness-runs/evidence/<context>/` — Evidence Artifacts from failed QA
-  attempts.
+| Symptom | Action |
+| --- | --- |
+| Build says `blocked` | Three failed coding → QA → integration Attempts always stop for input — the harness never guesses past that point, and a `blocked` context never resumes on its own. Review the journal and evidence above, then explicitly resume with guidance: `bash "$GEN/claim.sh" resume "$PROJECT" "$CONTEXT" $$ force`, then rerun the orchestrator with a concise `--guidance "..."` describing how to proceed. |
+| Looks done but won't complete | The supervisor is still draining its retry queue (up to 5 attempts per context) before it can declare the goal complete. Check `node "$CONTROL" status --repo "$PROJECT"` and wait, or answer any pending Input Request. |
+| Worker crashed / stale lease | Recovery reclaims a `stale` context automatically once its heartbeat passes the lease timeout (`HARNESS_LEASE_TIMEOUT_SECONDS`, default 60s) — including one owned by a different host. Force only once you're sure the owning process is actually dead: `bash "$GEN/claim.sh" resume "$PROJECT" "$CONTEXT" $$ force` |
 
-Three failed coding → QA → integration attempts always stop and require your
-input — the harness never guesses past that point. A `blocked` context never
-resumes on its own. After reviewing the evidence and deciding how to proceed:
-
-```sh
-bash "$GEN/claim.sh" resume "$PROJECT" "$CONTEXT" $$ force
-```
-
-The same `force` override takes over a `stale` context (its owner process is no
-longer running), including one owned by a different host. To abandon a context
-instead of resuming it:
+To abandon a context instead of resuming it:
 
 ```sh
 bash "$GEN/claim.sh" release "$PROJECT" "$CONTEXT"

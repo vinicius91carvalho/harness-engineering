@@ -38,6 +38,8 @@ const roleNames = {
   REPAIR_PLAN: 'repairPlanning', MERGE: 'coding', GOAL_REVIEW: 'goalReview',
 }
 const reconcileScript = resolve(dirname(fileURLToPath(import.meta.url)), 'reconcile.mjs')
+const MAX_ATTEMPTS = 3
+const MAX_OPERATIONAL_FAILURES = 3
 
 function command(program, args, cwd = options.workdir, allowFailure = false) {
   const result = spawnSync(program, args, { cwd, encoding: 'utf8' })
@@ -235,6 +237,15 @@ async function updateFeature(workdir, id, changes) {
 
 function parseObject(text) {
   const trimmed = text.trim()
+  const BEGIN = '===HARNESS-VERDICT-BEGIN===', END = '===HARNESS-VERDICT-END==='
+  const open = trimmed.lastIndexOf(BEGIN)
+  if (open >= 0) {
+    const rest = trimmed.slice(open + BEGIN.length)
+    const close = rest.indexOf(END)
+    const body = (close >= 0 ? rest.slice(0, close) : rest).trim()
+    try { const v = JSON.parse(body); if (v && typeof v === 'object') return v } catch {}
+  }
+  // ponytail: fallback positional scan keeps un-delimited (older) agents working
   const candidates = [trimmed, ...trimmed.split('\n').reverse()]
   const start = trimmed.indexOf('{'), end = trimmed.lastIndexOf('}')
   if (start >= 0 && end > start) candidates.push(trimmed.slice(start, end + 1))
@@ -397,6 +408,9 @@ function commitPaths(workdir, paths, message) {
   if (staged.status !== 0) git(['commit', '-m', message], workdir)
 }
 
+// ponytail: shared wrap instruction so every JSON-returning prompt uses the same delimiters parseObject looks for.
+const VERDICT_HINT = 'Emit that JSON as the very last thing you print, on its own lines, wrapped exactly:\n===HARNESS-VERDICT-BEGIN===\n{...}\n===HARNESS-VERDICT-END==='
+
 function featurePrompt(kind, feature, attempt, repairPlan = null, workdir = options.workdir) {
   const base = `WORKDIR=${workdir}\nPORT=${options.port}\nWork Item id=${feature.id} context=${feature.context}\n` +
     `Acceptance Checks=${(feature.acceptance_checks || []).join(',')}\nDescription=${feature.description || ''}\n`
@@ -407,16 +421,16 @@ function featurePrompt(kind, feature, attempt, repairPlan = null, workdir = opti
       : `You are the coding-agent. Implement exactly this Work Item, then stop.\n${base}`
     return head +
       `${repairPlan ? `Follow this Repair Plan from the orchestrator:\n${JSON.stringify(repairPlan)}\n` : ''}` +
-      'Read the exact queue entry and Workflow Journal. Bring up the app on the assigned ports, run black-box behavior tests, set only this item implementation=true after success, update the journal concisely, and commit. Return one JSON object: {"id":"...","implementation":true|false,"notes":"..."}.'
+      `Read the exact queue entry and Workflow Journal. Bring up the app on the assigned ports, run black-box behavior tests, set only this item implementation=true after success, update the journal concisely, and commit. Return one JSON object: {"id":"...","implementation":true|false,"notes":"..."}. ${VERDICT_HINT}`
   }
   if (kind === 'QA') return `You are the qa-agent. Independently test exactly this Work Item in its isolated worktree.\n${base}` +
-    'Use a real browser for UI or real HTTP for API behavior. On pass set qa=true. On any defect set implementation=false and qa=false. Update the journal concisely and commit. Return only JSON: {"id":"...","qa":true|false,"implementation":true|false,"defects":["expected ...; observed ...; evidence ..."]}.'
+    `Use a real browser for UI or real HTTP for API behavior. On pass set qa=true. On any defect set implementation=false and qa=false. Update the journal concisely and commit. Return only JSON: {"id":"...","qa":true|false,"implementation":true|false,"defects":["expected ...; observed ...; evidence ..."]}. ${VERDICT_HINT}`
   if (kind === 'INTEGRATION_QA') return `You are the qa-agent performing Integrated Verification on latest main.\n${base}` +
-    'Run the mapped Acceptance Checks and core smoke behavior at real external boundaries. On pass set integration=true for this Work Item. On any defect set implementation=false, qa=false, integration=false. Update the journal concisely and commit. Return only JSON: {"id":"...","integration":true|false,"implementation":true|false,"defects":["expected ...; observed ...; evidence ..."]}.'
+    `Run the mapped Acceptance Checks and core smoke behavior at real external boundaries. On pass set integration=true for this Work Item. On any defect set implementation=false, qa=false, integration=false. Update the journal concisely and commit. Return only JSON: {"id":"...","integration":true|false,"implementation":true|false,"defects":["expected ...; observed ...; evidence ..."]}. ${VERDICT_HINT}`
   if (kind === 'REPAIR_PLAN') return `Act as the orchestrator repair planner. Do not modify files. Diagnose the QA Defect Report against the Work Item and repository.\n${base}` +
-    `Defect Report=${JSON.stringify(repairPlan)}\nReturn only concise JSON: {"summary":"...","rootCause":"...","actions":["..."],"validation":["..."]}.`
+    `Defect Report=${JSON.stringify(repairPlan)}\nReturn only concise JSON: {"summary":"...","rootCause":"...","actions":["..."],"validation":["..."]}. ${VERDICT_HINT}`
   if (kind === 'MERGE') return `You are resolving integration conflicts for one verified Checkpoint.\n${base}` +
-    'Resolve only the current Git conflicts. Keep Work Items append-only; a newer Defect Report overrides older true flags. Run affected black-box checks, commit, and return only JSON: {"resolved":true|false,"notes":"..."}.'
+    `Resolve only the current Git conflicts. Keep Work Items append-only; a newer Defect Report overrides older true flags. Run affected black-box checks, commit, and return only JSON: {"resolved":true|false,"notes":"..."}. ${VERDICT_HINT}`
 }
 
 async function block(feature, attempt, reason, defects = []) {
@@ -425,7 +439,7 @@ async function block(feature, attempt, reason, defects = []) {
     implementation: false, qa: false, integration: false, retries: Math.max(Number(feature.retries || 0), attempt),
   })
   const file = await journal(options.workdir, 'Blocked Work Item', {
-    Attempt: `${attempt}/3`, WorkItem: feature.id, Outcome: reason, Defects: defects,
+    Attempt: `${attempt}/${MAX_ATTEMPTS}`, WorkItem: feature.id, Outcome: reason, Defects: defects,
     NextAction: 'User reviews evidence and explicitly resumes with guidance',
   })
   commitPaths(options.workdir, [file, join(options.workdir, 'feature_list.json')], `chore(harness): block ${feature.id}`)
@@ -439,7 +453,7 @@ async function planRepair(feature, attempt, defectReport) {
   const planned = await runAgent('REPAIR_PLAN', featurePrompt('REPAIR_PLAN', feature, attempt, defectReport), feature.id, attempt)
   const plan = planned.parsed || { summary: 'Repair planning did not return structured JSON', rootCause: 'unknown', actions: [planned.detail.slice(-2000)], validation: [] }
   const file = await journal(options.workdir, 'QA defect and Repair Plan', {
-    Attempt: `${attempt}/3`, WorkItem: feature.id,
+    Attempt: `${attempt}/${MAX_ATTEMPTS}`, WorkItem: feature.id,
     DefectReport: defectReport.defects || defectReport.detail,
     RepairPlan: [plan.summary, ...(plan.actions || [])], Evidence: defectReport.evidence,
     NextAction: `Coding Attempt ${attempt + 1}`,
@@ -463,7 +477,7 @@ async function acquireMergeLock() {
 async function integrate(feature, attempt) {
   await stopApp(options.workdir)
   const journalFile = await journal(options.workdir, 'Checkpoint ready', {
-    Attempt: `${attempt}/3`, WorkItem: feature.id, Outcome: 'isolated QA passed', NextAction: 'Integrated Verification',
+    Attempt: `${attempt}/${MAX_ATTEMPTS}`, WorkItem: feature.id, Outcome: 'isolated QA passed', NextAction: 'Integrated Verification',
   })
   commitPaths(options.workdir, [journalFile], `chore(harness): checkpoint ${feature.id}`)
   const checkpointSha = git(['rev-parse', 'HEAD'], options.workdir).stdout.trim()
@@ -497,7 +511,7 @@ async function integrate(feature, attempt) {
     const current = (await readFeatures(integrationDir)).list.find((item) => String(item.id) === String(feature.id))
     if (verified.ok && current?.implementation === true && current?.qa === true && current?.integration === true) {
       const file = await journal(integrationDir, 'Integrated Verification passed', {
-        Attempt: `${attempt}/3`, WorkItem: feature.id, AcceptanceChecks: feature.acceptance_checks || [],
+        Attempt: `${attempt}/${MAX_ATTEMPTS}`, WorkItem: feature.id, AcceptanceChecks: feature.acceptance_checks || [],
         Outcome: 'passed on integrated main', Evidence: verified.artifact, NextAction: 'next Ready Work Item',
       })
       commitPaths(integrationDir, [join(integrationDir, 'feature_list.json'), file], `verify(harness): integrate ${feature.id}`)
@@ -509,7 +523,7 @@ async function integrate(feature, attempt) {
     const defects = verified.parsed?.defects?.length ? verified.parsed.defects : [verified.detail.slice(-2000) || 'Integrated Verification failed']
     await updateFeature(integrationDir, feature.id, { implementation: false, qa: false, integration: false, retries: attempt })
     const file = await journal(integrationDir, 'Integrated Verification defect', {
-      Attempt: `${attempt}/3`, WorkItem: feature.id, Defects: defects, Evidence: verified.artifact, NextAction: 'Repair Plan',
+      Attempt: `${attempt}/${MAX_ATTEMPTS}`, WorkItem: feature.id, Defects: defects, Evidence: verified.artifact, NextAction: 'Repair Plan',
     })
     commitPaths(integrationDir, [join(integrationDir, 'feature_list.json'), file], `qa(${feature.context}): ${feature.id} integration defect`)
     git(['merge', '--no-edit', 'main'], options.workdir)
@@ -561,12 +575,12 @@ async function runWorkItems() {
     let repairPlan = resumingCurrent ? state.repairPlan : null
     let operationalFailures = 0
 
-    if (attempt > 3) { results.push(await block(current, 3, 'Attempt budget already exhausted')); break }
+    if (attempt > MAX_ATTEMPTS) { results.push(await block(current, MAX_ATTEMPTS, 'Attempt budget already exhausted')); break }
     if (resumingCurrent && state.nextAction === 'repair-plan' && state.defectReport) {
       repairPlan = await planRepair(current, attempt, state.defectReport)
       attempt++
     }
-    while (attempt <= 3) {
+    while (attempt <= MAX_ATTEMPTS) {
       current = (await readFeatures()).list.find((item) => String(item.id) === String(original.id))
       if (current.implementation !== true) {
         await writeState({ currentFeatureId: current.id, attempt, nextAction: 'coding', repairPlan })
@@ -590,7 +604,7 @@ async function runWorkItems() {
         }
         if (!coded.ok || current.implementation !== true) {
           operationalFailures++
-          if (operationalFailures >= 3) { results.push(await block(current, attempt, 'coding agent failed three times', [coded.detail])); break }
+          if (operationalFailures >= MAX_OPERATIONAL_FAILURES) { results.push(await block(current, attempt, 'coding agent failed three times', [coded.detail])); break }
           continue
         }
         operationalFailures = 0
@@ -609,7 +623,7 @@ async function runWorkItems() {
         current = (await readFeatures()).list.find((item) => String(item.id) === String(original.id))
         if (!checked.ok && !checked.parsed) {
           operationalFailures++
-          if (operationalFailures >= 3) { results.push(await block(current, attempt, 'QA agent failed three times', [checked.detail])); break }
+          if (operationalFailures >= MAX_OPERATIONAL_FAILURES) { results.push(await block(current, attempt, 'QA agent failed three times', [checked.detail])); break }
           continue
         }
         operationalFailures = 0
@@ -620,7 +634,7 @@ async function runWorkItems() {
             evidence: checked.artifact,
           }
           await writeState({ phase: 'qa-defect', nextAction: 'repair-plan', defectReport, attempt })
-          if (attempt >= 3) { results.push(await block(current, attempt, 'QA failed after Attempt 3', defectReport.defects)); break }
+          if (attempt >= MAX_ATTEMPTS) { results.push(await block(current, attempt, 'QA failed after Attempt 3', defectReport.defects)); break }
           const coder = itemPlan && lastCoder()
           if (coder) bumpStrike('quality', `quality|coding|${coder}`, 1)
           repairPlan = await planRepair(current, attempt, defectReport)
@@ -638,7 +652,7 @@ async function runWorkItems() {
         phase: 'integration-defect', nextAction: 'repair-plan',
         defectReport: { defects: integrated.defects, evidence: integrated.evidence }, attempt,
       })
-      if (attempt >= 3) { results.push(await block(current, attempt, 'Integrated Verification failed after Attempt 3', integrated.defects)); break }
+      if (attempt >= MAX_ATTEMPTS) { results.push(await block(current, attempt, 'Integrated Verification failed after Attempt 3', integrated.defects)); break }
       repairPlan = await planRepair(current, attempt, { defects: integrated.defects, evidence: integrated.evidence })
       attempt++
     }
@@ -667,7 +681,7 @@ async function runGoalReviewLocked() {
   await writeState({ status: 'running', phase: 'goal-review', nextAction: 'goal-review', attempt: 1 })
   heartbeatTimer = setInterval(() => writeState().catch(() => {}), 15_000)
   itemPlan = buildPlan(await readRoles())
-  const prompt = 'You are the independent Goal Review agent. Read project_specs.xml, especially Project Goal and every stable Acceptance Check. On integrated main, exercise every check and cross-feature primary journeys through a real browser or real HTTP. Do not trust existing flags. Do not modify product code. Return only JSON: {"goal":true|false,"summary":"...","acceptanceCheckIds":["AC-..."],"defects":["expected ...; observed ...; evidence ..."]}.'
+  const prompt = `You are the independent Goal Review agent. Read project_specs.xml, especially Project Goal and every stable Acceptance Check. On integrated main, exercise every check and cross-feature primary journeys through a real browser or real HTTP. Do not trust existing flags. Do not modify product code. Return only JSON: {"goal":true|false,"summary":"...","acceptanceCheckIds":["AC-..."],"defects":["expected ...; observed ...; evidence ..."]}. ${VERDICT_HINT}`
   const reviewed = await runAgent('GOAL_REVIEW', prompt, 'goal', 1)
   const verdict = reviewed.parsed
   const dirtyAfter = git(['status', '--porcelain', '--', '.'], options.workdir).stdout.trim()

@@ -33,6 +33,7 @@ jobs:
           bash tests/reconcile_test.sh
           bash tests/setup_inventory_test.sh
           bash tests/claim_test.sh
+          bash tests/manifest_test.sh
           bash scripts/statusline.sh --selftest
           bash scripts/sync-config.sh --selftest
 
@@ -60,6 +61,7 @@ jobs:
       - run: bash tests/reconcile_test.sh
       - run: bash tests/setup_inventory_test.sh
       - run: bash tests/claim_test.sh
+      - run: bash tests/manifest_test.sh
 
   powershell:
     runs-on: windows-latest
