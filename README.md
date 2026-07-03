@@ -89,12 +89,16 @@ Planner uses the bundled grilling skill internally; it is not a separate harness
 workflow command. A user can still activate an installed grilling skill directly
 by asking “grill me.”
 
-```text
-idea or existing repository
-          ↓
-project_specs.xml → feature_list.json → coding → QA → integration → Goal Review
-                              ↑          │
-                              └── repair ┘
+```mermaid
+flowchart TD
+    I[idea or existing repository] --> S[project_specs.xml]
+    S --> F[feature_list.json]
+    F --> C[coding]
+    C --> QA[QA]
+    QA -->|pass| INT[integration]
+    INT -->|QA re-runs on main| GR[Goal Review]
+    QA -->|defect: evidence + repair plan| C
+    P[planner] -.->|re-enter on defect| C
 ```
 
 ## How the workflow runs

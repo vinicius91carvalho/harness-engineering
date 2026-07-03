@@ -55,11 +55,17 @@
         <article><strong><a href="https://omnigent.ai/">Omnigent</a></strong><span>An optional control surface and tool/model router. It is not another scheduler.</span></article>
         <article><strong><a href="https://tailscale.com/">Tailscale</a></strong><span>An optional private transport for reaching Omnigent from another device.</span></article>
       </div>
-      <pre><code>idea or existing repository
-          ↓
-project_specs.xml → feature_list.json → coding → QA → integration → Goal Review
-                              ↑          │
-                              └── repair ┘</code></pre>
+      <pre class="mermaid">
+flowchart TD
+    I[idea or existing repository] --> S[project_specs.xml]
+    S --> F[feature_list.json]
+    F --> C[coding]
+    C --> QA[QA]
+    QA -->|pass| INT[integration]
+    INT -->|QA re-runs on main| GR[Goal Review]
+    QA -->|defect: evidence + repair plan| C
+    P[planner] -.->|re-enter on defect| C
+      </pre>
     </section>
 
     <section class="topic" id="workflow">
@@ -464,5 +470,9 @@ sudo tailscale serve --bg http://localhost:6767</code></pre>
     <p>Harness Engineering</p>
     <a href="https://github.com/vinicius91carvalho/harness-engineering">Source and releases ↗</a>
   </footer>
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'dark' });
+  </script>
 </body>
 </html>
