@@ -119,8 +119,9 @@ node "$CONTROL/scripts/harness-control.mjs" respond --repo "$REPO" \
 ```
 
 Responses are idempotent. A retry enters the same Resource Governor as new work;
-it does not bypass CPU, memory, load, or quota limits. A context blocker does not
-stop unrelated Ready Work Items. Pause the whole goal only for invalid planning,
+it does not bypass CPU, memory, load, or quota limits. A retry that cannot
+re-acquire its Claim Lease re-raises an Input Request after bounded attempts. A
+context blocker does not stop unrelated Ready Work Items. Pause the whole goal only for invalid planning,
 unsafe shared state, a required security approval, or unavailable shared
 infrastructure.
 

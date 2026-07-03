@@ -478,6 +478,11 @@ class Supervisor {
         delete this.state.retryQueue[context]
         slots--
         await this.save()
+      } else if ((retry.attempts = (retry.attempts || 0) + 1) >= 5) {
+        // A context that can never re-acquire its Claim Lease would otherwise spin here forever,
+        // invisible to inspectClaims (which skips retryQueue entries) and to the user.
+        delete this.state.retryQueue[context]
+        await this.input('context', 'Retry could not resume the Claim Lease', { attempts: retry.attempts }, context)
       }
     }
     for (const item of recoverable) {

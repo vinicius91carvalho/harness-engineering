@@ -155,3 +155,24 @@ done
 "$NODE" "$CONTROL" status --repo "$TMP/invalid" | jq -e '.status == "paused" and .supervisorPid == null' >/dev/null
 "$NODE" "$CONTROL" start --repo "$TMP/invalid" --host claude | jq -e '.started == false and .status == "paused"' >/dev/null
 echo 'ok - invalid planning emits a durable goal Input Request and consumes its idempotent response after restart'
+
+mkdir -p "$TMP/retry"
+git -C "$TMP/retry" init -b main -q
+git -C "$TMP/retry" config user.name test
+git -C "$TMP/retry" config user.email test@example.invalid
+cp "$TMP/repo/project_specs.xml" "$TMP/retry/project_specs.xml"
+cat >"$TMP/retry/feature_list.json" <<'JSON'
+[{"id":"WI-AC-001","context":"core","description":"health works","steps":["verify health"],"acceptance_checks":["AC-001"],"depends_on":[],"implementation":true,"qa":true,"integration":true,"retries":1}]
+JSON
+git -C "$TMP/retry" add . && git -C "$TMP/retry" commit -qm init
+mkdir -p "$TMP/retry/.git/harness-control"
+printf '%s\n' '{"retryQueue":{"ghost":{"guidance":"","attempts":3}}}' >"$TMP/retry/.git/harness-control/state.json"
+PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" HARNESS_TEST_GOAL_SLEEP=3 "$NODE" "$CONTROL" run \
+  --repo "$TMP/retry" --host claude --poll-ms 250 \
+  --max-workers 2 --quota-workers 2 --cpu-per-worker 0.25 \
+  --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100
+RETRY_STATE="$TMP/retry/.git/harness-control/state.json"
+RETRY_EVENTS="$TMP/retry/.git/harness-control/events.jsonl"
+jq -e '.retryQueue == {}' "$RETRY_STATE" >/dev/null
+jq -s -e 'any(.[]; .kind == "input_required" and .context == "ghost" and .reason == "Retry could not resume the Claim Lease")' "$RETRY_EVENTS" >/dev/null
+echo 'ok - a retry that can never resume its Claim Lease re-raises a bounded Input Request'
