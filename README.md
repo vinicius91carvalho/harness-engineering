@@ -398,7 +398,8 @@ Installed and configured, Omnigent adds:
 - optional private [phone access](https://vinicius91carvalho.github.io/harness-engineering/#mobile) over [Tailscale](https://tailscale.com/).
 
 A model that fails (infra error or repeated QA rejection) is demoted to the
-back of its role list for the rest of the run; an optional `noCredits` free
+back of its role list for the rest of the run, and a coder that declines a
+Work Item falls through to the next candidate; an optional `noCredits` free
 tier is tried only once paid options are exhausted by infra/credit errors.
 Repair retries are bounded by `HARNESS_REPAIR_BUDGET` (default `2`).
 

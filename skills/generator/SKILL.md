@@ -113,9 +113,13 @@ keeps the existing direct CLI behavior.
 
 Validation candidates using a harness different from the actual coding harness
 run first. A 429, unavailable model, authentication error, or launch failure tries
-the next candidate. A successful QA response describing a product defect does not
-fall through: it enters the existing Defect Report and Repair Plan loop. Run State
-and Evidence record the chosen harness/model, fallbacks, and independence level.
+the next candidate, and so does a coding candidate that returns
+`implementation:false` without a defect cycle (for example, scope exceeds its
+context budget) — neither consumes an Attempt. In direct `--host` mode a decline
+blocks immediately with the agent's notes. A successful QA response describing a
+product defect does not fall through: it enters the existing Defect Report and
+Repair Plan loop. Run State and Evidence record the chosen harness/model,
+fallbacks, and independence level.
 
 ### Verify-first mode
 

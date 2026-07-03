@@ -318,8 +318,9 @@ async function runAgent(kind, prompt, id, attempt, cwd = options.workdir) {
     }
     // ponytail: integration-QA defects also bump `attempt`, so they advance the coder offset too (accepted simplification).
     const repairBudget = Number(process.env.HARNESS_REPAIR_BUDGET || 2)
-    const offset = kind === 'CODING' ? Math.min(Math.floor((attempt - 1) / repairBudget), roleList.length - 1) : 0
-    candidates = [...roleList.slice(offset), ...(roles.noCredits || [])]
+    const pool = [...roleList, ...(roles.noCredits || [])]
+    const offset = kind === 'CODING' ? Math.min(Math.floor((attempt - 1) / repairBudget) + (plan.coderDeclines || 0), pool.length - 1) : 0
+    candidates = pool.slice(offset)
   }
   const failures = []
   for (const candidate of candidates) {
@@ -573,6 +574,18 @@ async function runWorkItems() {
           commitPaths(options.workdir, [join(options.workdir, 'feature_list.json')], `chore(harness): record coding ${current.id}`)
         }
         current = (await readFeatures()).list.find((item) => String(item.id) === String(original.id))
+        // An explicit decline (agent ran fine, said implementation:false) is not an operational failure and
+        // does not consume an Attempt: it advances the coder offset so the next candidate is asked instead.
+        if (coded.ok && coded.parsed?.implementation === false) {
+          const declineEvidence = [coded.parsed.notes || coded.detail]
+          if (!itemPlan) { results.push(await block(current, attempt, 'coding agent declined the Work Item', declineEvidence)); break }
+          itemPlan.coderDeclines = (itemPlan.coderDeclines || 0) + 1
+          const poolSize = itemPlan.sortedRoles.coding.length + (itemPlan.roles.noCredits?.length || 0)
+          if (Math.floor((attempt - 1) / Number(process.env.HARNESS_REPAIR_BUDGET || 2)) + itemPlan.coderDeclines >= poolSize) {
+            results.push(await block(current, attempt, 'every coding candidate declined the Work Item', declineEvidence)); break
+          }
+          continue
+        }
         if (!coded.ok || current.implementation !== true) {
           operationalFailures++
           if (operationalFailures >= 3) { results.push(await block(current, attempt, 'coding agent failed three times', [coded.detail])); break }

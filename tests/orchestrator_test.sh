@@ -52,6 +52,9 @@ case "$prompt" in
   *"coding-agent"*)
     code_count=0; [ ! -f "$HARNESS_TEST_CODE_COUNT" ] || code_count=$(cat "$HARNESS_TEST_CODE_COUNT")
     code_count=$((code_count + 1)); printf '%s' "$code_count" >"$HARNESS_TEST_CODE_COUNT"
+    if [ "${HARNESS_TEST_CODE_DECLINE:-}" = 1 ]; then
+      printf '%s\n' '{"id":"WI-AC-001","implementation":false,"notes":"scope exceeds budget"}'; exit 0
+    fi
     if [ "$code_count" -eq 2 ]; then printf '%s' "$prompt" | grep -q 'fix the health response'; fi
     jq 'map(if .id=="WI-AC-001" then .implementation=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
     commit coding
@@ -212,6 +215,9 @@ commit() { git add feature_list.json; git commit -qm "$1"; }
 case "$kind" in
   repair) printf '%s\n' '{"summary":"repair","rootCause":"defect","actions":["fix"],"validation":["check"]}' ;;
   coding)
+    if [ "$model" = decline ]; then
+      printf '%s\n' '{"id":"WI-AC-001","implementation":false,"notes":"scope exceeds budget"}'; exit 0
+    fi
     jq 'map(if .id=="WI-AC-001" then .implementation=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
     commit coding; printf '%s\n' '{"id":"WI-AC-001","implementation":true}' ;;
   qa)
@@ -342,6 +348,9 @@ commit() { git add feature_list.json; git commit -qm "$1"; }
 case "$kind" in
   repair) printf '%s\n' '{"summary":"repair","rootCause":"defect","actions":["fix"],"validation":["check"]}' ;;
   coding)
+    if [ "$model" = decline ]; then
+      printf '%s\n' '{"id":"WI-AC-001","implementation":false,"notes":"scope exceeds budget"}'; exit 0
+    fi
     jq 'map(if .id=="WI-AC-001" then .implementation=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
     commit coding; printf '%s\n' '{"id":"WI-AC-001","implementation":true}' ;;
   qa)
@@ -451,3 +460,66 @@ test "$(grep -c '^coding claude c1' "$TMP/within.log")" -eq 2
 test "$(grep -c '^coding codex c2' "$TMP/within.log")" -eq 1
 grep -q 'route=.*"harness":"codex"' "$TMP/within/.git/harness-runs/evidence/core/WI-AC-001-3-coding.log"
 echo 'ok - within an item the coder switches only at attempt 3 under the default repair budget of 2'
+
+# ---- (d) an explicit decline routes to the next coding candidate without burning Attempts -------
+new_case_repo "$TMP/decline"
+cat >"$TMP/decline/.harness/roles.json" <<'JSON'
+{
+  "coding": [{"harness":"claude","model":"decline"},{"harness":"codex","model":"c2"}],
+  "validation": [{"harness":"opencode"}],
+  "repairPlanning": [{"harness":"opencode"}],
+  "goalReview": [{"harness":"claude"}]
+}
+JSON
+git -C "$TMP/decline" add . && git -C "$TMP/decline" commit -qm init
+bash "$ROOT/skills/generator/claim.sh" select-claim "$TMP/decline" all '' 7004 >"$TMP/decline-claim.json"
+DECLINE_WT=$(jq -r .worktree "$TMP/decline-claim.json")
+PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" HARNESS_OMNIGENT_BUNDLE="$ROOT/omnigent/harness-engineering" \
+  HARNESS_TEST_OMNI_LOG="$TMP/decline.log" HARNESS_TEST_OMNI_QA="$TMP/decline-qa" HARNESS_TEST_OMNI_QA_FAILS=0 \
+  "$NODE" "$ROOT/skills/generator/orchestrator.mjs" --host claude --repo "$TMP/decline" \
+  --workdir "$DECLINE_WT" --context core --port 5170 --features WI-AC-001 \
+  --claim-script "$ROOT/skills/generator/claim.sh" >"$TMP/decline-result.json"
+jq -e '.passed == 1' "$TMP/decline-result.json" >/dev/null
+test "$(grep -c '^coding claude decline' "$TMP/decline.log")" -eq 1
+test "$(grep -c '^coding codex c2' "$TMP/decline.log")" -eq 1
+echo 'ok - a coding decline routes to the next candidate without consuming an Attempt'
+
+# ---- (e) direct-host mode blocks immediately on an explicit decline ----------------------------
+new_case_repo "$TMP/ddecline"
+git -C "$TMP/ddecline" add . && git -C "$TMP/ddecline" commit -qm init
+bash "$ROOT/skills/generator/claim.sh" select-claim "$TMP/ddecline" all '' 7005 >"$TMP/ddecline-claim.json"
+DDECLINE_WT=$(jq -r .worktree "$TMP/ddecline-claim.json")
+PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" HARNESS_TEST_QA_COUNT="$TMP/ddecline-qa-count" \
+  HARNESS_TEST_CODE_COUNT="$TMP/ddecline-code-count" HARNESS_TEST_CODE_DECLINE=1 \
+  "$NODE" "$ROOT/skills/generator/orchestrator.mjs" --host claude --repo "$TMP/ddecline" \
+  --workdir "$DDECLINE_WT" --context core --port 5170 --features WI-AC-001 \
+  --claim-script "$ROOT/skills/generator/claim.sh" >"$TMP/ddecline-result.json"
+jq -e '.stuck[0].reason == "coding agent declined the Work Item"' "$TMP/ddecline-result.json" >/dev/null
+test "$(cat "$TMP/ddecline-code-count")" -eq 1
+echo 'ok - direct-host mode blocks immediately with the agent notes when the coder declines'
+
+# ---- (f) attempt offset and decline offset compose without skipping a candidate -----------------
+new_case_repo "$TMP/compose"
+cat >"$TMP/compose/.harness/roles.json" <<'JSON'
+{
+  "coding": [{"harness":"claude","model":"decline"},{"harness":"codex","model":"c2"},{"harness":"claude","model":"c3"}],
+  "validation": [{"harness":"opencode"}],
+  "repairPlanning": [{"harness":"opencode"}],
+  "goalReview": [{"harness":"claude"}]
+}
+JSON
+git -C "$TMP/compose" add . && git -C "$TMP/compose" commit -qm init
+bash "$ROOT/skills/generator/claim.sh" select-claim "$TMP/compose" all '' 7006 >"$TMP/compose-claim.json"
+COMPOSE_WT=$(jq -r .worktree "$TMP/compose-claim.json")
+# Repair budget 1: decline advances past claude|decline, the attempt-2 offset past codex|c2 -> claude|c3 codes.
+PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" HARNESS_OMNIGENT_BUNDLE="$ROOT/omnigent/harness-engineering" \
+  HARNESS_TEST_OMNI_LOG="$TMP/compose.log" HARNESS_TEST_OMNI_QA="$TMP/compose-qa" HARNESS_TEST_OMNI_QA_FAILS=1 \
+  HARNESS_REPAIR_BUDGET=1 \
+  "$NODE" "$ROOT/skills/generator/orchestrator.mjs" --host claude --repo "$TMP/compose" \
+  --workdir "$COMPOSE_WT" --context core --port 5170 --features WI-AC-001 \
+  --claim-script "$ROOT/skills/generator/claim.sh" >"$TMP/compose-result.json"
+jq -e '.passed == 1' "$TMP/compose-result.json" >/dev/null
+test "$(grep -c '^coding claude decline' "$TMP/compose.log")" -eq 1
+test "$(grep -c '^coding codex c2' "$TMP/compose.log")" -eq 1
+test "$(grep -c '^coding claude c3' "$TMP/compose.log")" -eq 1
+echo 'ok - attempt and decline offsets compose so every candidate is consulted exactly once'
