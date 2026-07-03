@@ -41,3 +41,33 @@ if node "$ROOT/skills/generator/reconcile.mjs" "$TMP" --check 2>"$TMP/mapping-er
 fi
 grep -q 'has no Acceptance Check mapping' "$TMP/mapping-error"
 echo 'ok - every Work Item must trace to a stable Acceptance Check'
+
+mkdir -p "$TMP/fill"
+cat >"$TMP/fill/project_specs.xml" <<'XML'
+<project_specification>
+  <project_goal>Users can save work.</project_goal>
+  <acceptance_checks>
+    <acceptance_check id="AC-001" context="foundation" category="foundation" depends_on="">
+      <description>The health endpoint returns ready.</description>
+    </acceptance_check>
+    <acceptance_check id="AC-002" context="editing" category="functional" depends_on="AC-001">
+      <description>A user saves a document and sees it after reload.</description>
+    </acceptance_check>
+  </acceptance_checks>
+</project_specification>
+XML
+cat >"$TMP/fill/feature_list.json" <<'JSON'
+[
+  {"id":"WI-AC-001","context":"foundation","acceptance_checks":["AC-001"],"depends_on":[],"implementation":false,"qa":false,"integration":false,"retries":0},
+  {"id":"WI-AC-002","context":"editing","acceptance_checks":["AC-002"],"depends_on":[],"implementation":false,"qa":false,"integration":false,"retries":0}
+]
+JSON
+if node "$ROOT/skills/generator/reconcile.mjs" "$TMP/fill" --check 2>"$TMP/fill-error"; then
+  echo 'not ok - omitted transitive dependency accepted by --check' >&2; exit 1
+fi
+grep -q 'omits dependencies: AC-001; run reconcile.mjs without --check to auto-fill' "$TMP/fill-error"
+node "$ROOT/skills/generator/reconcile.mjs" "$TMP/fill" >"$TMP/fill-result.json"
+jq -e '.filledDependsOn == ["WI-AC-002"]' "$TMP/fill-result.json" >/dev/null
+jq -e '.[1].depends_on == ["AC-001"]' "$TMP/fill/feature_list.json" >/dev/null
+node "$ROOT/skills/generator/reconcile.mjs" "$TMP/fill" --check >/dev/null
+echo 'ok - write-mode reconcile auto-fills omitted transitive dependencies on hand-authored Work Items'

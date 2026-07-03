@@ -106,18 +106,22 @@ for (const check of missing) {
 }
 
 const byCheck = new Map(checks.map((check) => [check.id, check]))
+const filled = []
 for (const item of queue) {
   const internal = new Set(item.acceptance_checks)
   const expected = new Set(item.acceptance_checks.flatMap((id) => byCheck.get(id)?.dependencies || []).filter((id) => !internal.has(id)))
   const actual = new Set(item.depends_on || [])
   const omitted = [...expected].filter((id) => !actual.has(id))
-  if (omitted.length) fail(`work item ${item.id} omits dependencies: ${omitted.join(', ')}`)
+  if (!omitted.length) continue
+  if (checkOnly) fail(`work item ${item.id} omits dependencies: ${omitted.join(', ')}; run reconcile.mjs without --check to auto-fill`)
+  item.depends_on = [...(item.depends_on || []), ...omitted]
+  filled.push(item.id)
 }
 
-if (!checkOnly && missing.length) {
+if (!checkOnly && (missing.length || filled.length)) {
   const temporary = `${queueFile}.tmp.${process.pid}`
   await writeFile(temporary, `${JSON.stringify(queue, null, 2)}\n`)
   await rename(temporary, queueFile)
 }
 
-process.stdout.write(`${JSON.stringify({ acceptanceChecks: checks.length, addedWorkItems: missing.length, addedIds: missing.map((check) => check.id) })}\n`)
+process.stdout.write(`${JSON.stringify({ acceptanceChecks: checks.length, addedWorkItems: missing.length, addedIds: missing.map((check) => check.id), filledDependsOn: filled })}\n`)

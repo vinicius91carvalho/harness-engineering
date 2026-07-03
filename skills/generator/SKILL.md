@@ -43,7 +43,8 @@ node "$GEN/reconcile.mjs" "$PROJECT"
 ```
 
 Run reconciliation and its commit while holding the merge lock. The reconciler validates stable Acceptance Check IDs and their acyclic dependency
-graph, then appends a deterministic Work Item for every unmapped check. Commit
+graph, appends a deterministic Work Item for every unmapped check, and fills
+omitted transitive `depends_on` entries on existing Work Items. Commit
 `project_specs.xml` and `feature_list.json` if reconciliation changed them. Never
 start work when validation fails.
 
