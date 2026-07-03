@@ -27,6 +27,7 @@ stateld() { echo "$(gitdir "$1")/harness-locks/generator-state"; }
 mergeld() { echo "$(gitdir "$1")/harness-locks/generator-merge"; }
 rundir()  { echo "$(gitdir "$1")/harness-runs"; }
 runstate(){ echo "$(rundir "$1")/$(sani "$2").json"; }
+strikefile() { echo "$(rundir "$1")/strikes--$(project_id "$1").json"; }
 sani()    { printf '%s' "$1" | tr -c 'a-zA-Z0-9_-' '_'; }
 port_in_use() { (echo >/dev/tcp/127.0.0.1/"$1") >/dev/null 2>&1; }
 
@@ -40,6 +41,13 @@ write_runstate() {
   local repo="$1" ctx="$2" json="$3" file tmp
   mkdir -p "$(rundir "$repo")"
   file="$(runstate "$repo" "$ctx")"; tmp="$file.tmp.${BASHPID:-$$}.$RANDOM"
+  printf '%s\n' "$json" > "$tmp"; mv "$tmp" "$file"
+}
+read_strikes() { local f; f="$(strikefile "$1")"; [ -s "$f" ] && cat "$f" || echo '{}'; }
+write_strikes() {
+  local repo="$1" json="$2" file tmp
+  mkdir -p "$(rundir "$repo")"
+  file="$(strikefile "$repo")"; tmp="$file.tmp.${BASHPID:-$$}.$RANDOM"
   printf '%s\n' "$json" > "$tmp"; mv "$tmp" "$file"
 }
 
@@ -344,6 +352,21 @@ list_claims() {
   done < <(jq -r 'to_entries[] | [.key, (.value.context // .key), "tasks=\(.value.featureIds // [] | join(","))\tport=\(.value.port)\t\(.value.status)\t\(.value.worktree)"] | @tsv' <<<"$cj")
 }
 
+# ---- strike <repo> <key> <delta> -------------------------------------------
+strike_locked() {
+  local repo="$1" key="$2" delta="$3"
+  write_strikes "$repo" "$(jq --arg k "$key" --argjson d "$delta" \
+    '.[$k] = ([((.[$k]//0) + $d), 0] | max)' <<<"$(read_strikes "$repo")")"
+}
+
+strike() {
+  local repo="$1" status
+  acquire_state_lock "$repo"
+  set +e; (set -e; strike_locked "$@"); status=$?; set -e
+  release_state_lock "$repo"
+  return "$status"
+}
+
 cmd="${1:-}"; shift || true
 case "$cmd" in
   select-claim)  select_claim "$@" ;;
@@ -354,5 +377,7 @@ case "$cmd" in
   merge-do)      merge_do "$@" ;;
   merge-release) merge_release "$@" ;;
   list)          list_claims "$@" ;;
-  *) die "usage: claim.sh {select-claim|resume|block|release|merge-acquire|merge-do|merge-release|list} <repo> ..." ;;
+  strike)        strike "$@" ;;
+  strikes)       read_strikes "$@" ;;
+  *) die "usage: claim.sh {select-claim|resume|block|release|merge-acquire|merge-do|merge-release|list|strike|strikes} <repo> ..." ;;
 esac

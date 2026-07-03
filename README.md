@@ -81,7 +81,7 @@ The harness exposes workflow and support commands:
 | `/harness:planner` | Turn a new product idea into `project_specs.xml`. |
 | `/harness:generator` | Reconcile, build, independently test, integrate, retry, and resume work. |
 | `/harness:evaluator` | Run an independent Goal Review against integrated `main`. |
-| `/harness:control-host` | Run and operate the detached supervisor. |
+| `/harness:supervisor` | Run and operate the detached supervisor. |
 | `/harness:learning-loop` | Convert useful session lessons into reusable harness improvements. |
 | `/harness:update-project` | Back up sanitized host configuration into this repository. |
 
@@ -100,6 +100,15 @@ flowchart TD
     QA -->|defect: evidence + repair plan| C
     P[planner] -.->|re-enter on defect| C
 ```
+
+### Layers
+
+| Layer | Role |
+| --- | --- |
+| User | The human: sets up the project, requests features or refactors, answers escalations, and reads progress. |
+| Supervisor | The single long-lived agent per project (engine: `harness-control.mjs`). Launched via `omni run <bundle> --harness <tool>`; collects state, relays events to the user, and escalates judgment. |
+| Orchestrator | The deterministic per-Work-Item state machine (`orchestrator.mjs`, no LLM) that sequences coding → QA → integration → Goal Review and routes models via `roles.json`. |
+| Code Agent / QA Agent | The per-role executor models from `roles.json` (`coding` / `validation`) that implement and independently verify each Work Item. |
 
 ## How the workflow runs
 
@@ -133,7 +142,7 @@ session resumes durable state rather than restarting the project.
 | Run State | Durable JSON tracking one context's phase, attempt, and next action. |
 | Repair Plan | The orchestrator's fix plan issued after a QA defect, before the next attempt. |
 | Goal Review | The final independent check of the whole Project Goal on integrated `main`. |
-| Control Host | The long-running supervisor that governs worker admission and relays status. |
+| Supervisor | The single long-lived agent per project that governs worker admission, relays status to the user, and escalates judgment. |
 
 ## Prerequisites
 
@@ -142,7 +151,7 @@ Run the harness on the machine containing the Git repository. It requires:
 - [Git](https://git-scm.com/) and [Bash](https://www.gnu.org/software/bash/)
   (Git Bash or WSL on Windows);
 - **[Node.js 18 or newer](https://nodejs.org/)**, used by reconciliation, orchestration, setup
-  inventory, and the control host;
+  inventory, and the supervisor;
 - one installed and authenticated tool: [Claude Code](https://code.claude.com/docs/en/overview),
   [Codex](https://developers.openai.com/codex/), or [OpenCode](https://opencode.ai/).
 
@@ -185,7 +194,7 @@ skills as namespaced commands with a hyphen.
 | Plan new work | `/harness:planner` | `/harness-planner` |
 | Build or resume | `/harness:generator` | `/harness-generator` |
 | Review the goal | `/harness:evaluator` | `/harness-evaluator` |
-| Operate supervisor | `/harness:control-host` | `/harness-control-host` |
+| Operate supervisor | `/harness:supervisor` | `/harness-supervisor` |
 | Capture lessons | `/harness:learning-loop` | `/harness-learning-loop` |
 | Back up configuration | `/harness:update-project` | `/harness-update-project` |
 
@@ -299,8 +308,8 @@ for the file format.
 
 ## Monitor a run
 
-From inside Claude Code, Codex, or OpenCode chat, run `/harness:control-host`
-(or `/harness-control-host` on OpenCode) to watch, pause, resume, or stop a
+From inside Claude Code, Codex, or OpenCode chat, run `/harness:supervisor`
+(or `/harness-supervisor` on OpenCode) to watch, pause, resume, or stop a
 run without leaving the session.
 
 The same operations are also available as a script, but the path below is
@@ -309,7 +318,7 @@ OpenCode's namespaced skill install — it exists only if OpenCode is installed
 machine:
 
 ```sh
-CONTROL=~/.config/opencode/skills/harness-control-host/scripts/harness-control.mjs
+CONTROL=~/.config/opencode/skills/harness-supervisor/scripts/harness-control.mjs
 PROJECT=/absolute/path/to/project
 
 node "$CONTROL" status   --repo "$PROJECT"
@@ -321,7 +330,7 @@ node "$CONTROL" events   --repo "$PROJECT" --consumer manual-check
 ```
 
 If a worker blocks, answer its exact Input Request through Omnigent or the
-control host's explicit response/resume path. The harness retains the branch,
+supervisor's explicit response/resume path. The harness retains the branch,
 worktree, evidence, and Repair Plan while waiting.
 
 Completion requires all of the following:
@@ -388,13 +397,18 @@ Installed and configured, Omnigent adds:
 - an optional [local Ornith model](https://vinicius91carvalho.github.io/harness-engineering/#local-model) through llama-server;
 - optional private [phone access](https://vinicius91carvalho.github.io/harness-engineering/#mobile) over [Tailscale](https://tailscale.com/).
 
+A model that fails (infra error or repeated QA rejection) is demoted to the
+back of its role list for the rest of the run; an optional `noCredits` free
+tier is tried only once paid options are exhausted by infra/credit errors.
+Repair retries are bounded by `HARNESS_REPAIR_BUDGET` (default `2`).
+
 See the [complete guide](https://vinicius91carvalho.github.io/harness-engineering/#omnigent) for setup, priority/fallback behavior, and the Tailscale walkthrough.
 
 ## Maintenance
 
 - **Update:** rerun the installer. It refreshes installed plugins and the optional
   Omnigent bundle idempotently.
-- **Pause or stop safely:** use the control-host commands so child tool processes
+- **Pause or stop safely:** use the supervisor commands so child tool processes
   and supervisor state are handled together.
 - **Back up host configuration:** run `/harness:update-project`; secrets and
   session data are excluded or replaced with placeholders.

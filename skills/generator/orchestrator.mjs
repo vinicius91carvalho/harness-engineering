@@ -62,6 +62,7 @@ const stateFile = join(runDir, `${stateContext.replace(/[^a-zA-Z0-9_-]/g, '_')}.
 const leaseToken = randomUUID()
 let child = null
 let state = {}
+let itemPlan = null
 const verifyFirstCache = new Map()
 const codingHarnesses = new Map()
 let heartbeatTimer
@@ -144,20 +145,61 @@ async function readRoles(workdir = options.workdir) {
     fail(`cannot read ${file}: ${error.message}`)
   }
   const normalized = {}
+  const normalizeCandidate = (role, value) => {
+    const candidate = typeof value === 'string' ? { harness: value } : value
+    if (!candidate || !['claude', 'codex', 'opencode'].includes(candidate.harness)) {
+      fail(`${file}: ${role} candidates must use claude, codex, or opencode`)
+    }
+    if (candidate.model !== undefined && (typeof candidate.model !== 'string' || !candidate.model.trim())) {
+      fail(`${file}: ${role} model must be a non-empty string`)
+    }
+    return { harness: candidate.harness, ...(candidate.model ? { model: candidate.model } : {}) }
+  }
   for (const role of ['coding', 'validation', 'repairPlanning', 'goalReview']) {
     if (!Array.isArray(roles[role]) || !roles[role].length) fail(`${file}: ${role} must be a non-empty array`)
-    normalized[role] = roles[role].map((value) => {
-      const candidate = typeof value === 'string' ? { harness: value } : value
-      if (!candidate || !['claude', 'codex', 'opencode'].includes(candidate.harness)) {
-        fail(`${file}: ${role} candidates must use claude, codex, or opencode`)
-      }
-      if (candidate.model !== undefined && (typeof candidate.model !== 'string' || !candidate.model.trim())) {
-        fail(`${file}: ${role} model must be a non-empty string`)
-      }
-      return { harness: candidate.harness, ...(candidate.model ? { model: candidate.model } : {}) }
-    })
+    normalized[role] = roles[role].map((value) => normalizeCandidate(role, value))
   }
+  // Optional free/no-credits tier: validated like the four roles (claude/codex/opencode, optional model). Absent/empty is fine.
+  if (Array.isArray(roles.noCredits)) normalized.noCredits = roles.noCredits.map((value) => normalizeCandidate('noCredits', value))
   return normalized
+}
+
+// Route history stores model as `model||null`; coerce null/undefined to '' so keys never split (infra|h| vs infra|h|undefined).
+function mkey(harness, model) { return `${harness}|${model || ''}` }
+
+// Best-effort read of the per-run strike scoreboard via claim.sh. Never aborts the run; {} on any failure/empty.
+function readStrikes() {
+  const result = command('bash', [claimScript, 'strikes', options.repo], options.repo, true)
+  if (result.status !== 0) return {}
+  try { return JSON.parse(result.stdout) || {} } catch { return {} }
+}
+
+function strikeOf(role, harness, model, strikes) {
+  return (strikes[`infra|${mkey(harness, model)}`] || 0) + (strikes[`quality|${role}|${mkey(harness, model)}`] || 0)
+}
+
+// scope documents intent; the key already carries its scope prefix. Best-effort — a failure here must never abort the run.
+function bumpStrike(scope, key, delta) {
+  command('bash', [claimScript, 'strike', options.repo, key, String(delta)], options.repo, true)
+}
+
+// Read strikes ONCE per Work Item and pre-sort every role list, so order stays stable within an item (only the
+// attempt-driven coder offset shifts it). Direct mode (no roles.json) → null: no strikes, no sort.
+function buildPlan(roles) {
+  if (!roles) return null
+  const strikes = readStrikes()
+  const sortedRoles = {}
+  for (const role of ['coding', 'validation', 'repairPlanning', 'goalReview']) {
+    sortedRoles[role] = [...roles[role]].sort((a, b) =>
+      strikeOf(role, a.harness, a.model, strikes) - strikeOf(role, b.harness, b.model, strikes))
+  }
+  return { roles, sortedRoles, strikes }
+}
+
+// The (harness, model) of the most recent selected coder, for quality-strike bookkeeping. Route carries model.
+function lastCoder() {
+  const route = [...(state.routeHistory || [])].reverse().find((r) => r.kind === 'CODING' && r.outcome === 'selected')
+  return route ? mkey(route.harness, route.model) : null
 }
 
 async function recentCodingHarness(id) {
@@ -214,6 +256,7 @@ function fallbackReason(result) {
   if (/\b429\b|rate.?limit/i.test(detail)) return 'rate-limited'
   if (/auth|credential|unauthorized|forbidden|login/i.test(detail)) return 'authentication-failure'
   if (/model.{0,40}(unavailable|not available|not found|unknown)|unavailable.{0,20}model/i.test(detail)) return 'model-unavailable'
+  if (/\b402\b|insufficient credits|payment required|quota exceeded|billing/i.test(detail)) return 'no-credits'
   return result.timedOut ? 'launch-timeout' : 'launch-failure'
 }
 
@@ -255,14 +298,28 @@ async function runAgent(kind, prompt, id, attempt, cwd = options.workdir) {
   try { await readFile(specFile) } catch (error) { fail(`cannot reference project_specs.xml: ${error.message}`) }
   const referencedPrompt = `${prompt}\n\nBefore acting, read ${specFile} and verify that the repository contains every structure and file it requires. Handle missing scaffold artifacts according to your role.`
   await writeState({ phase: kind.toLowerCase(), currentFeatureId: id, attempt, childPid: null })
-  const roles = await readRoles(cwd)
+  const plan = itemPlan
+  const roles = plan?.roles
   const direct = !roles
-  const candidates = direct ? [{ harness: options.host }] : [...roles[roleNames[kind]]]
+  const role = roleNames[kind]
+  const strikes = plan?.strikes || {}
   const codedBy = await recentCodingHarness(id) || [...(state.routeHistory || [])].reverse()
     .find((entry) => entry.kind === 'CODING' && String(entry.id) === String(id) && entry.outcome === 'selected')?.harness
-  if (!direct && ['QA', 'INTEGRATION_QA', 'GOAL_REVIEW'].includes(kind)) {
-    const avoid = codedBy || roles.coding[0].harness
-    candidates.sort((a, b) => Number(a.harness === avoid) - Number(b.harness === avoid))
+  let candidates
+  if (direct) {
+    candidates = [{ harness: options.host }]
+  } else {
+    // Base order = item-start strike-sorted role list (stable); do NOT re-read/re-sort strikes per attempt.
+    const roleList = [...plan.sortedRoles[role]]
+    if (['QA', 'INTEGRATION_QA', 'GOAL_REVIEW'].includes(kind)) {
+      const avoid = codedBy || roles.coding[0].harness
+      roleList.sort((a, b) => (Number(a.harness === avoid) - Number(b.harness === avoid))
+        || (strikeOf(role, a.harness, a.model, strikes) - strikeOf(role, b.harness, b.model, strikes)))
+    }
+    // ponytail: integration-QA defects also bump `attempt`, so they advance the coder offset too (accepted simplification).
+    const repairBudget = Number(process.env.HARNESS_REPAIR_BUDGET || 2)
+    const offset = kind === 'CODING' ? Math.min(Math.floor((attempt - 1) / repairBudget), roleList.length - 1) : 0
+    candidates = [...roleList.slice(offset), ...(roles.noCredits || [])]
   }
   const failures = []
   for (const candidate of candidates) {
@@ -279,8 +336,9 @@ async function runAgent(kind, prompt, id, attempt, cwd = options.workdir) {
       : [process.env.HARNESS_OMNIGENT_BIN || 'omni', ['run', join(process.env.HARNESS_OMNIGENT_BUNDLE || join(homedir(), '.omnigent', 'agents', 'harness-engineering'), 'agents', candidate.harness), '--no-session', ...(candidate.model ? ['--model', candidate.model] : []), '--prompt', referencedPrompt]]
     await writeState({ agentRoute: route, childPid: null })
     const result = await spawnAgent(program, args, direct ? cwd : gitTopLevel(cwd))
+    const reason = !direct && !result.ok ? fallbackReason(result) : null
+    if (reason) bumpStrike('infra', `infra|${mkey(candidate.harness, candidate.model)}`, 1)
     if (!direct && !result.ok && candidates.indexOf(candidate) < candidates.length - 1) {
-      const reason = fallbackReason(result)
       failures.push({ harness: candidate.harness, model: candidate.model || null, reason, detail: result.detail.slice(-1000) })
       state.routeHistory = [...(state.routeHistory || []), { ...route, outcome: 'fallback', fallbackReason: reason }]
       await writeState({ routeHistory: state.routeHistory, lastResult: `${candidate.harness}: ${reason}`, childPid: null })
@@ -289,6 +347,7 @@ async function runAgent(kind, prompt, id, attempt, cwd = options.workdir) {
     const selected = { ...route, outcome: result.ok ? 'selected' : 'failed' }
     state.routeHistory = [...(state.routeHistory || []), selected]
     if (kind === 'CODING' && result.ok) codingHarnesses.set(String(id), candidate.harness)
+    if (!direct && result.ok) bumpStrike('infra', `infra|${mkey(candidate.harness, candidate.model)}`, -1)
     const diagnostic = `${failures.length ? `fallbacks=${JSON.stringify(failures)}\n` : ''}${result.parsed ? `${JSON.stringify(result.parsed, null, 2)}\n` : `${result.stdout}${result.stderr ? `\n--- stderr ---\n${result.stderr}` : ''}`.slice(-16_000)}`
     const artifact = await evidence(id, attempt, kind, diagnostic, selected)
     await writeState({ childPid: null, evidence: artifact, agentRoute: selected, routeHistory: state.routeHistory })
@@ -492,6 +551,8 @@ async function runWorkItems() {
   for (const original of selected) {
     let current = (await readFeatures()).list.find((item) => String(item.id) === String(original.id))
     if (current.integration === true) { results.push({ id: current.id, status: 'passed' }); continue }
+    // Read strikes and sort candidate lists ONCE per Work Item — stable within the item so only the attempt offset switches coders.
+    itemPlan = buildPlan(await readRoles())
     const resumingCurrent = String(state.currentFeatureId) === String(current.id)
     let attempt = resumingCurrent ? Number(state.attempt || current.retries + 1 || 1) : Number(current.retries || 0) + 1
     let repairPlan = resumingCurrent ? state.repairPlan : null
@@ -527,6 +588,8 @@ async function runWorkItems() {
         if (checked.ok && checked.parsed?.implementation === true && checked.parsed?.qa === true) {
           await updateFeature(options.workdir, current.id, { implementation: true, qa: true })
           commitPaths(options.workdir, [join(options.workdir, 'feature_list.json')], `chore(harness): record QA ${current.id}`)
+          const coder = itemPlan && lastCoder()
+          if (coder) bumpStrike('quality', `quality|coding|${coder}`, -1)
         }
         current = (await readFeatures()).list.find((item) => String(item.id) === String(original.id))
         if (!checked.ok && !checked.parsed) {
@@ -543,6 +606,8 @@ async function runWorkItems() {
           }
           await writeState({ phase: 'qa-defect', nextAction: 'repair-plan', defectReport, attempt })
           if (attempt >= 3) { results.push(await block(current, attempt, 'QA failed after Attempt 3', defectReport.defects)); break }
+          const coder = itemPlan && lastCoder()
+          if (coder) bumpStrike('quality', `quality|coding|${coder}`, 1)
           repairPlan = await planRepair(current, attempt, defectReport)
           attempt++
           continue
@@ -586,6 +651,7 @@ async function runGoalReviewLocked() {
   }
   await writeState({ status: 'running', phase: 'goal-review', nextAction: 'goal-review', attempt: 1 })
   heartbeatTimer = setInterval(() => writeState().catch(() => {}), 15_000)
+  itemPlan = buildPlan(await readRoles())
   const prompt = 'You are the independent Goal Review agent. Read project_specs.xml, especially Project Goal and every stable Acceptance Check. On integrated main, exercise every check and cross-feature primary journeys through a real browser or real HTTP. Do not trust existing flags. Do not modify product code. Return only JSON: {"goal":true|false,"summary":"...","acceptanceCheckIds":["AC-..."],"defects":["expected ...; observed ...; evidence ..."]}.'
   const reviewed = await runAgent('GOAL_REVIEW', prompt, 'goal', 1)
   const verdict = reviewed.parsed

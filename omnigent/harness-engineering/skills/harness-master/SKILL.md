@@ -1,6 +1,6 @@
 ---
 name: harness-master
-description: Compressed single-skill reference for small-context coding agents (pi). Replaces loading planner/generator/evaluator/control-host/setup/update-project, tdd, and grilling individually.
+description: Compressed single-skill reference for small-context coding agents. Replaces loading planner/generator/evaluator/supervisor/setup/update-project, tdd, and grilling individually. Pi is supervisor-only now — see `harness-relay` for pi's role, not this skill.
 ---
 
 # harness-master
@@ -61,12 +61,14 @@ authoritative — never reconstruct state from chat history.
   reporting the Work Item exceeds its context budget, → next candidate; none
   of these count as a failed Attempt. A successful QA response describing a
   defect does NOT fall through (enters Repair Plan).
-- **Pi's context budget**: pi's context is small (~20k tokens total,
-  including this skill, the Work Item, and its diff). Before making any
-  change, judge whether the Work Item is a small, single-file,
-  single-behavior change that fits. If not, return `implementation:false`
-  immediately with a note that scope exceeds budget — no partial attempt.
-  Omnigent then routes to the next `coding` candidate for this Work Item.
+- **Small-context coding budget**: a small-context coding agent's total
+  budget is small (~20k tokens, including this skill, the Work Item, and its
+  diff). Before making any change, judge whether the Work Item is a small,
+  single-file, single-behavior change that fits. If not, return
+  `implementation:false` immediately with a note that scope exceeds budget —
+  no partial attempt. Omnigent then routes to the next `coding` candidate for
+  this Work Item. (Pi no longer takes this role — pi is supervisor-only now;
+  see `harness-relay`.)
 - **Mandatory Goal Review**: when no Work Items remain and every queue entry
   has `integration:true`, run Goal Review on integrated `main` (holds merge
   lock): reread Project Goal + every AC, rerun at real boundaries, test
@@ -119,12 +121,14 @@ authoritative — never reconstruct state from chat history.
 - `CONTEXT.md` is a **glossary only** — no implementation details. Challenge
   fuzzy terms, surface code-vs-stated-behavior contradictions. Offer an ADR
   only when hard-to-reverse AND surprising-without-context AND a real trade-off.
-- **Control Host** (only if you run the supervisor, not as a worker): it owns
+- **Supervisor** (only if you run the supervisor, not as a worker): it owns
   goal intake + user comms; the harness owns scheduling/admission/retries/
   leases/integration/completion. Never create raw coding subagents beside it.
   Capacity = `min(configured max, CPU, memory, provider-quota)` — computed, not
   judged. **Completion requires a persisted `run_completed` event** from Goal
-  Review — never infer from an empty queue.
+  Review — never infer from an empty queue. Pi runs the Supervisor role via
+  the `harness-relay` skill only — relay-only, no coding, every retry/abort/
+  amend judgment escalates to the human.
 
 ## 6. Safety boundaries
 

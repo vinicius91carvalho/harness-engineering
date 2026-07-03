@@ -43,7 +43,7 @@ Run these only on disposable user profiles after authenticating each real CLI:
 
 7. For the full check, use a disposable Git repository with one Acceptance
    Check. Route coding to OpenCode and validation, repair planning, and Goal
-   Review to Codex. Start Omnigent as the Control Host. The check passes only
+   Review to Codex. Start Omnigent as the Supervisor. The check passes only
    when all three queue flags are `true`, Goal Review is complete, and the
    control event stream contains `run_completed`. The exact commands are in the
    [README guide](../../README.md#optional-omnigent-control-and-routing).

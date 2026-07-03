@@ -1,23 +1,39 @@
 {
-  "coding": [
-    { "harness": "pi", "model": "llama.cpp/ornith-1.0-9b-code" },
-    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
-    { "harness": "opencode", "model": "opencode-go/kimi-k2.7-code" },
-    { "harness": "claude", "model": "claude-sonnet-5" }
-  ],
-  "validation": [
-    { "harness": "claude", "model": "claude-opus-4-8" },
-    { "harness": "codex", "model": "gpt-5.5" },
-    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" }
-  ],
-  "repairPlanning": [
-    { "harness": "codex", "model": "gpt-5.5" },
-    { "harness": "claude", "model": "claude-opus-4-8" },
-    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" }
-  ],
-  "goalReview": [
-    { "harness": "claude", "model": "claude-opus-4-8" },
-    { "harness": "codex", "model": "gpt-5.5" },
-    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" }
-  ]
+	"coding": [
+		{ "harness": "opencode", "model": "opencode-go/deepseek-v4-flash" },
+		{ "harness": "opencode", "model": "openrouter/moonshotai/kimi-k2.7-code" },
+		{ "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
+		{ "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-pro" },
+		{ "harness": "opencode", "model": "openrouter/qwen/qwen3.7-max" },
+		{ "harness": "claude", "model": "claude-opus-4-7" },
+		{ "harness": "codex", "model": "gpt-5.5" }
+	],
+	"validation": [
+		{ "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
+		{ "harness": "opencode", "model": "openrouter/qwen/qwen3.7-max" },
+		{ "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-pro" },
+		{ "harness": "codex", "model": "gpt-5.5" },
+		{ "harness": "claude", "model": "claude-opus-4-7" }
+	],
+	"repairPlanning": [
+		{ "harness": "opencode", "model": "openrouter/qwen/qwen3.7-max" },
+		{ "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
+		{ "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-pro" },
+		{ "harness": "claude", "model": "claude-opus-4-7" },
+		{ "harness": "codex", "model": "gpt-5.5" }
+	],
+	"goalReview": [
+		{ "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
+		{ "harness": "opencode", "model": "openrouter/qwen/qwen3.7-max" },
+		{ "harness": "codex", "model": "gpt-5.5" },
+		{ "harness": "claude", "model": "claude-opus-4-7" }
+	],
+	"noCredits": [
+		{ "harness": "opencode", "model": "openrouter/qwen/qwen3-coder:free" },
+		{
+			"harness": "opencode",
+			"model": "openrouter/deepseek/deepseek-v4-flash:free"
+		},
+		{ "harness": "opencode", "model": "openrouter/free" }
+	]
 }

@@ -47,7 +47,7 @@ SH
 chmod +x "$TMP/bin/claude"
 
 NODE=$(command -v node)
-CONTROL="$ROOT/skills/control-host/scripts/harness-control.mjs"
+CONTROL="$ROOT/skills/supervisor/scripts/harness-control.mjs"
 PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" "$NODE" "$CONTROL" run \
   --repo "$TMP/repo" --host claude --once true --poll-ms 250 \
   --max-workers 2 --quota-workers 1 --cpu-per-worker 0.25 \
@@ -59,18 +59,18 @@ jq -e '.status == "complete" and .supervisorPid == null and .progress.integrated
 jq -s -e 'any(.[]; .kind == "progress") and any(.[]; .kind == "goal_review_started") and any(.[]; .kind == "run_completed" and .immediate)' "$EVENTS" >/dev/null
 echo 'ok - supervisor claims, builds, verifies, releases, and runs governed Goal Review'
 
-mkdir -p "$TMP/installed/skills/harness-control-host/scripts"
-cp "$CONTROL" "$TMP/installed/skills/harness-control-host/scripts/harness-control.mjs"
+mkdir -p "$TMP/installed/skills/harness-supervisor/scripts"
+cp "$CONTROL" "$TMP/installed/skills/harness-supervisor/scripts/harness-control.mjs"
 cp -R "$ROOT/skills/generator" "$TMP/installed/skills/harness-generator"
 git clone -q "$TMP/repo" "$TMP/namespaced"
 git -C "$TMP/namespaced" config user.name test
 git -C "$TMP/namespaced" config user.email test@example.invalid
 PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" "$NODE" \
-  "$TMP/installed/skills/harness-control-host/scripts/harness-control.mjs" run \
+  "$TMP/installed/skills/harness-supervisor/scripts/harness-control.mjs" run \
   --repo "$TMP/namespaced" --host claude --once true --poll-ms 250 --quota-workers 1 \
   --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100
 jq -e '.status == "complete"' "$TMP/namespaced/.git/harness-control/state.json" >/dev/null
-echo 'ok - OpenCode namespaced control host resolves its generator sibling'
+echo 'ok - OpenCode namespaced supervisor resolves its generator sibling'
 
 mkdir -p "$TMP/monorepo/app"
 cp "$TMP/repo/project_specs.xml" "$TMP/monorepo/app/project_specs.xml"

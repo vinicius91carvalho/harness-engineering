@@ -76,9 +76,13 @@ _Avoid_: Foundation phase, execution order
 A queued Work Item whose mapped Acceptance Check dependencies have all passed Integrated Verification.
 _Avoid_: Pending task, next feature
 
-**Control Host**:
-A long-lived agent surface that submits Project Goals, presents harness status, and relays user decisions without owning execution policy.
-_Avoid_: Orchestrator, worker, scheduler
+**Supervisor**:
+The single long-lived agent per project, chosen at launch via `omni run <bundle> --harness <X>`, that submits Project Goals, presents harness status, and relays user decisions without owning execution policy. Under pi it runs relay-only and escalates planning plus retry, abort, and amend decisions to the human. Its engine is `harness-control.mjs`.
+_Avoid_: worker, scheduler
+
+**Orchestrator**:
+The deterministic per-Work-Item state machine (`orchestrator.mjs`, no LLM) that sequences Code → QA → integrate → Goal Review and owns `roles.json` routing and Demotion.
+_Avoid_: Supervisor, LLM planner
 
 **Input Request**:
 A durable, uniquely identified request for user direction that records why work cannot proceed, permitted actions, and supporting evidence.
@@ -93,7 +97,7 @@ Atomic singleton ownership of one repository's Resource Governor, stored in its 
 _Avoid_: Context Claim Lease, PID file, chat session
 
 **Control Event**:
-A durable, ordered machine-readable record of a meaningful supervisor transition that a Control Host can relay or summarize.
+A durable, ordered machine-readable record of a meaningful supervisor transition that a Supervisor can relay or summarize.
 _Avoid_: Transcript, console output, notification
 
 **Blocking Scope**:
@@ -103,3 +107,31 @@ _Avoid_: Global pause, failed task
 **Verify-First Mode**:
 A spec mode (`<mode>existing-codebase</mode>`) where coding agents first exercise the Acceptance Checks against existing code at a real external boundary, set `implementation=true` with no code changes when they pass, and only repair the root cause with the smallest possible diff when a check fails. QA and Integrated Verification still independently re-run the checks. Turns `/generator` into a safe audit pass over a working codebase rather than a rewrite.
 _Avoid_: Audit mode, verify-only mode, read-only generator
+
+**User**:
+The human who sets up the harness, requests features or refactors, answers escalations, and reads relayed progress.
+_Avoid_: operator, client
+
+**Code Agent**:
+The coding executor selected by `roles.json` `coding` routing and run via `omni run agents/<harness>`, responsible for implementing one Work Item.
+_Avoid_: QA Agent, worker
+
+**QA Agent**:
+The validation executor selected by `roles.json` `validation` routing and run independently of the Code Agent, so the reviewer is never the coder.
+_Avoid_: Code Agent, self-review
+
+**Strike Count**:
+A per-project-run integer that increases by one on a qualifying failure (infrastructure or quality) and decreases by one on a clean success, with a floor of zero. Infrastructure strikes keyed by `(harness, model)` apply globally across roles; quality strikes keyed by `(role, harness, model)` stay local.
+_Avoid_: retry counter, error log
+
+**Demotion**:
+Sorting a struck candidate to the back of its role list at selection time.
+_Avoid_: ban, removal
+
+**Repair Budget**:
+The number of QA rejections allowed on one Work Item before switching to the next coder; set by `HARNESS_REPAIR_BUDGET`, default 2.
+_Avoid_: Attempt limit, retry cap
+
+**noCredits tier**:
+An optional free fallback list in `roles.json`, reached only when paid candidates are exhausted by infrastructure or credit errors.
+_Avoid_: free tier default, primary route

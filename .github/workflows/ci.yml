@@ -42,8 +42,8 @@ jobs:
           test -f "$f"
           grep -q '^name:' "$f"
           grep -q '^description:' "$f"
-          grep -q '^name:' skills/control-host/SKILL.md
-          grep -q '^description:' skills/control-host/SKILL.md
+          grep -q '^name:' skills/supervisor/SKILL.md
+          grep -q '^description:' skills/supervisor/SKILL.md
 
   portable-shell:
     strategy:

@@ -90,14 +90,14 @@ flowchart TD
         <article><strong>Run State</strong><span>Durable JSON tracking one context's phase, attempt, and next action.</span></article>
         <article><strong>Repair Plan</strong><span>The orchestrator's fix plan issued after a QA defect, before the next attempt.</span></article>
         <article><strong>Goal Review</strong><span>The final independent check of the whole Project Goal on integrated <code>main</code>.</span></article>
-        <article><strong>Control Host</strong><span>The long-running supervisor that governs worker admission and relays status.</span></article>
+        <article><strong>Supervisor</strong><span>The single long-lived agent per project that governs worker admission, relays status to the user, and escalates judgment.</span></article>
       </div>
     </section>
 
     <section class="topic" id="prerequisites">
       <p class="step">Before installation</p>
       <h2>Install the runtime and one coding tool</h2>
-      <p>The repository machine needs <a href="https://git-scm.com/">Git</a>, <a href="https://www.gnu.org/software/bash/">Bash</a>, <strong><a href="https://nodejs.org/">Node.js 18 or newer</a></strong>, and one authenticated tool: <a href="https://code.claude.com/docs/en/overview">Claude Code</a>, <a href="https://developers.openai.com/codex/">Codex</a>, or <a href="https://opencode.ai/">OpenCode</a>. Node.js runs setup inventory, reconciliation, orchestration, and control-host commands.</p>
+      <p>The repository machine needs <a href="https://git-scm.com/">Git</a>, <a href="https://www.gnu.org/software/bash/">Bash</a>, <strong><a href="https://nodejs.org/">Node.js 18 or newer</a></strong>, and one authenticated tool: <a href="https://code.claude.com/docs/en/overview">Claude Code</a>, <a href="https://developers.openai.com/codex/">Codex</a>, or <a href="https://opencode.ai/">OpenCode</a>. Node.js runs setup inventory, reconciliation, orchestration, and supervisor commands.</p>
       <pre><code>git --version
 bash --version
 node --version
@@ -125,7 +125,7 @@ claude --version  # or: codex --version / opencode --version</code></pre>
           <tr><td>Plan a new goal</td><td><code>/harness:planner</code></td><td><code>/harness-planner</code></td></tr>
           <tr><td>Build or resume</td><td><code>/harness:generator</code></td><td><code>/harness-generator</code></td></tr>
           <tr><td>Review the goal</td><td><code>/harness:evaluator</code></td><td><code>/harness-evaluator</code></td></tr>
-          <tr><td>Operate supervisor</td><td><code>/harness:control-host</code></td><td><code>/harness-control-host</code></td></tr>
+          <tr><td>Operate supervisor</td><td><code>/harness:supervisor</code></td><td><code>/harness-supervisor</code></td></tr>
           <tr><td>Capture lessons</td><td><code>/harness:learning-loop</code></td><td><code>/harness-learning-loop</code></td></tr>
           <tr><td>Back up configuration</td><td><code>/harness:update-project</code></td><td><code>/harness-update-project</code></td></tr>
         </tbody>
@@ -273,9 +273,9 @@ claude --version  # or: codex --version / opencode --version</code></pre>
     <section class="topic" id="operate">
       <p class="step">Monitor</p>
       <h2>Watch, pause, resume, and verify a run</h2>
-      <p>From inside Claude Code, Codex, or OpenCode chat, run <code>/harness:control-host</code> (<code>/harness-control-host</code> on OpenCode) to drive the same operations without leaving the session.</p>
+      <p>From inside Claude Code, Codex, or OpenCode chat, run <code>/harness:supervisor</code> (<code>/harness-supervisor</code> on OpenCode) to drive the same operations without leaving the session.</p>
       <p class="files">The script below is OpenCode's namespaced skill install — it exists only if OpenCode is installed, not for a Claude Code– or Codex–only machine.</p>
-      <pre><code>CONTROL=~/.config/opencode/skills/harness-control-host/scripts/harness-control.mjs
+      <pre><code>CONTROL=~/.config/opencode/skills/harness-supervisor/scripts/harness-control.mjs
 PROJECT=/absolute/path/to/project
 
 node "$CONTROL" status   --repo "$PROJECT"
@@ -284,7 +284,7 @@ node "$CONTROL" pause    --repo "$PROJECT"
 node "$CONTROL" resume   --repo "$PROJECT"
 node "$CONTROL" stop     --repo "$PROJECT"
 node "$CONTROL" events   --repo "$PROJECT" --consumer manual-check</code></pre>
-      <p>If work blocks, answer the exact Input Request through Omnigent or the control host's explicit response/resume path. Branches, worktrees, evidence, and Repair Plans remain available.</p>
+      <p>If work blocks, answer the exact Input Request through Omnigent or the supervisor's explicit response/resume path. Branches, worktrees, evidence, and Repair Plans remain available.</p>
       <div class="checks">
         <article><span>1</span><div><strong>Supervisor finished</strong><p><code>status: complete</code> and <code>supervisorPid: null</code>.</p></div></article>
         <article><span>2</span><div><strong>Queue integrated</strong><p>Every item has <code>implementation</code>, <code>qa</code>, and <code>integration</code> set to true.</p></div></article>
@@ -331,7 +331,7 @@ bash "$GEN/claim.sh" list "$PROJECT"</code></pre>
         <li>relay durable Input Requests.</li>
       </ul>
       <p>It does not own claims, retries, merges, QA policy, or Goal Review.</p>
-      <p>A project-local <code>.harness/roles.json</code> enables routing. Removing it returns to direct tool execution. The schema's existing <code>harness</code> key selects a Claude Code, Codex, OpenCode, or Pi adapter; the complete workflow remains the harness.</p>
+      <p>A project-local <code>.harness/roles.json</code> enables routing. Removing it returns to direct tool execution. The schema's existing <code>harness</code> key selects a Claude Code, Codex, or OpenCode adapter for each ordered candidate; the complete workflow remains the harness.</p>
     </section>
 
     <section class="topic" id="routing">
@@ -339,28 +339,42 @@ bash "$GEN/claim.sh" list "$PROJECT"</code></pre>
       <h2>Ordered candidates with bounded fallback</h2>
       <p>Each array runs from highest to lowest priority. The engine advances only after a rate limit, authentication failure, unavailable model, launch failure, or timeout. A successful QA response that finds a product defect enters the Repair Plan loop instead of trying another model.</p>
       <p>Validation, integrated QA, and Goal Review first prefer a tool different from the actual coding tool. Configured order remains stable within the independent and same-tool groups. Every route and fallback reason is persisted.</p>
+      <p>A model that fails from an infra error or a repeated QA rejection is demoted to the back of its role list for the rest of the run, so the run self-heals instead of retrying the same broken candidate. The optional <code>noCredits</code> array is a free-tier fallback tried only once paid options are exhausted by infra/credit errors. Repair retries are bounded by <code>HARNESS_REPAIR_BUDGET</code> (default <code>2</code>).</p>
       <p class="source"><strong>Full source:</strong> <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/omnigent/harness-engineering/roles.example.json">https://github.com/vinicius91carvalho/harness-engineering/blob/main/omnigent/harness-engineering/roles.example.json</a></p>
       <pre><code>{
   "coding": [
-    { "harness": "pi", "model": "llama.cpp/ornith-1.0-9b-code" },
+    { "harness": "opencode", "model": "opencode-go/deepseek-v4-flash" },
+    { "harness": "opencode", "model": "openrouter/moonshotai/kimi-k2.7-code" },
     { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
-    { "harness": "opencode", "model": "opencode-go/kimi-k2.7-code" },
-    { "harness": "claude", "model": "claude-sonnet-5" }
+    { "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-pro" },
+    { "harness": "opencode", "model": "openrouter/qwen/qwen3.7-max" },
+    { "harness": "claude", "model": "claude-opus-4-7" },
+    { "harness": "codex", "model": "gpt-5.5" }
   ],
   "validation": [
-    { "harness": "claude", "model": "claude-opus-4-8" },
+    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
+    { "harness": "opencode", "model": "openrouter/qwen/qwen3.7-max" },
+    { "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-pro" },
     { "harness": "codex", "model": "gpt-5.5" },
-    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" }
+    { "harness": "claude", "model": "claude-opus-4-7" }
   ],
   "repairPlanning": [
-    { "harness": "codex", "model": "gpt-5.5" },
-    { "harness": "claude", "model": "claude-opus-4-8" },
-    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" }
+    { "harness": "opencode", "model": "openrouter/qwen/qwen3.7-max" },
+    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
+    { "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-pro" },
+    { "harness": "claude", "model": "claude-opus-4-7" },
+    { "harness": "codex", "model": "gpt-5.5" }
   ],
   "goalReview": [
-    { "harness": "claude", "model": "claude-opus-4-8" },
+    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
+    { "harness": "opencode", "model": "openrouter/qwen/qwen3.7-max" },
     { "harness": "codex", "model": "gpt-5.5" },
-    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" }
+    { "harness": "claude", "model": "claude-opus-4-7" }
+  ],
+  "noCredits": [
+    { "harness": "opencode", "model": "openrouter/qwen/qwen3-coder:free" },
+    { "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-flash:free" },
+    { "harness": "opencode", "model": "openrouter/free" }
   ]
 }</code></pre>
       <pre><code>mkdir -p .harness
@@ -391,7 +405,7 @@ cp ~/.omnigent/agents/harness-engineering/roles.example.json .harness/roles.json
     }
   }
 }</code></pre>
-      <p>Pi addresses it as <code>llama.cpp/ornith-1.0-9b-code</code> and loads the compressed <code>harness-master</code> skill for its small context. Keep the server running while that route is available. Authenticate <a href="https://openrouter.ai/">OpenRouter</a>, <a href="https://opencode.ai/docs/go/">OpenCode Go</a>, and <a href="https://code.claude.com/docs/en/overview">Claude Code</a> before depending on the hosted fallbacks.</p>
+      <p>Pi addresses it as <code>llama.cpp/ornith-1.0-9b-code</code> and loads the compressed <code>harness-relay</code> skill, running as a relay-only Supervisor sized for its small context — Pi is not a coding or validation candidate. Keep the server running while that route is available. Authenticate <a href="https://openrouter.ai/">OpenRouter</a>, <a href="https://opencode.ai/docs/go/">OpenCode Go</a>, and <a href="https://code.claude.com/docs/en/overview">Claude Code</a> before depending on the hosted fallbacks.</p>
     </section>
 
     <section class="topic" id="run-omnigent">
@@ -399,11 +413,11 @@ cp ~/.omnigent/agents/harness-engineering/roles.example.json .harness/roles.json
       <h2>Start or resume through Omnigent</h2>
       <pre><code>cd /path/to/git-root
 omni run ~/.omnigent/agents/harness-engineering --harness codex</code></pre>
-      <pre><code>Act as the Control Host for /absolute/path/to/project.
+      <pre><code>Act as the Supervisor for /absolute/path/to/project.
 Start or resume the harness. Use the project role file.
 Continue until input is needed or a persisted run_completed event exists.</code></pre>
       <p>Start from the Git root and name the exact project directory, especially in a monorepo.</p>
-      <p class="warning"><strong><span style="color:#e5c07b">Limitation:</span></strong> the agent bundle only loads under a <strong>headless</strong> harness — <code>codex</code> or <code>claude</code>. <code>--harness opencode</code> launches the interactive OpenCode TUI and ignores the AGENT spec, so Omnigent rejects the combination (<code>omni run &lt;agent&gt; --harness opencode</code> errors). OpenCode still runs as a <strong>worker route</strong> per <code>.harness/roles.json</code> — the supervisor spawns <code>opencode run</code> per phase — it just can't be the Control Host. To use OpenCode as the host, run <code>opencode</code> directly and invoke the <a href="#start">harness skills</a> (attached, no Omnigent relay). Tracked upstream at <a href="https://github.com/omnigent-ai/omnigent/issues/1816">omnigent-ai/omnigent#1816</a>.</p>
+      <p class="warning"><strong><span style="color:#e5c07b">Limitation:</span></strong> the agent bundle only loads under a <strong>headless</strong> harness such as <code>codex</code>, <code>claude</code>, or <code>pi</code> (local Ornith, verified as a relay-only Supervisor). <code>--harness opencode</code> launches the interactive OpenCode TUI and ignores the AGENT spec, so Omnigent rejects the combination (<code>omni run &lt;agent&gt; --harness opencode</code> errors). OpenCode still runs as a <strong>worker route</strong> per <code>.harness/roles.json</code> — the supervisor spawns <code>opencode run</code> per phase — it just can't be the Supervisor. To use OpenCode as the host, run <code>opencode</code> directly and invoke the <a href="#start">harness skills</a> (attached, no Omnigent relay). Tracked upstream at <a href="https://github.com/omnigent-ai/omnigent/issues/1816">omnigent-ai/omnigent#1816</a>.</p>
     </section>
 
     <section class="topic" id="mobile">
@@ -412,7 +426,7 @@ Continue until input is needed or a persisted run_completed event exists.</code>
       <p>You do not need Tailscale to watch a run. Local observation uses the <a href="#operate">control script</a> directly: <code>status</code>, <code>events</code>, <code>pause</code>, <code>resume</code>, <code>stop</code>. The steps below add a web/mobile control surface only — for reaching the project machine from a phone over a private tailnet. If you only work from the same machine, skip this section.</p>
 
       <h3>Full setup: supervisor, web UI, and phone</h3>
-      <p>Run these from the project machine. <code>omni run</code> starts the Control Host <em>and</em> the embedded Omnigent web UI together — there is no separate <code>omni server start</code> or <code>omni host</code> to run. (A standalone <code>omni server start</code> only collides: it prints <em>"Background server already running"</em> and leaves the old one up.)</p>
+      <p>Run these from the project machine. <code>omni run</code> starts the Supervisor <em>and</em> the embedded Omnigent web UI together — there is no separate <code>omni server start</code> or <code>omni host</code> to run. (A standalone <code>omni server start</code> only collides: it prints <em>"Background server already running"</em> and leaves the old one up.)</p>
       <pre><code># 1. Install Tailscale on the project machine AND your phone, sign both
 #    into the same tailnet (https://login.tailscale.com/admin/machines).
 
@@ -426,7 +440,7 @@ tailscale status | grep "$(hostname)"
 #    env vars on its own line):
 omnigent stop
 
-# 4. Start the Control Host + embedded web UI, scoped to the tailnet.
+# 4. Start the Supervisor + embedded web UI, scoped to the tailnet.
 #    The env vars must be on THIS command so the fresh daemon inherits them:
 OMNIGENT_WS_ALLOWED_ORIGINS=https://YOUR-MACHINE.ts.net \
 OMNIGENT_ACCOUNTS_BASE_URL=https://YOUR-MACHINE.ts.net \
@@ -434,12 +448,12 @@ OMNIGENT_ACCOUNTS_BASE_URL=https://YOUR-MACHINE.ts.net \
 
 # 5. In a second terminal, expose the daemon's port to the tailnet over HTTPS:
 sudo tailscale serve --bg http://localhost:6767</code></pre>
-      <p>Then open <code>https://YOUR-MACHINE.ts.net</code> from the phone. The Control Host and its web UI both run in step 4 (the daemon owns the runner in-process, so no <code>omni host</code>); step 5 just proxies the phone's HTTPS to the daemon's local port. <code>tailscale serve</code> must target <code>localhost:6767</code> — the native daemon's port — <em>not</em> 8000 (that's the Docker-Compose container port from Omnigent's Tailscale guide, which doesn't apply to <code>omni run</code>). The <code>--bg</code> flag runs the proxy persistently in the background; HTTPS is the default frontend, so the phone reaches <code>https://YOUR-MACHINE.ts.net</code>. (Tailscale 1.52+ removed the old <code>serve https / http://...</code> syntax — use the form above.)</p>
+      <p>Then open <code>https://YOUR-MACHINE.ts.net</code> from the phone. The Supervisor and its web UI both run in step 4 (the daemon owns the runner in-process, so no <code>omni host</code>); step 5 just proxies the phone's HTTPS to the daemon's local port. <code>tailscale serve</code> must target <code>localhost:6767</code> — the native daemon's port — <em>not</em> 8000 (that's the Docker-Compose container port from Omnigent's Tailscale guide, which doesn't apply to <code>omni run</code>). The <code>--bg</code> flag runs the proxy persistently in the background; HTTPS is the default frontend, so the phone reaches <code>https://YOUR-MACHINE.ts.net</code>. (Tailscale 1.52+ removed the old <code>serve https / http://...</code> syntax — use the form above.)</p>
 
       <h3>What is <code>YOUR-MACHINE</code>?</h3>
       <p>It is the <strong>Tailscale Magic DNS hostname of the project machine</strong>, <em>not</em> <code>127.0.0.1</code> or <code>localhost</code>. Tailscale assigns every device on your tailnet a name like <code>mybox</code>, reachable as <code>mybox.ts.net</code> (or your tailnet's custom domain). Find it with <code>tailscale status</code> or in the <a href="https://login.tailscale.com/admin/machines">Tailscale admin console</a>. The phone can't reach the machine's loopback (<code>127.0.0.1</code>), so the phone-side URL must be the tailnet name; only the <code>tailscale serve</code> backend uses <code>localhost:6767</code> because that proxy runs on the project machine itself.</p>
 
-      <p class="warning"><strong><span style="color:#e5c07b">Limitation:</span></strong> step 4 only accepts the <code>codex</code> or <code>claude</code> harness. <code>--harness opencode</code> launches the OpenCode TUI and ignores the agent bundle, so it can't drive the Control Host from the phone. To run the supervisor while you watch it on mobile, pick a headless harness; OpenCode remains available as a worker route via <code>.harness/roles.json</code>. Use <code>tailscale serve</code>, not Funnel, for tailnet-only access. The project machine must remain awake.</p>
+      <p class="warning"><strong><span style="color:#e5c07b">Limitation:</span></strong> step 4 accepts a <strong>headless</strong> harness such as <code>codex</code>, <code>claude</code>, or <code>pi</code> (local Ornith). <code>--harness opencode</code> launches the OpenCode TUI and ignores the agent bundle, so it can't drive the Supervisor from the phone. To run the supervisor while you watch it on mobile, pick a headless harness; OpenCode remains available as a worker route via <code>.harness/roles.json</code>. Use <code>tailscale serve</code>, not Funnel, for tailnet-only access. The project machine must remain awake.</p>
     </section>
 
     <section class="topic" id="maintenance">
@@ -448,7 +462,7 @@ sudo tailscale serve --bg http://localhost:6767</code></pre>
       <ul>
         <li><strong>Update:</strong> rerun the installer to refresh plugins and the optional Omnigent bundle.</li>
         <li><strong>Inspect:</strong> use status/events plus <code>harness-progress/</code>, <code>.git/harness-runs/</code>, and <code>.git/harness-control/</code>.</li>
-        <li><strong>Pause safely:</strong> use control-host operations so supervisor and child processes stay consistent.</li>
+        <li><strong>Pause safely:</strong> use supervisor operations so it and child processes stay consistent.</li>
         <li><strong>Back up configuration:</strong> run <code>/harness:update-project</code>; credentials, caches, and sessions are excluded.</li>
         <li><strong>Capture useful lessons:</strong> run <code>/harness:learning-loop</code> after substantial or repetitive work.</li>
       </ul>

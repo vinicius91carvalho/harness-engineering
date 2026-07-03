@@ -1,12 +1,12 @@
 ---
-name: control-host
+name: supervisor
 description: Run a software Project Goal for long periods through the harness supervisor, bounded parallel workers, durable status, and user notifications.
 allowed-tools: Bash, Read, Skill
 ---
 
-# Harness Control Host
+# Harness Supervisor
 
-Act as a Control Host. You own goal intake and user communication; the harness
+Act as a Supervisor. You own goal intake and user communication; the harness
 owns scheduling, worker admission, coding/QA retries, leases, integration, and
 completion. Never create raw coding subagents beside the supervisor: all workers
 must pass through its Resource Governor.
@@ -43,7 +43,7 @@ node "$GENERATOR/reconcile.mjs" "$REPO" --check
 ## Start or recover
 
 Always inspect first. The state is authoritative after chat compaction or a new
-Control Host session:
+Supervisor session:
 
 ```bash
 node "$CONTROL/scripts/harness-control.mjs" status --repo "$REPO"
@@ -81,7 +81,7 @@ only from observed available resources and a known concurrent provider quota.
 ## Relay notifications
 
 Create one durable consumer name per delivery channel, such as
-`omnigent-mobile`. Poll at least once per minute through the Control Host's native
+`omnigent-mobile`. Poll at least once per minute through the Supervisor's native
 heartbeat/cron mechanism:
 
 ```bash

@@ -106,3 +106,24 @@ test "$status" -eq 1
 test ! -s "$TMP/merge.out"
 grep -q 'would be overwritten by merge' "$TMP/merge.err"
 echo 'ok - operational merge failures are not misclassified as conflicts'
+
+mkdir -p "$TMP/strikes"
+git -C "$TMP/strikes" init -b main -q
+git -C "$TMP/strikes" config user.name test
+git -C "$TMP/strikes" config user.email test@example.invalid
+git -C "$TMP/strikes" commit -q --allow-empty -m init
+
+bash "$ROOT/skills/generator/claim.sh" strike "$TMP/strikes" 'infra|opencode|m' 1 & s1=$!
+bash "$ROOT/skills/generator/claim.sh" strike "$TMP/strikes" 'infra|opencode|m' 1 & s2=$!
+wait "$s1"; wait "$s2"
+bash "$ROOT/skills/generator/claim.sh" strike "$TMP/strikes" 'infra|opencode|m' -1
+bash "$ROOT/skills/generator/claim.sh" strikes "$TMP/strikes" >"$TMP/strikes.json"
+jq -e '.["infra|opencode|m"] == 1' "$TMP/strikes.json" >/dev/null
+echo 'ok - strike bumps accumulate atomically under parallel writers'
+
+bash "$ROOT/skills/generator/claim.sh" strike "$TMP/strikes" 'fresh|key' -1
+jq -e '.["fresh|key"] == 0' <(bash "$ROOT/skills/generator/claim.sh" strikes "$TMP/strikes") >/dev/null
+echo 'ok - strikes floor at 0'
+
+jq -e 'has("never|touched") | not' <(bash "$ROOT/skills/generator/claim.sh" strikes "$TMP/strikes") >/dev/null
+echo 'ok - untouched keys read as absent'

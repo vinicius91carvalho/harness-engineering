@@ -308,3 +308,146 @@ if kill -0 "$DESCENDANT_PID" 2>/dev/null; then
   echo 'not ok - interrupted Omnigent descendant remained alive' >&2; exit 1
 fi
 echo 'ok - interruption terminates the complete Omnigent process group'
+
+# ---- shared flexible Omnigent stub for the strike/no-credits cases -----------------------------
+# Fails on specific model names; otherwise mutates feature_list.json by prompt-kind and logs "kind harness model".
+# HARNESS_TEST_OMNI_QA_FAILS controls how many leading QA attempts return a defect.
+cat >"$TMP/bin/omni" <<'SH'
+#!/bin/sh
+set -eu
+target=$2; shift 2; model=; prompt=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --model) model=$2; shift 2 ;;
+    --prompt) prompt=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+harness=$(basename "$target")
+case "$model" in
+  fail-402)   echo 'HTTP 402 insufficient credits' >&2; exit 1 ;;
+  fail-quota) echo 'HTTP 429 quota exceeded' >&2; exit 1 ;;
+  fail-infra) echo 'worker launch failed' >&2; exit 1 ;;
+esac
+kind=unknown
+case "$prompt" in
+  *"orchestrator repair planner"*) kind=repair ;;
+  *"Integrated Verification"*) kind=integration ;;
+  *"coding-agent"*) kind=coding ;;
+  *"qa-agent"*) kind=qa ;;
+esac
+printf '%s %s %s\n' "$kind" "$harness" "${model:-default}" >>"$HARNESS_TEST_OMNI_LOG"
+tmp="$PWD/feature_list.json.tmp"
+commit() { git add feature_list.json; git commit -qm "$1"; }
+case "$kind" in
+  repair) printf '%s\n' '{"summary":"repair","rootCause":"defect","actions":["fix"],"validation":["check"]}' ;;
+  coding)
+    jq 'map(if .id=="WI-AC-001" then .implementation=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
+    commit coding; printf '%s\n' '{"id":"WI-AC-001","implementation":true}' ;;
+  qa)
+    count=0; [ ! -f "$HARNESS_TEST_OMNI_QA" ] || count=$(cat "$HARNESS_TEST_OMNI_QA")
+    count=$((count + 1)); printf '%s' "$count" >"$HARNESS_TEST_OMNI_QA"
+    if [ "$count" -le "${HARNESS_TEST_OMNI_QA_FAILS:-0}" ]; then
+      jq 'map(if .id=="WI-AC-001" then .implementation=false | .qa=false else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
+      commit qa-defect; printf '%s\n' '{"id":"WI-AC-001","qa":false,"implementation":false,"defects":["product defect"]}'
+    else
+      jq 'map(if .id=="WI-AC-001" then .qa=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
+      commit qa-pass; printf '%s\n' '{"id":"WI-AC-001","qa":true,"implementation":true,"defects":[]}'
+    fi ;;
+  integration)
+    jq 'map(if .id=="WI-AC-001" then .integration=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
+    commit integration; printf '%s\n' '{"id":"WI-AC-001","integration":true,"implementation":true,"defects":[]}' ;;
+esac
+SH
+chmod +x "$TMP/bin/omni"
+
+new_case_repo() {
+  local dir="$1"
+  mkdir -p "$dir/.harness"
+  git -C "$dir" init -b main -q
+  git -C "$dir" config user.name test
+  git -C "$dir" config user.email test@example.invalid
+  cp "$TMP/repo/project_specs.xml" "$dir/project_specs.xml"
+  # Fresh queue: $TMP/repo/feature_list.json was mutated to integration=true by the first run.
+  cat >"$dir/feature_list.json" <<'JSON'
+[{"id":"WI-AC-001","context":"core","description":"health works","acceptance_checks":["AC-001"],"depends_on":[],"implementation":false,"qa":false,"integration":false,"retries":0}]
+JSON
+}
+
+# ---- (a) no-credits classification routes to the free tier; 429 quota stays rate-limited -------
+new_case_repo "$TMP/credits"
+cat >"$TMP/credits/.harness/roles.json" <<'JSON'
+{
+  "coding": [{"harness":"claude","model":"fail-402"},{"harness":"codex","model":"fail-quota"}],
+  "validation": [{"harness":"claude"}],
+  "repairPlanning": [{"harness":"opencode"}],
+  "goalReview": [{"harness":"claude"}],
+  "noCredits": [{"harness":"opencode","model":"free"}]
+}
+JSON
+git -C "$TMP/credits" add . && git -C "$TMP/credits" commit -qm init
+bash "$ROOT/skills/generator/claim.sh" select-claim "$TMP/credits" all '' 7001 >"$TMP/credits-claim.json"
+CREDITS_WT=$(jq -r .worktree "$TMP/credits-claim.json")
+PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" HARNESS_OMNIGENT_BUNDLE="$ROOT/omnigent/harness-engineering" \
+  HARNESS_TEST_OMNI_LOG="$TMP/credits.log" HARNESS_TEST_OMNI_QA="$TMP/credits-qa" HARNESS_TEST_OMNI_QA_FAILS=0 \
+  "$NODE" "$ROOT/skills/generator/orchestrator.mjs" --host claude --repo "$TMP/credits" \
+  --workdir "$CREDITS_WT" --context core --port 5170 --features WI-AC-001 \
+  --claim-script "$ROOT/skills/generator/claim.sh" >"$TMP/credits-result.json"
+jq -e '.passed == 1' "$TMP/credits-result.json" >/dev/null
+CREDITS_STATE="$TMP/credits/.git/harness-runs/core.json"
+jq -e '.routeHistory | any(.kind=="CODING" and .outcome=="selected" and .harness=="opencode" and .model=="free")' "$CREDITS_STATE" >/dev/null
+jq -e '[.routeHistory[] | select(.kind=="CODING" and .outcome=="fallback") | .fallbackReason] | contains(["no-credits","rate-limited"])' "$CREDITS_STATE" >/dev/null
+echo 'ok - 402/insufficient-credits classifies as no-credits and falls through to the free tier'
+echo 'ok - a 429 quota-exceeded coder still classifies as rate-limited, not no-credits'
+
+# ---- (b) cross-item strike sort: a demoted candidate is tried AFTER a lower-strike one ----------
+new_case_repo "$TMP/bsort"
+cat >"$TMP/bsort/.harness/roles.json" <<'JSON'
+{
+  "coding": [{"harness":"claude","model":"seeded"},{"harness":"codex","model":"fail-infra"}],
+  "validation": [{"harness":"opencode"}],
+  "repairPlanning": [{"harness":"opencode"}],
+  "goalReview": [{"harness":"claude"}]
+}
+JSON
+git -C "$TMP/bsort" add . && git -C "$TMP/bsort" commit -qm init
+bash "$ROOT/skills/generator/claim.sh" select-claim "$TMP/bsort" all '' 7002 >"$TMP/bsort-claim.json"
+BSORT_WT=$(jq -r .worktree "$TMP/bsort-claim.json")
+# Demote the natural first coder (claude|seeded) so the lower-strike codex|fail-infra sorts ahead of it.
+bash "$ROOT/skills/generator/claim.sh" strike "$TMP/bsort" 'infra|claude|seeded' 5 >/dev/null
+PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" HARNESS_OMNIGENT_BUNDLE="$ROOT/omnigent/harness-engineering" \
+  HARNESS_TEST_OMNI_LOG="$TMP/bsort.log" HARNESS_TEST_OMNI_QA="$TMP/bsort-qa" HARNESS_TEST_OMNI_QA_FAILS=0 \
+  "$NODE" "$ROOT/skills/generator/orchestrator.mjs" --host claude --repo "$TMP/bsort" \
+  --workdir "$BSORT_WT" --context core --port 5170 --features WI-AC-001 \
+  --claim-script "$ROOT/skills/generator/claim.sh" >"$TMP/bsort-result.json"
+jq -e '.passed == 1' "$TMP/bsort-result.json" >/dev/null
+BSORT_STATE="$TMP/bsort/.git/harness-runs/core.json"
+# routeHistory preserves attempt order: the lower-strike codex is tried first, the demoted claude|seeded after.
+jq -e '[.routeHistory[] | select(.kind=="CODING")] | .[0].harness=="codex" and .[0].model=="fail-infra" and .[0].outcome=="fallback"' "$BSORT_STATE" >/dev/null
+jq -e '[.routeHistory[] | select(.kind=="CODING")] | .[1].harness=="claude" and .[1].model=="seeded" and .[1].outcome=="selected"' "$BSORT_STATE" >/dev/null
+echo 'ok - a pre-seeded strike demotes a candidate so a lower-strike one is tried first'
+
+# ---- (c) within-item switch: two QA defects advance the attempt-3 coder by the repair budget ----
+new_case_repo "$TMP/within"
+cat >"$TMP/within/.harness/roles.json" <<'JSON'
+{
+  "coding": [{"harness":"claude","model":"c1"},{"harness":"codex","model":"c2"}],
+  "validation": [{"harness":"opencode"}],
+  "repairPlanning": [{"harness":"opencode"}],
+  "goalReview": [{"harness":"claude"}]
+}
+JSON
+git -C "$TMP/within" add . && git -C "$TMP/within" commit -qm init
+bash "$ROOT/skills/generator/claim.sh" select-claim "$TMP/within" all '' 7003 >"$TMP/within-claim.json"
+WITHIN_WT=$(jq -r .worktree "$TMP/within-claim.json")
+# Default HARNESS_REPAIR_BUDGET=2 => offset floor((attempt-1)/2): attempts 1,2 keep coder[0], attempt 3 advances to coder[1].
+PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" HARNESS_OMNIGENT_BUNDLE="$ROOT/omnigent/harness-engineering" \
+  HARNESS_TEST_OMNI_LOG="$TMP/within.log" HARNESS_TEST_OMNI_QA="$TMP/within-qa" HARNESS_TEST_OMNI_QA_FAILS=2 \
+  "$NODE" "$ROOT/skills/generator/orchestrator.mjs" --host claude --repo "$TMP/within" \
+  --workdir "$WITHIN_WT" --context core --port 5170 --features WI-AC-001 \
+  --claim-script "$ROOT/skills/generator/claim.sh" >"$TMP/within-result.json"
+jq -e '.passed == 1' "$TMP/within-result.json" >/dev/null
+test "$(grep -c '^coding claude c1' "$TMP/within.log")" -eq 2
+test "$(grep -c '^coding codex c2' "$TMP/within.log")" -eq 1
+grep -q 'route=.*"harness":"codex"' "$TMP/within/.git/harness-runs/evidence/core/WI-AC-001-3-coding.log"
+echo 'ok - within an item the coder switches only at attempt 3 under the default repair budget of 2'

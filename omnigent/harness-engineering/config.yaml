@@ -15,6 +15,13 @@ prompt: |
   launch it and report its durable results. Ask for user input when Run State says
   user-guidance; otherwise keep making progress.
 
+  Under a small-context harness (pi), act as a RELAY-ONLY Supervisor instead:
+  load ONLY the `harness-relay` skill, read state through filtered
+  `harness-control.mjs status`/`events --consumer <name>` calls piped through
+  `jq` (never dump raw `events.jsonl` or large journals), and escalate all
+  planning and every retry/abort/amend decision to the human — relay, don't
+  decide.
+
 os_env:
   type: caller_process
   cwd: .
@@ -26,4 +33,4 @@ tools:
     - claude
     - codex
     - opencode
-    - pi
+    - pi # supervisor/relay harness only — not a coding executor (see agents/pi/config.yaml, harness-relay skill)
