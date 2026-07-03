@@ -76,6 +76,10 @@ _Avoid_: Foundation phase, execution order
 A queued Work Item whose mapped Acceptance Check dependencies have all passed Integrated Verification.
 _Avoid_: Pending task, next feature
 
+**Initializer**:
+The scaffold-only agent that maps stable Acceptance Checks into `feature_list.json`, creates a PORT-parameterized `init.sh` and project structure, and makes the first commit on `main`. Idempotent; never implements Work Items.
+_Avoid_: Code Agent, generator
+
 **Supervisor**:
 The single long-lived agent per project, chosen at launch via `omni run <bundle> --harness <X>`, that submits Project Goals, presents harness status, and relays user decisions without owning execution policy. Under pi it runs relay-only and escalates planning plus retry, abort, and amend decisions to the human. Its engine is `harness-control.mjs`.
 _Avoid_: worker, scheduler

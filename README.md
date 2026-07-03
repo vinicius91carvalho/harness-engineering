@@ -106,9 +106,13 @@ flowchart TD
 | Layer | Role |
 | --- | --- |
 | User | The human: sets up the project, requests features or refactors, answers escalations, and reads progress. |
+| Initializer | The scaffold-only agent (`agents/initializer.md`) that maps stable Acceptance Checks into `feature_list.json`, creates a PORT-parameterized `init.sh` and project structure, and makes the first commit on `main`. Idempotent; never implements Work Items. |
 | Supervisor | The single long-lived agent per project (engine: `harness-control.mjs`). Launched via `omni run <bundle> --harness <tool>`; collects state, relays events to the user, and escalates judgment. |
 | Orchestrator | The deterministic per-Work-Item state machine (`orchestrator.mjs`, no LLM) that sequences coding → QA → integration → Goal Review and routes models via `roles.json`. |
 | Code Agent / QA Agent | The per-role executor models from `roles.json` (`coding` / `validation`) that implement and independently verify each Work Item. |
+| Goal Review agent | The per-role executor model from `roles.json` (`goalReview`) that independently reruns every Acceptance Check against integrated `main` after the work queue is empty, without modifying product code. |
+
+See [CONTEXT.md](CONTEXT.md) for the full glossary.
 
 ## How the workflow runs
 
