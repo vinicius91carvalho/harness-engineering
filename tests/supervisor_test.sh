@@ -167,12 +167,17 @@ JSON
 git -C "$TMP/retry" add . && git -C "$TMP/retry" commit -qm init
 mkdir -p "$TMP/retry/.git/harness-control"
 printf '%s\n' '{"retryQueue":{"ghost":{"guidance":"","attempts":3}}}' >"$TMP/retry/.git/harness-control/state.json"
+set +e
 PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" HARNESS_TEST_GOAL_SLEEP=3 "$NODE" "$CONTROL" run \
   --repo "$TMP/retry" --host claude --poll-ms 250 \
   --max-workers 2 --quota-workers 2 --cpu-per-worker 0.25 \
   --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100
+echo "DEBUG run exit=$?"
+set -e
 RETRY_STATE="$TMP/retry/.git/harness-control/state.json"
 RETRY_EVENTS="$TMP/retry/.git/harness-control/events.jsonl"
+echo "DEBUG state:"; cat "$RETRY_STATE" 2>&1 || echo "DEBUG state missing"
+echo "DEBUG events:"; cat "$RETRY_EVENTS" 2>&1 || echo "DEBUG events missing"
 jq -e '.retryQueue == {}' "$RETRY_STATE" >/dev/null
 jq -s -e 'any(.[]; .kind == "input_required" and .context == "ghost" and .reason == "Retry could not resume the Claim Lease")' "$RETRY_EVENTS" >/dev/null
 echo 'ok - a retry that can never resume its Claim Lease re-raises a bounded Input Request'
