@@ -11,6 +11,9 @@
 set -euo pipefail
 
 BASE_PORT="${GEN_BASE_PORT:-5170}"
+# Must stay equal to harness-control.mjs's external-worker "lease-timeout-seconds" (default 60) —
+# that's the clock the supervisor uses to decide this worker is dead. Its own "supervisor-lease-seconds"
+# (30) is a separate, unrelated clock for supervisor-to-supervisor liveness.
 LEASE_TIMEOUT="${HARNESS_LEASE_TIMEOUT_SECONDS:-60}"
 
 die() { echo "claim.sh: $*" >&2; exit 1; }
@@ -133,11 +136,20 @@ select_claim_locked() {
   local sctx checkout wt branch root
   root="$(gitroot "$repo")"; sctx="$(sani "$ctx")"; branch="gen/$project-$sctx"; checkout="${root%/}-wt-$project-$sctx"; wt="${checkout%/}/${prefix%/}"
   [ -n "$prefix" ] || wt="$checkout"
-  if [ -d "$checkout" ]; then :                              # reuse stale worktree
-  elif git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
-    git -C "$repo" worktree add "$checkout" "$branch" >/dev/null
+  if [ -d "$checkout" ] && [ "$(git -C "$checkout" rev-parse --abbrev-ref HEAD 2>/dev/null || true)" = "$branch" ] \
+     && git -C "$repo" worktree list --porcelain | grep -qx "worktree $checkout"; then
+    :                                                         # reuse worktree already on $branch
   else
-    git -C "$repo" worktree add "$checkout" -b "$branch" main >/dev/null || return 75
+    # ponytail: only verifies branch identity + worktree registration, not full working-tree cleanliness (dirty/untracked files)
+    if [ -d "$checkout" ]; then
+      git -C "$repo" worktree remove --force "$checkout" 2>/dev/null
+      git -C "$repo" worktree prune
+    fi
+    if git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
+      git -C "$repo" worktree add "$checkout" "$branch" >/dev/null
+    else
+      git -C "$repo" worktree add "$checkout" -b "$branch" main >/dev/null || return 75
+    fi
   fi
 
   local started; started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"

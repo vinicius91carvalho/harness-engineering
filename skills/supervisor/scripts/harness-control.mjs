@@ -105,7 +105,9 @@ async function acquireSupervisorLock(token, pid, status, leaseSeconds) {
       return
     }
     const age = Math.floor(Date.now() / 1000) - Number(owner.heartbeatEpoch || 0)
-    const live = owner.host === hostname() ? processAlive(owner.pid) || (owner.status === 'starting' && age < leaseSeconds) : age < leaseSeconds
+    // A hard-killed supervisor's pid can be reused by an unrelated process, so pid-alive alone
+    // must not count as live: also require the heartbeat (refreshed every tick) to be fresh.
+    const live = owner.host === hostname() ? (age < leaseSeconds && (processAlive(owner.pid) || owner.status === 'starting')) : age < leaseSeconds
     if (live) fatal(`supervisor lease is owned by ${owner.host || 'unknown'} pid ${owner.pid || 'unknown'}`)
     const stale = `${supervisorLock}.stale.${randomUUID()}`
     try { await rename(supervisorLock, stale) } catch { continue }
@@ -181,11 +183,20 @@ async function capacity(config, active = 0) {
 
 function parseObject(text) {
   const trimmed = text.trim()
+  const BEGIN = '===HARNESS-VERDICT-BEGIN===', END = '===HARNESS-VERDICT-END==='
+  const open = trimmed.lastIndexOf(BEGIN)
+  if (open >= 0) {
+    const rest = trimmed.slice(open + BEGIN.length)
+    const close = rest.indexOf(END)
+    const body = (close >= 0 ? rest.slice(0, close) : rest).trim()
+    try { const v = JSON.parse(body); if (v && typeof v === 'object') return v } catch {}
+  }
+  // ponytail: fallback positional scan keeps un-delimited (older) agents working
   const candidates = [trimmed, ...trimmed.split('\n').reverse()]
   const start = trimmed.indexOf('{'), end = trimmed.lastIndexOf('}')
   if (start >= 0 && end > start) candidates.push(trimmed.slice(start, end + 1))
   for (const candidate of candidates) {
-    try { const value = JSON.parse(candidate); if (value && typeof value === 'object') return value } catch {}
+    try { const parsed = JSON.parse(candidate); if (parsed && typeof parsed === 'object') return parsed } catch {}
   }
   return null
 }

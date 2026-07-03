@@ -131,3 +131,6 @@ the generator rejects missing mappings, unknown dependencies, and dependency cyc
   `/generator` and select one task, a set, or all.
 - **Feature**: tell the user the new `context`(s) added; `/generator` will pick
   them up on its next run.
+- If a check reads weak or wrong, edit `project_specs.xml` directly and re-run
+  `/generator` — its reconcile step validates every check before any work is
+  claimed.

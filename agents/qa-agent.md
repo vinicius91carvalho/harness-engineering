@@ -90,3 +90,13 @@ Never remove/edit/reorder/rephrase entries. Commit execution state and the Journ
 ## Return value
 
 Return the exact JSON schema requested by the orchestrator. A prose verdict is insufficient.
+
+Print that JSON as the **last** thing you output, on its own lines, wrapped exactly:
+
+```
+===HARNESS-VERDICT-BEGIN===
+{ ...the requested JSON... }
+===HARNESS-VERDICT-END===
+```
+
+Anything printed after `===HARNESS-VERDICT-END===` is ignored, so the wrapped block must come last.

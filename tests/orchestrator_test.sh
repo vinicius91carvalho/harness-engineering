@@ -523,3 +523,48 @@ test "$(grep -c '^coding claude decline' "$TMP/compose.log")" -eq 1
 test "$(grep -c '^coding codex c2' "$TMP/compose.log")" -eq 1
 test "$(grep -c '^coding claude c3' "$TMP/compose.log")" -eq 1
 echo 'ok - attempt and decline offsets compose so every candidate is consulted exactly once'
+
+# ---- (g) a delimited verdict block wins over distractor JSON-looking noise printed before it ----
+new_case_repo "$TMP/verdict"
+git -C "$TMP/verdict" add . && git -C "$TMP/verdict" commit -qm init
+cat >"$TMP/bin/claude" <<'SH'
+#!/bin/sh
+set -eu
+prompt=""; for arg in "$@"; do prompt=$arg; done
+printf '%s' "$prompt" | grep -q "$PWD/project_specs.xml"
+printf '%s' "$prompt" | grep -q 'verify that the repository contains every structure and file it requires'
+tmp="$PWD/feature_list.json.tmp"
+commit() { git add feature_list.json; git commit -qm "$1"; }
+# Distractor: JSON-looking noise (a bare object plus a stray closing brace) printed before the
+# real, sentinel-wrapped verdict. A parser that still scans positionally instead of preferring the
+# delimited block risks picking this up instead.
+noise() { printf '{"note":"debug"}\n'; printf '}\n'; }
+verdict() { printf '===HARNESS-VERDICT-BEGIN===\n%s\n===HARNESS-VERDICT-END===\n' "$1"; }
+case "$prompt" in
+  *"Integrated Verification"*)
+    jq 'map(if .id=="WI-AC-001" then .integration=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
+    commit integration
+    noise; verdict '{"id":"WI-AC-001","integration":true,"implementation":true,"defects":[]}'
+    ;;
+  *"coding-agent"*)
+    jq 'map(if .id=="WI-AC-001" then .implementation=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
+    commit coding
+    noise; verdict '{"id":"WI-AC-001","implementation":true,"notes":"implemented"}'
+    ;;
+  *"qa-agent"*)
+    jq 'map(if .id=="WI-AC-001" then .qa=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
+    commit qa-pass
+    noise; verdict '{"id":"WI-AC-001","qa":true,"implementation":true,"defects":[]}'
+    ;;
+esac
+SH
+chmod +x "$TMP/bin/claude"
+bash "$ROOT/skills/generator/claim.sh" select-claim "$TMP/verdict" all '' 8001 >"$TMP/verdict-claim.json"
+VERDICT_WT=$(jq -r .worktree "$TMP/verdict-claim.json")
+PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" HARNESS_TEST_QA_COUNT="$TMP/verdict-qa-count" HARNESS_TEST_CODE_COUNT="$TMP/verdict-code-count" \
+  "$NODE" "$ROOT/skills/generator/orchestrator.mjs" --host claude --repo "$TMP/verdict" \
+  --workdir "$VERDICT_WT" --context core --port 5170 --features WI-AC-001 \
+  --claim-script "$ROOT/skills/generator/claim.sh" >"$TMP/verdict-result.json"
+jq -e '.passed == 1 and (.stuck | length) == 0' "$TMP/verdict-result.json" >/dev/null
+jq -e '.[0].implementation and .[0].qa and .[0].integration and .[0].retries == 0' "$TMP/verdict/feature_list.json" >/dev/null
+echo 'ok - a delimited verdict block wins over distractor JSON-looking noise printed before it'

@@ -1,6 +1,6 @@
 ---
 name: evaluator
-description: Run the mandatory independent Goal Review against integrated main without implementing product code.
+description: Run the mandatory independent Goal Review against integrated main without implementing product code; generator runs Goal Review automatically, so run /evaluator only to re-audit an already-integrated main or after manual edits.
 allowed-tools: Bash, AskUserQuestion, Read
 ---
 

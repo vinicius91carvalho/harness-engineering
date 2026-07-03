@@ -139,6 +139,16 @@ Report `{ "id": "<feature id>", "implementation": <true|false>, "notes": "..." }
 `true` only if implemented, black-box verified, and committed. If you could not get
 it working, leave it `false` with a clear reason.
 
+Print that JSON as the **last** thing you output, on its own lines, wrapped exactly:
+
+```
+===HARNESS-VERDICT-BEGIN===
+{ ...the requested JSON... }
+===HARNESS-VERDICT-END===
+```
+
+Anything printed after `===HARNESS-VERDICT-END===` is ignored, so the wrapped block must come last.
+
 ## Merge-conflict mode (when explicitly invoked for a merge)
 
 If the orchestrator tells you that you are resolving a merge conflict in a `main`
