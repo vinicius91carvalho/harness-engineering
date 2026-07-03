@@ -7,8 +7,7 @@ jq -e '
   ([.coding,.validation,.repairPlanning,.goalReview,.noCredits] | all(length > 0)) and
   ([.coding[],.validation[],.repairPlanning[],.goalReview[],.noCredits[]] |
     all((if type == "string" then . else .harness end) as $h |
-      ["claude","codex","opencode"] | index($h))) and
-  (.coding | all((if type == "string" then . else .harness end) != "pi"))
+      ["claude","codex","opencode","pi"] | index($h)))
 ' "$BUNDLE/roles.example.json" >/dev/null
 
 for harness in claude codex opencode pi; do
@@ -22,7 +21,6 @@ done
 grep -Fq 'cwd_allow_hidden: [.git, .harness]' "$BUNDLE/agents/claude/config.yaml"
 grep -Fq 'cwd_allow_hidden: [.git, .harness]' "$BUNDLE/agents/opencode/config.yaml"
 grep -Fq 'cwd_allow_hidden: [.git, .harness]' "$BUNDLE/agents/pi/config.yaml"
-grep -q '20k' "$BUNDLE/agents/pi/config.yaml"
 grep -Fq '    type: none' "$BUNDLE/agents/codex/config.yaml"
 
 grep -q '^spec_version: 1$' "$BUNDLE/config.yaml"

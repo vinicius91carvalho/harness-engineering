@@ -1,6 +1,6 @@
 ---
 name: harness-relay
-description: Relay-only Supervisor loop for small-context harnesses (pi) — reads filtered state, relays events to the human, and escalates every judgment call instead of deciding.
+description: Relay-only Supervisor loop for small-context harnesses — reads filtered state, relays events to the human, and escalates every judgment call instead of deciding.
 ---
 
 # harness-relay

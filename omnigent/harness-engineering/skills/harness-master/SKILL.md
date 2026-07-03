@@ -1,6 +1,6 @@
 ---
 name: harness-master
-description: Compressed single-skill reference for small-context coding agents. Replaces loading planner/generator/evaluator/supervisor/setup/update-project, tdd, and grilling individually. Pi is supervisor-only now — see `harness-relay` for pi's role, not this skill.
+description: Compressed single-skill reference for small-context coding agents. Replaces loading planner/generator/evaluator/supervisor/setup/update-project, tdd, and grilling individually.
 ---
 
 # harness-master
@@ -67,8 +67,7 @@ authoritative — never reconstruct state from chat history.
   single-file, single-behavior change that fits. If not, return
   `implementation:false` immediately with a note that scope exceeds budget —
   no partial attempt. Omnigent then routes to the next `coding` candidate for
-  this Work Item. (Pi no longer takes this role — pi is supervisor-only now;
-  see `harness-relay`.)
+  this Work Item.
 - **Mandatory Goal Review**: when no Work Items remain and every queue entry
   has `integration:true`, run Goal Review on integrated `main` (holds merge
   lock): reread Project Goal + every AC, rerun at real boundaries, test
@@ -128,9 +127,7 @@ authoritative — never reconstruct state from chat history.
   leases/integration/completion. Never create raw coding subagents beside it.
   Capacity = `min(configured max, CPU, memory, provider-quota)` — computed, not
   judged. **Completion requires a persisted `run_completed` event** from Goal
-  Review — never infer from an empty queue. Pi runs the Supervisor role via
-  the `harness-relay` skill only — relay-only, no coding, every retry/abort/
-  amend judgment escalates to the human.
+  Review — never infer from an empty queue.
 
 ## 6. Safety boundaries
 

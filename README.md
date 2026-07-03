@@ -88,15 +88,17 @@ keeps a durable, checkable record so "done" means the work actually passes.
 
 The harness exposes workflow and support commands:
 
-| Command | Purpose |
-| --- | --- |
-| `/harness:setup` | Map an existing codebase and create its harness files. Takes no arguments. |
-| `/harness:planner` | Turn a new product idea into `project_specs.xml`. |
-| `/harness:generator` | Reconcile, build, independently test, integrate, retry, and resume work. |
-| `/harness:evaluator` | Run an independent Goal Review against integrated `main`. |
-| `/harness:supervisor` | Run and operate the detached supervisor. |
-| `/harness:learning-loop` | Convert useful session lessons into reusable harness improvements. |
-| `/harness:update-project` | Back up sanitized host configuration into this repository. |
+| Task | Claude Code / Codex | OpenCode | Purpose |
+| --- | --- | --- | --- |
+| Set up existing code | `/harness:setup` | `/harness-setup` | Map an existing codebase and create its harness files. Takes no arguments. |
+| Plan new work | `/harness:planner` | `/harness-planner` | Turn a new product idea into `project_specs.xml`. |
+| Build or resume | `/harness:generator` | `/harness-generator` | Reconcile, build, independently test, integrate, retry, and resume work. |
+| Review the goal | `/harness:evaluator` | `/harness-evaluator` | Run an independent Goal Review against integrated `main`. |
+| Operate supervisor | `/harness:supervisor` | `/harness-supervisor` | Run and operate the detached supervisor. |
+| Capture lessons | `/harness:learning-loop` | `/harness-learning-loop` | Convert useful session lessons into reusable harness improvements. |
+| Back up configuration | `/harness:update-project` | `/harness-update-project` | Back up sanitized host configuration into this repository. |
+
+Examples below use the colon form (Claude Code/Codex); OpenCode uses the hyphen form shown above.
 
 Planner uses the bundled grilling skill internally; it is not a separate harness
 workflow command. A user can still activate an installed grilling skill directly
@@ -160,7 +162,7 @@ session resumes durable state rather than restarting the project.
 | Run State | Durable JSON tracking one context's phase, attempt, and next action. |
 | Repair Plan | The orchestrator's fix plan issued after a QA defect, before the next attempt. |
 | Goal Review | The final independent check of the whole Project Goal on integrated `main`. |
-| Supervisor | The single long-lived agent per project that governs worker admission, relays status to the user, and escalates judgment. |
+| Supervisor | The single long-lived agent per project, chosen via `omni run --harness <tool>` (claude, codex, or pi), that governs worker admission, relays status to the user, and escalates judgment. Engine: `harness-control.mjs`. |
 
 ## Prerequisites
 
@@ -200,23 +202,6 @@ yet). Re-running the installer safely refreshes installed content.
 
 Native Windows users can run [`install.ps1`](install.ps1). See the
 [installer reference](docs/installer/README.md) for flags, scopes, and dry runs.
-
-### Command names by tool
-
-Claude Code and Codex use plugin names with a colon. OpenCode installs the same
-skills as namespaced commands with a hyphen.
-
-| Task | Claude Code / Codex | OpenCode |
-| --- | --- | --- |
-| Set up existing code | `/harness:setup` | `/harness-setup` |
-| Plan new work | `/harness:planner` | `/harness-planner` |
-| Build or resume | `/harness:generator` | `/harness-generator` |
-| Review the goal | `/harness:evaluator` | `/harness-evaluator` |
-| Operate supervisor | `/harness:supervisor` | `/harness-supervisor` |
-| Capture lessons | `/harness:learning-loop` | `/harness-learning-loop` |
-| Back up configuration | `/harness:update-project` | `/harness-update-project` |
-
-The examples below use the colon form. Substitute the OpenCode form when needed.
 
 ## Start a project
 
@@ -421,14 +406,12 @@ Installed and configured, Omnigent adds:
 
 - a local web/mobile [control surface](https://vinicius91carvalho.github.io/harness-engineering/#omnigent);
 - [routing](https://vinicius91carvalho.github.io/harness-engineering/#routing) of coding, validation, repair planning, and Goal Review across ordered tool/model candidates ([`roles.example.json`](https://github.com/vinicius91carvalho/harness-engineering/blob/main/omnigent/harness-engineering/roles.example.json));
-- an optional [local Ornith model](https://vinicius91carvalho.github.io/harness-engineering/#local-model) through llama-server;
 - optional private [phone access](https://vinicius91carvalho.github.io/harness-engineering/#mobile) over [Tailscale](https://tailscale.com/).
 
 **Why open-source models lead the example routing.** `roles.example.json`
 lists open-weight models (DeepSeek, Kimi, GLM, Qwen) first, with Claude and
 Codex as fallback. Open-weight models are cheap enough to run every coding,
-validation, and repair-planning attempt without rationing calls, and one of
-them (Ornith, above) can run fully locally with no network dependency at all.
+validation, and repair-planning attempt without rationing calls.
 The tradeoff is inconsistent quality on hard tasks, which is why the fallback
 chain demotes a failing candidate and falls through to a proprietary model
 rather than retrying the same one. To use only proprietary models, delete the
@@ -445,6 +428,8 @@ periodic status relay's cadence is configurable via `--summary-minutes`
 
 See the [complete guide](https://vinicius91carvalho.github.io/harness-engineering/#omnigent) for setup, priority/fallback behavior, and the Tailscale walkthrough.
 
+The harness also accepts `--host pi`, routing GLM 5.2 (via OpenRouter) as a coding/validation/review candidate; run Pi directly with `pi --model openrouter/z-ai/glm-5.2`.
+
 ## Maintenance
 
 - **Update:** rerun the installer. It refreshes installed plugins and the optional
@@ -460,7 +445,7 @@ See the [complete guide](https://vinicius91carvalho.github.io/harness-engineerin
 
 | Guide | Contents |
 | --- | --- |
-| [Complete guide](https://vinicius91carvalho.github.io/harness-engineering/) | The full workflow, including Omnigent, routing, local models, and Tailscale mobile access. |
+| [Complete guide](https://vinicius91carvalho.github.io/harness-engineering/) | The full workflow, including Omnigent, routing, and Tailscale mobile access. |
 | [Plugins](docs/plugins.md) | Available integrations and tool compatibility. |
 | [Extras](docs/extras.md) | Status line, shared config, and MCP servers. |
 | [Installer](docs/installer/README.md) | Tool selection, flags, scopes, and dry runs. |

@@ -10,7 +10,7 @@ test -s "$HTML"
 test -s "$ROOT/site/styles.css"
 test -s "$ROOT/.github/workflows/pages.yml"
 
-for id in why architecture workflow prerequisites install commands start worked-example add-feature files monorepo operate troubleshoot advanced omnigent routing local-model run-omnigent mobile maintenance help; do
+for id in why architecture workflow prerequisites install commands start worked-example add-feature files monorepo operate troubleshoot advanced omnigent routing run-omnigent mobile maintenance help; do
   grep -q "id=\"$id\"" "$HTML"
 done
 while IFS= read -r id; do
@@ -62,14 +62,14 @@ grep -Fq 'Background server already running' "$HTML"
 # README no longer embeds the routing JSON inline (short pointer + link instead);
 # the site keeps the full, verified-against-source block.
 diff -u <(jq -S . "$ROLES") <(
-  sed -n '/id="routing"/,/id="local-model"/p' "$HTML" |
+  sed -n '/id="routing"/,/id="run-omnigent"/p' "$HTML" |
     sed -n '/<pre><code>{/,/}<\/code><\/pre>/p' |
     sed '1s/.*<pre><code>//; $s/<\/code><\/pre>.*//' |
     jq -S .
 )
 
 # README points into the full guide's advanced sections instead of duplicating them:
-for anchor in omnigent routing local-model mobile monorepo; do
+for anchor in omnigent routing mobile monorepo; do
   grep -Fq "vinicius91carvalho.github.io/harness-engineering/#$anchor" "$README"
 done
 
@@ -79,7 +79,6 @@ for file in "$README" "$HTML"; do
   grep -Fq 'run_completed' "$file"
   grep -Fq 'implementation and .qa and .integration' "$file"
 done
-grep -Fq 'ornith-1.0-9b-code-UD-Q4_K_XL.gguf' "$HTML"
 
 grep -q 'sudo tailscale serve --bg http://localhost:6767' "$HTML"
 # The obsolete pre-1.52 syntax must NOT appear:

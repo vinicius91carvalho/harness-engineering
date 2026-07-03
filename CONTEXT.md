@@ -81,7 +81,7 @@ The scaffold-only agent that maps stable Acceptance Checks into `feature_list.js
 _Avoid_: Code Agent, generator
 
 **Supervisor**:
-The single long-lived agent per project, chosen at launch via `omni run <bundle> --harness <X>`, that submits Project Goals, presents harness status, and relays user decisions without owning execution policy. Under pi it runs relay-only and escalates planning plus retry, abort, and amend decisions to the human. Its engine is `harness-control.mjs`.
+The single long-lived agent per project, chosen at launch via `omni run <bundle> --harness <X>`, that submits Project Goals, presents harness status, and relays user decisions without owning execution policy. Its engine is `harness-control.mjs`.
 _Avoid_: worker, scheduler
 
 **Orchestrator**:

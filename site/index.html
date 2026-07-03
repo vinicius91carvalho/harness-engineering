@@ -327,7 +327,7 @@ bash "$GEN/claim.sh" list "$PROJECT"</code></pre>
     <section class="topic" id="advanced">
       <p class="step">Advanced</p>
       <h2>Optional: Omnigent control and routing</h2>
-      <p>Nothing below is required to plan, generate, validate, integrate, or review work — the harness runs completely without Omnigent. The following sections cover its control surface, tool/model routing, the local Ornith model, and private phone access.</p>
+      <p>Nothing below is required to plan, generate, validate, integrate, or review work — the harness runs completely without Omnigent. The following sections cover its control surface, tool/model routing, and private phone access.</p>
     </section>
 
     <section class="topic" id="omnigent">
@@ -351,7 +351,7 @@ bash "$GEN/claim.sh" list "$PROJECT"</code></pre>
       <p>Validation, integrated QA, and Goal Review first prefer a tool different from the actual coding tool. Configured order remains stable within the independent and same-tool groups. Every route and fallback reason is persisted.</p>
       <p>A model that fails from an infra error or a repeated QA rejection is demoted to the back of its role list for the rest of the run, so the run self-heals instead of retrying the same broken candidate, and a coder that declines a Work Item falls through to the next candidate. The optional <code>noCredits</code> array is a free-tier fallback tried only once paid options are exhausted by infra/credit errors. Repair retries are bounded by <code>HARNESS_REPAIR_BUDGET</code> (default <code>2</code>).</p>
       <p class="source"><strong>Full source:</strong> <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/omnigent/harness-engineering/roles.example.json">https://github.com/vinicius91carvalho/harness-engineering/blob/main/omnigent/harness-engineering/roles.example.json</a></p>
-      <p><strong>Why open-source models lead:</strong> DeepSeek, Kimi, GLM, and Qwen are cheap enough to run every coding, validation, and repair-planning attempt without rationing calls, and one of them can run fully locally (see Ornith below) with no network dependency. The tradeoff is inconsistent quality on hard tasks, so Claude and Codex sit at the back of each list as a fallback: a failing open-weight candidate is demoted and the run falls through to a proprietary model rather than retrying the same one. Delete the open-weight entries to use only proprietary models; add an entry with its <code>harness</code>/<code>model</code> pair to add another open-weight one.</p>
+      <p><strong>Why open-source models lead:</strong> DeepSeek, Kimi, GLM, and Qwen are cheap enough to run every coding, validation, and repair-planning attempt without rationing calls. The tradeoff is inconsistent quality on hard tasks, so Claude and Codex sit at the back of each list as a fallback: a failing open-weight candidate is demoted and the run falls through to a proprietary model rather than retrying the same one. Delete the open-weight entries to use only proprietary models; add an entry with its <code>harness</code>/<code>model</code> pair to add another open-weight one.</p>
       <pre><code>{
   "coding": [
     { "harness": "opencode", "model": "opencode-go/deepseek-v4-flash" },
@@ -393,32 +393,6 @@ cp ~/.omnigent/agents/harness-engineering/roles.example.json .harness/roles.json
       <p class="files">Copy this file only when using Omnigent. Configure or remove every listed provider/model before execution.</p>
     </section>
 
-    <section class="topic" id="local-model">
-      <p class="step">Local fallback</p>
-      <h2>Run Ornith through <a href="https://github.com/ggml-org/llama.cpp">llama-server</a> and <a href="https://pi.dev/">Pi</a></h2>
-      <pre><code>llama-server \
-  -m /path/to/ornith-1.0-9b-code-UD-Q4_K_XL.gguf \
-  --port 8081</code></pre>
-      <p>Merge this provider into Pi's model config at <code>~/.pi/agent/models.json</code>:</p>
-      <pre><code>{
-  "providers": {
-    "llama.cpp": {
-      "baseUrl": "http://127.0.0.1:8081/v1",
-      "api": "openai-completions",
-      "apiKey": "llama",
-      "compat": {
-        "supportsDeveloperRole": false,
-        "supportsReasoningEffort": false
-      },
-      "models": [
-        { "id": "ornith-1.0-9b-code", "name": "Ornith 1.0 9B Code (local)" }
-      ]
-    }
-  }
-}</code></pre>
-      <p>Pi addresses it as <code>llama.cpp/ornith-1.0-9b-code</code> and loads the compressed <code>harness-relay</code> skill, running as a relay-only Supervisor sized for its small context — Pi is not a coding or validation candidate. Keep the server running while that route is available. Authenticate <a href="https://openrouter.ai/">OpenRouter</a>, <a href="https://opencode.ai/docs/go/">OpenCode Go</a>, and <a href="https://code.claude.com/docs/en/overview">Claude Code</a> before depending on the hosted fallbacks.</p>
-    </section>
-
     <section class="topic" id="run-omnigent">
       <p class="step"><span style="color:#e5c07b">Optional</span> execution</p>
       <h2>Start or resume through Omnigent</h2>
@@ -428,7 +402,7 @@ omni run ~/.omnigent/agents/harness-engineering --harness codex</code></pre>
 Start or resume the harness. Use the project role file.
 Continue until input is needed or a persisted run_completed event exists.</code></pre>
       <p>Start from the Git root and name the exact project directory, especially in a monorepo.</p>
-      <p class="warning"><strong><span style="color:#e5c07b">Limitation:</span></strong> the agent bundle only loads under a <strong>headless</strong> harness such as <code>codex</code>, <code>claude</code>, or <code>pi</code> (local Ornith, verified as a relay-only Supervisor). <code>--harness opencode</code> launches the interactive OpenCode TUI and ignores the AGENT spec, so Omnigent rejects the combination (<code>omni run &lt;agent&gt; --harness opencode</code> errors). OpenCode still runs as a <strong>worker route</strong> per <code>.harness/roles.json</code> — the supervisor spawns <code>opencode run</code> per phase — it just can't be the Supervisor. To use OpenCode as the host, run <code>opencode</code> directly and invoke the <a href="#start">harness skills</a> (attached, no Omnigent relay). Tracked upstream at <a href="https://github.com/omnigent-ai/omnigent/issues/1816">omnigent-ai/omnigent#1816</a>.</p>
+      <p class="warning"><strong><span style="color:#e5c07b">Limitation:</span></strong> the agent bundle only loads under a <strong>headless</strong> harness such as <code>codex</code>, <code>claude</code>, or <code>pi</code>. <code>--harness opencode</code> launches the interactive OpenCode TUI and ignores the AGENT spec, so Omnigent rejects the combination (<code>omni run &lt;agent&gt; --harness opencode</code> errors). OpenCode still runs as a <strong>worker route</strong> per <code>.harness/roles.json</code> — the supervisor spawns <code>opencode run</code> per phase — it just can't be the Supervisor. To use OpenCode as the host, run <code>opencode</code> directly and invoke the <a href="#start">harness skills</a> (attached, no Omnigent relay). Tracked upstream at <a href="https://github.com/omnigent-ai/omnigent/issues/1816">omnigent-ai/omnigent#1816</a>.</p>
     </section>
 
     <section class="topic" id="mobile">
@@ -464,7 +438,7 @@ sudo tailscale serve --bg http://localhost:6767</code></pre>
       <h3>What is <code>YOUR-MACHINE</code>?</h3>
       <p>It is the <strong>Tailscale Magic DNS hostname of the project machine</strong>, <em>not</em> <code>127.0.0.1</code> or <code>localhost</code>. Tailscale assigns every device on your tailnet a name like <code>mybox</code>, reachable as <code>mybox.ts.net</code> (or your tailnet's custom domain). Find it with <code>tailscale status</code> or in the <a href="https://login.tailscale.com/admin/machines">Tailscale admin console</a>. The phone can't reach the machine's loopback (<code>127.0.0.1</code>), so the phone-side URL must be the tailnet name; only the <code>tailscale serve</code> backend uses <code>localhost:6767</code> because that proxy runs on the project machine itself.</p>
 
-      <p class="warning"><strong><span style="color:#e5c07b">Limitation:</span></strong> step 4 accepts a <strong>headless</strong> harness such as <code>codex</code>, <code>claude</code>, or <code>pi</code> (local Ornith). <code>--harness opencode</code> launches the OpenCode TUI and ignores the agent bundle, so it can't drive the Supervisor from the phone. To run the supervisor while you watch it on mobile, pick a headless harness; OpenCode remains available as a worker route via <code>.harness/roles.json</code>. Use <code>tailscale serve</code>, not Funnel, for tailnet-only access. The project machine must remain awake.</p>
+      <p class="warning"><strong><span style="color:#e5c07b">Limitation:</span></strong> step 4 accepts a <strong>headless</strong> harness such as <code>codex</code>, <code>claude</code>, or <code>pi</code>. <code>--harness opencode</code> launches the OpenCode TUI and ignores the agent bundle, so it can't drive the Supervisor from the phone. To run the supervisor while you watch it on mobile, pick a headless harness; OpenCode remains available as a worker route via <code>.harness/roles.json</code>. Use <code>tailscale serve</code>, not Funnel, for tailnet-only access. The project machine must remain awake.</p>
     </section>
 
     <section class="topic" id="maintenance">

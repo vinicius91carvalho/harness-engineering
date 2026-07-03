@@ -109,7 +109,7 @@ When `.harness/roles.json` exists, the same engine runs each role through the
 installed Omnigent worker template. `coding`, `validation`, `repairPlanning`, and
 `goalReview` are non-empty ordered candidate arrays; each entry is a harness name
 or `{ "harness": "opencode", "model": "provider/model" }`. Harnesses are
-`claude`, `codex`, or `opencode`; model is optional. Without this file, `--host`
+`claude`, `codex`, `opencode`, or `pi`; model is optional. Without this file, `--host`
 keeps the existing direct CLI behavior.
 
 Validation candidates using a harness different from the actual coding harness

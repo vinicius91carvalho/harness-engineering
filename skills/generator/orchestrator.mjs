@@ -19,7 +19,7 @@ for (let i = 2; i < process.argv.length; i += 2) {
   if (!key?.startsWith('--') || value === undefined) fail(`invalid argument: ${key || ''}`)
   options[key.slice(2)] = value
 }
-if (!['claude', 'codex', 'opencode'].includes(options.host)) fail('--host must be claude, codex, or opencode')
+if (!['claude', 'codex', 'opencode', 'pi'].includes(options.host)) fail('--host must be claude, codex, opencode, or pi')
 if (!options.workdir) fail('--workdir is required')
 
 options.workdir = realpathSync(resolve(options.workdir))
@@ -30,6 +30,8 @@ const commands = {
   claude: (prompt) => ['claude', ['-p', prompt]],
   codex: (prompt) => ['codex', ['exec', prompt]],
   opencode: (prompt) => ['opencode', ['run', prompt]],
+  // ponytail: pi's default model is GLM 5.2 via OpenRouter (pi has no built-in default for it).
+  pi: (prompt) => ['pi', ['--model', 'openrouter/z-ai/glm-5.2', '-p', prompt]],
 }
 const roleNames = {
   CODING: 'coding', QA: 'validation', INTEGRATION_QA: 'validation',
@@ -147,8 +149,8 @@ async function readRoles(workdir = options.workdir) {
   const normalized = {}
   const normalizeCandidate = (role, value) => {
     const candidate = typeof value === 'string' ? { harness: value } : value
-    if (!candidate || !['claude', 'codex', 'opencode'].includes(candidate.harness)) {
-      fail(`${file}: ${role} candidates must use claude, codex, or opencode`)
+    if (!candidate || !['claude', 'codex', 'opencode', 'pi'].includes(candidate.harness)) {
+      fail(`${file}: ${role} candidates must use claude, codex, opencode, or pi`)
     }
     if (candidate.model !== undefined && (typeof candidate.model !== 'string' || !candidate.model.trim())) {
       fail(`${file}: ${role} model must be a non-empty string`)
@@ -159,7 +161,7 @@ async function readRoles(workdir = options.workdir) {
     if (!Array.isArray(roles[role]) || !roles[role].length) fail(`${file}: ${role} must be a non-empty array`)
     normalized[role] = roles[role].map((value) => normalizeCandidate(role, value))
   }
-  // Optional free/no-credits tier: validated like the four roles (claude/codex/opencode, optional model). Absent/empty is fine.
+  // Optional free/no-credits tier: validated like the four roles (claude/codex/opencode/pi, optional model). Absent/empty is fine.
   if (Array.isArray(roles.noCredits)) normalized.noCredits = roles.noCredits.map((value) => normalizeCandidate('noCredits', value))
   return normalized
 }
