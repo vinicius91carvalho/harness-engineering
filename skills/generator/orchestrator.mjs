@@ -113,7 +113,7 @@ function writeInterruptedState(signal) {
       status: 'interrupted', lastResult: `orchestrator received ${signal}`,
       heartbeat: new Date().toISOString(), heartbeatEpoch: Math.floor(Date.now() / 1000),
     }
-    const temporary = `${stateFile}.tmp.${process.pid}`
+    const temporary = `${stateFile}.tmp.${process.pid}.${randomUUID()}`
     mkdirSync(dirname(stateFile), { recursive: true })
     writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`)
     renameSync(temporary, stateFile)
