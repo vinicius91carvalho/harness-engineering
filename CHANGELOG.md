@@ -11,6 +11,50 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [1.0.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.19.0...v1.0.0) (2026-07-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* the control-host skill is renamed to supervisor; the slash
+command /harness:control-host is now /harness:supervisor, and the
+harness-control.mjs engine moves to skills/supervisor/scripts/.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01LSBMWzp2s47atoXBA6AHM3
+* **agents:** the harness:opencode:* subagent types disappear
+from Claude Code's agent list. They were misleading anyway (Claude
+ran them on Claude models, not OpenCode).
+
+### Features
+
+* model demotion, noCredits tier, pi relay Supervisor; rename Control Host→Supervisor ([c5579d8](https://github.com/vinicius91carvalho/harness-engineering/commit/c5579d87fc723326ec5fab3362834c2537162f35))
+* **omnigent:** intake grilling gate and heartbeat relay cadence ([d2e5aab](https://github.com/vinicius91carvalho/harness-engineering/commit/d2e5aabb4c1c4a4afb2f70c51ff0b95aa3bd6e66))
+
+
+### Bug Fixes
+
+* **generator:** auto-fill omitted transitive dependencies for hand-authored Work Items ([21eb145](https://github.com/vinicius91carvalho/harness-engineering/commit/21eb145edd755c64f27301c8c807974ed997b3d6))
+* **generator:** clear the per-run strike scoreboard when the last claim releases ([c2c45c8](https://github.com/vinicius91carvalho/harness-engineering/commit/c2c45c8d09f1906c3f82edbf471e9ef890f7ed4f))
+* **generator:** route a coding decline to the next candidate ([de6cedf](https://github.com/vinicius91carvalho/harness-engineering/commit/de6cedf10c8eefa21f917820dc5239c605efdac9))
+* **generator:** unique temp path for interrupted-state writes ([653c59b](https://github.com/vinicius91carvalho/harness-engineering/commit/653c59b2188f4468fea88f73b770b63a67fd1ef6))
+* **supervisor:** bound retryQueue resume attempts ([d938825](https://github.com/vinicius91carvalho/harness-engineering/commit/d938825b10809fe6afe4f09fa52c0a051336171e))
+* **supervisor:** defer completion while retryQueue is non-empty ([e176066](https://github.com/vinicius91carvalho/harness-engineering/commit/e176066119cf0610d160c6584a12adb80e6b0251))
+* **supervisor:** defer completion while retryQueue is non-empty ([5d88380](https://github.com/vinicius91carvalho/harness-engineering/commit/5d88380b18e77ed7cfe874ec6171e0b377b42ce7))
+* **supervisor:** drain in-flight worker-closed handlers before releasing the lease ([a0563b0](https://github.com/vinicius91carvalho/harness-engineering/commit/a0563b01d1bedc4409a1d7e92df26993470ffc9d))
+
+
+### Code Refactoring
+
+* **agents:** delete the dead codex/opencode role variants ([dac404e](https://github.com/vinicius91carvalho/harness-engineering/commit/dac404e171f3cfa9f501584416af5cce93f08f9a))
+
+
+### Documentation
+
+* clarify bounded contexts, claim step, backup files, and OSS model rationale ([1760363](https://github.com/vinicius91carvalho/harness-engineering/commit/17603634cc05e793826068c6218f1cf9dc579be2))
+* complete the by-context who-does-what model ([4db0e38](https://github.com/vinicius91carvalho/harness-engineering/commit/4db0e383ad5e1a31f51eea91156a135aef810ae6))
+* fix graph ([e13a472](https://github.com/vinicius91carvalho/harness-engineering/commit/e13a4721d8f51646832effcd13b3a19595ffd82f))
+
 ## [0.19.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v0.18.4...v0.19.0) (2026-07-03)
 
 
