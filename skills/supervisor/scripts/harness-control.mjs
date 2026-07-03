@@ -209,6 +209,7 @@ class Supervisor {
     this.stopping = false
     this.lastSummary = 0
     this.finalizing = new Set()
+    this.pendingGoalResult = null
   }
 
   // A worker's 'close' event fires whenever the OS schedules it, independent of the tick/run
@@ -362,6 +363,12 @@ class Supervisor {
     child.on('close', (code) => this.trackClose(this.workerClosed(key, code, tail).catch((error) => this.crash(error))))
   }
 
+  async completeGoal(result) {
+    this.pendingGoalResult = null
+    await this.emit('run_completed', { summary: result.summary }, true)
+    await this.save({ status: 'complete', completedAt: new Date().toISOString() })
+  }
+
   async workerClosed(key, code, capturedTail) {
     const worker = this.workers.get(key)
     if (!worker) return
@@ -394,8 +401,12 @@ class Supervisor {
       await this.emit('quota_wait', { context: key, pauseUntil }, true)
     }
     if (result?.goal === true) {
-      await this.emit('run_completed', { summary: result.summary }, true)
-      await this.save({ status: 'complete', completedAt: new Date().toISOString() })
+      // A passing Goal Review doesn't mean the run is actually finished if a lease is still
+      // stuck in retryQueue: completing here regardless would leave it there forever, invisible,
+      // exactly the bug bounded retry attempts exists to prevent. Hold the result and let tick's
+      // retryQueue drain (below) finalize once the queue is actually empty.
+      if (Object.keys(this.state.retryQueue || {}).length === 0) await this.completeGoal(result)
+      else this.pendingGoalResult = result
     } else if (result?.reopened?.length) {
       await this.emit('goal_defects', { reopened: result.reopened, defects: result.defects }, true)
     } else if (result?.blocked || result?.stuck?.length) {
@@ -484,7 +495,6 @@ class Supervisor {
     await this.summary(snapshot, cap)
     await this.save({ capacity: cap, progress: snapshot.counts })
     if (this.state.status === 'paused' || this.state.status === 'needs_input') return
-    if (await this.maybeGoalReview(snapshot, active, cap.available)) return
     let slots = cap.available
     for (const [context, retry] of Object.entries(this.state.retryQueue || {})) {
       if (slots < 1) break
@@ -499,6 +509,11 @@ class Supervisor {
         await this.input('context', 'Retry could not resume the Claim Lease', { attempts: retry.attempts }, context)
       }
     }
+    if (this.pendingGoalResult) {
+      if (Object.keys(this.state.retryQueue || {}).length === 0) await this.completeGoal(this.pendingGoalResult)
+      return
+    }
+    if (await this.maybeGoalReview(snapshot, active, slots)) return
     for (const item of recoverable) {
       if (slots < 1) break
       if (await this.resumeClaim(item.context)) slots--
