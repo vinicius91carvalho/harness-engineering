@@ -55,11 +55,20 @@
         <article><strong><a href="https://omnigent.ai/">Omnigent</a></strong><span>An optional control surface and tool/model router. It is not another scheduler.</span></article>
         <article><strong><a href="https://tailscale.com/">Tailscale</a></strong><span>An optional private transport for reaching Omnigent from another device.</span></article>
       </div>
+      <h3>Bounded contexts</h3>
+      <p>Only the pipeline is required. The other three are independent and optional:</p>
+      <div class="roles" aria-label="Bounded contexts">
+        <article><strong>Plugin marketplace</strong><span>The installer and manifests that put harness commands into Claude Code, Codex, or OpenCode.</span></article>
+        <article><strong>Spec → build → QA → Goal Review pipeline</strong><span>The harness workflow itself — this is "the harness."</span></article>
+        <article><strong>Omnigent agent bundle</strong><span>Optional control surface and tool/model router, including open-source model routing.</span></article>
+        <article><strong>MCP servers</strong><span>Optional per-host tool integrations, unrelated to whether the pipeline runs.</span></article>
+      </div>
       <pre class="mermaid">
 flowchart TD
     I[idea or existing repository] --> S[project_specs.xml]
     S --> F[feature_list.json]
-    F --> C[coding]
+    F --> CL[claim: branch, worktree, lease]
+    CL --> C[coding]
     C --> QA[QA]
     QA -->|pass| INT[integration]
     INT -->|QA re-runs on main| GR[Goal Review]
@@ -254,6 +263,7 @@ claude --version  # or: codex --version / opencode --version</code></pre>
         <li><code>qa</code> means isolated QA passed.</li>
         <li><code>integration</code> means the behavior passed after merging.</li>
       </ul>
+      <p class="files">This table is state written inside a project you ran the harness on. Running <code>/harness:update-project</code> on <em>this</em> repository instead writes <code>config/settings.json</code>, <code>config/mcp.json</code>, and <code>config/home/</code> — see <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/docs/backup-sync.md">Backup</a> for their format.</p>
     </section>
 
     <section class="topic" id="monorepo">
@@ -341,6 +351,7 @@ bash "$GEN/claim.sh" list "$PROJECT"</code></pre>
       <p>Validation, integrated QA, and Goal Review first prefer a tool different from the actual coding tool. Configured order remains stable within the independent and same-tool groups. Every route and fallback reason is persisted.</p>
       <p>A model that fails from an infra error or a repeated QA rejection is demoted to the back of its role list for the rest of the run, so the run self-heals instead of retrying the same broken candidate, and a coder that declines a Work Item falls through to the next candidate. The optional <code>noCredits</code> array is a free-tier fallback tried only once paid options are exhausted by infra/credit errors. Repair retries are bounded by <code>HARNESS_REPAIR_BUDGET</code> (default <code>2</code>).</p>
       <p class="source"><strong>Full source:</strong> <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/omnigent/harness-engineering/roles.example.json">https://github.com/vinicius91carvalho/harness-engineering/blob/main/omnigent/harness-engineering/roles.example.json</a></p>
+      <p><strong>Why open-source models lead:</strong> DeepSeek, Kimi, GLM, and Qwen are cheap enough to run every coding, validation, and repair-planning attempt without rationing calls, and one of them can run fully locally (see Ornith below) with no network dependency. The tradeoff is inconsistent quality on hard tasks, so Claude and Codex sit at the back of each list as a fallback: a failing open-weight candidate is demoted and the run falls through to a proprietary model rather than retrying the same one. Delete the open-weight entries to use only proprietary models; add an entry with its <code>harness</code>/<code>model</code> pair to add another open-weight one.</p>
       <pre><code>{
   "coding": [
     { "harness": "opencode", "model": "opencode-go/deepseek-v4-flash" },

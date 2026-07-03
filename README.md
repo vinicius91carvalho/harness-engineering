@@ -50,6 +50,19 @@ changes, and lost conversations.
 surface and routes work between those coding tools. None of them replaces the
 harness workflow.
 
+### Bounded contexts
+
+Four independent pieces make up this repository. Only the second is required;
+the rest are optional and can be added, removed, or ignored without affecting
+the others:
+
+| Context | What it is | Required? |
+| --- | --- | --- |
+| **Plugin marketplace** | `install.sh`/`install.ps1` and the marketplace manifests that put harness commands, skills, and other listed plugins into Claude Code, Codex, or OpenCode. | Yes, to install anything. |
+| **Spec → build → QA → Goal Review pipeline** | The harness workflow itself: `project_specs.xml`, `feature_list.json`, the orchestrator, and Goal Review. This is "the harness." | Yes, this is the product. |
+| **Omnigent agent bundle** | An optional control surface and tool/model router (`omnigent/harness-engineering/`) that can start the harness and route work across candidate models, including open-source ones. | No, direct tool execution works without it. |
+| **MCP servers** | Optional Model Context Protocol integrations (e.g. `codebase-memory-mcp`, Bright Data, Playwright) configured per host and backed up sanitized into `config/mcp.json`. | No, unrelated to whether the pipeline runs. |
+
 ### Why use it?
 
 Long AI coding jobs tend to lose the plot: the context resets, a retry quietly
@@ -93,7 +106,8 @@ by asking “grill me.”
 flowchart TD
     I[idea or existing repository] --> S[project_specs.xml]
     S --> F[feature_list.json]
-    F --> C[coding]
+    F --> CL[claim: branch, worktree, lease]
+    CL --> C[coding]
     C --> QA[QA]
     QA -->|pass| INT[integration]
     INT -->|QA re-runs on main| GR[Goal Review]
@@ -278,6 +292,9 @@ build only the feature you just described.
 
 ## Files delivered
 
+State for one project you ran the harness on, written inside that project's
+own repository (not this one):
+
 | Path | Meaning |
 | --- | --- |
 | `project_specs.xml` | Project Goal, technical direction, and stable Acceptance Checks. |
@@ -297,6 +314,12 @@ The queue flags are separate proofs:
 
 Dependencies require `integration:true`; the project still requires Goal Review
 afterward.
+
+Separately, if you run `/harness:update-project` on *this* repository, it
+writes sanitized, restorable copies of your own tool configuration under
+`config/settings.json`, `config/mcp.json`, and `config/home/`, and
+`release.yml` generates `CHANGELOG.md` entries on release — see
+[Backup](docs/backup-sync.md) for their format.
 
 ## Monorepos
 
@@ -400,6 +423,17 @@ Installed and configured, Omnigent adds:
 - [routing](https://vinicius91carvalho.github.io/harness-engineering/#routing) of coding, validation, repair planning, and Goal Review across ordered tool/model candidates ([`roles.example.json`](https://github.com/vinicius91carvalho/harness-engineering/blob/main/omnigent/harness-engineering/roles.example.json));
 - an optional [local Ornith model](https://vinicius91carvalho.github.io/harness-engineering/#local-model) through llama-server;
 - optional private [phone access](https://vinicius91carvalho.github.io/harness-engineering/#mobile) over [Tailscale](https://tailscale.com/).
+
+**Why open-source models lead the example routing.** `roles.example.json`
+lists open-weight models (DeepSeek, Kimi, GLM, Qwen) first, with Claude and
+Codex as fallback. Open-weight models are cheap enough to run every coding,
+validation, and repair-planning attempt without rationing calls, and one of
+them (Ornith, above) can run fully locally with no network dependency at all.
+The tradeoff is inconsistent quality on hard tasks, which is why the fallback
+chain demotes a failing candidate and falls through to a proprietary model
+rather than retrying the same one. To use only proprietary models, delete the
+open-weight entries from each array; to add a new open-weight model, add an
+entry with its `harness`/`model` pair — no other configuration changes.
 
 A model that fails (infra error or repeated QA rejection) is demoted to the
 back of its role list for the rest of the run, and a coder that declines a
