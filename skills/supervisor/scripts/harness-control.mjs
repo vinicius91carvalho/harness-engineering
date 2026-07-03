@@ -208,6 +208,20 @@ class Supervisor {
     this.workers = new Map()
     this.stopping = false
     this.lastSummary = 0
+    this.finalizing = new Set()
+  }
+
+  // A worker's 'close' event fires whenever the OS schedules it, independent of the tick/run
+  // loop. Track its settling promise so shutdown can wait for it: otherwise releaseSupervisorLock
+  // can delete the lease directory while this in-flight handler's own save() is still using it,
+  // and updateSupervisorLock finds the lease gone and fatals mid-write.
+  trackClose(promise) {
+    this.finalizing.add(promise)
+    promise.finally(() => this.finalizing.delete(promise))
+  }
+
+  async drainFinalizers() {
+    while (this.finalizing.size) await Promise.allSettled([...this.finalizing])
   }
 
   async save(change = {}) {
@@ -345,7 +359,7 @@ class Supervisor {
     this.workers.set(key, { child, log, logFile, context: claim.context, featureIds: claim.featureIds, worktree: claim.worktree, port: claim.port, startedAt: new Date().toISOString() })
     await this.emit('worker_started', { context: claim.context, featureIds: claim.featureIds, pid: child.pid })
     await this.save()
-    child.on('close', (code) => this.workerClosed(key, code, tail).catch((error) => this.crash(error)))
+    child.on('close', (code) => this.trackClose(this.workerClosed(key, code, tail).catch((error) => this.crash(error))))
   }
 
   async workerClosed(key, code, capturedTail) {
@@ -437,7 +451,7 @@ class Supervisor {
     child.stdout.on('data', collect); child.stderr.on('data', collect)
     child.on('error', (error) => collect(`${error.stack || error.message}\n`))
     this.workers.set('goal-review', { child, log, logFile, ...claim, startedAt: new Date().toISOString() })
-    child.on('close', (code) => this.workerClosed('goal-review', code, tail).catch((error) => this.crash(error)))
+    child.on('close', (code) => this.trackClose(this.workerClosed('goal-review', code, tail).catch((error) => this.crash(error))))
     await this.emit('goal_review_started')
     await this.save()
     return true
@@ -520,6 +534,7 @@ class Supervisor {
       this.stopping = true
       await this.save({ status: this.state.status })
     } finally {
+      await this.drainFinalizers()
       await releaseSupervisorLock(this.leaseToken)
     }
   }
@@ -535,6 +550,7 @@ class Supervisor {
     await this.emit('supervisor_stopped', { signal }, true)
     const control = await readJson(controlFile, {})
     await this.save({ status: control.status === 'stopped' ? 'stopped' : 'interrupted', lastSignal: signal })
+    await this.drainFinalizers()
     await releaseSupervisorLock(this.leaseToken)
     process.exit(130)
   }
