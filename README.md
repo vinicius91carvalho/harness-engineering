@@ -61,7 +61,7 @@ the others:
 | --- | --- | --- |
 | **Plugin marketplace** | `install.sh`/`install.ps1` and the marketplace manifests that put harness commands, skills, and other listed plugins into Claude Code, Codex, or OpenCode. | Yes, to install anything. |
 | **Spec → build → QA → Goal Review pipeline** | The harness workflow itself: `project_specs.xml`, `feature_list.json`, the orchestrator, and Goal Review. This is "the harness." | Yes, this is the product. |
-| **Omnigent agent bundle** | An optional control surface and tool/model router (`omnigent/harness-engineering/`) that can start the harness and route work across candidate models, including open-source ones. | No, direct tool execution works without it. |
+| **Omnigent agent bundle** | An optional control surface and tool/model router (`omnigent/harness-engineering/`) that starts the harness and routes work across candidate models, including open-source ones. The installer copies the orchestrator (`harness-control.mjs` + generator scripts) alongside the bundle so the supervisor can call it from a known path. | No, direct tool execution works without it. |
 | **MCP servers** | Optional Model Context Protocol integrations (e.g. `codebase-memory-mcp`, Bright Data, Playwright) configured per host and backed up sanitized into `config/mcp.json`. | No, unrelated to whether the pipeline runs. |
 
 ### Why use it?
@@ -449,6 +449,37 @@ periodic status relay's cadence is configurable via `--summary-minutes`
 See the [complete guide](https://vinicius91carvalho.github.io/harness-engineering/#omnigent) for setup, priority/fallback behavior, and the Tailscale walkthrough.
 
 The harness also accepts `--host pi`, routing GLM 5.2 (via OpenRouter) as a coding/validation/review candidate; run Pi directly with `pi --model openrouter/z-ai/glm-5.2`.
+
+### How the supervisor bundle works
+
+`omni run ~/.omnigent/agents/harness-engineering --harness <tool>` launches a
+long-lived **Supervisor** agent. The agent is a strict relay — it never reads
+project files, plans, grills, or writes code itself. Its only job is to forward
+goals to the orchestrator and relay events back to the human.
+
+The installer copies the orchestrator alongside the bundle so the relay can
+call it from a known path:
+
+| File | Purpose |
+| --- | --- |
+| `~/.omnigent/agents/harness-engineering/config.yaml` | Agent spec and relay prompt. |
+| `~/.omnigent/agents/harness-engineering/scripts/harness-control.mjs` | Supervisor engine. |
+| `~/.omnigent/agents/harness-engineering/../harness-generator/` | `orchestrator.mjs`, `reconcile.mjs`, `claim.sh`, `claim.ps1` (sibling of the bundle so `harness-control.mjs` resolves the generator). |
+| `~/.omnigent/agents/harness-engineering/skills/harness-relay/` | Entry-point skill: defines the start → events → ack → respond loop. |
+
+**Relay contract.** On a new goal the agent:
+
+1. Loads the `harness-relay` skill (no other skill first).
+2. Calls `node "$BUNDLE/scripts/harness-control.mjs" start --repo "$PWD" --host <tool> --summary-minutes 15`.
+3. Polls `events --consumer <name>` on each heartbeat, relays every new event
+   (`input_required` immediately with its id, choices, and evidence;
+   `progress` as the periodic summary), and `ack`s the highest processed ID.
+4. Maps the user's reply onto the exact Input Request ID and one advertised
+   action via `respond --event <id> --action <choice> --guidance "..."`.
+
+The agent never loads `setup`, `planning`, `generation`, `validation`,
+`integration`, `goal-review`, or `harness-master` — those are the
+orchestrator's skills, and loading them makes the relay do the work itself.
 
 ## Maintenance
 

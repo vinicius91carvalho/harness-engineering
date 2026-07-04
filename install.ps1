@@ -144,6 +144,7 @@ function Install-Omnigent {
   if ($DryRun) {
     Write-Host "DRY RUN - install Omnigent with the official uv runtime installer"
     Write-Host "DRY RUN - install agent bundle at $HOME/.omnigent/agents/harness-engineering"
+    Write-Host "DRY RUN - bundle harness-control.mjs and generator scripts into the agent bundle"
     return
   }
   if (-not (Get-Command omni -ErrorAction SilentlyContinue) -and -not (Get-Command omnigent -ErrorAction SilentlyContinue)) {
@@ -156,6 +157,19 @@ function Install-Omnigent {
   Remove-Item $destination -Recurse -Force -ErrorAction SilentlyContinue
   New-Item -ItemType Directory -Force $destination | Out-Null
   Copy-Item (Join-Path $source "*") $destination -Recurse -Force
+  # Bundle the orchestrator so the supervisor agent can call it from a known path.
+  # harness-control.mjs resolves the generator via $script/../../harness-generator,
+  # so the generator must live one level above the bundle dir.
+  $repo = Get-Repository
+  $scriptsDir = New-Item -ItemType Directory -Force (Join-Path $destination "scripts")
+  $parentGenerator = New-Item -ItemType Directory -Force (Join-Path (Split-Path $destination -Parent) "harness-generator")
+  Copy-Item (Join-Path $repo "skills/supervisor/scripts/harness-control.mjs") $scriptsDir -Force
+  Copy-Item @(
+    (Join-Path $repo "skills/generator/orchestrator.mjs"),
+    (Join-Path $repo "skills/generator/reconcile.mjs"),
+    (Join-Path $repo "skills/generator/claim.sh"),
+    (Join-Path $repo "skills/generator/claim.ps1")
+  ) $parentGenerator -Force
 }
 
 function Install-OpenCodePlugin([string]$Name) {

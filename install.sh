@@ -237,6 +237,7 @@ install_omnigent() {
   if [ -n "$DRY" ]; then
     echo "DRY RUN — install Omnigent with the official runtime installer"
     echo "DRY RUN — install agent bundle at $HOME/.omnigent/agents/harness-engineering"
+    echo "DRY RUN — bundle harness-control.mjs and generator scripts into the agent bundle"
     return
   fi
   if ! command -v omni >/dev/null 2>&1 && ! command -v omnigent >/dev/null 2>&1; then
@@ -251,6 +252,16 @@ install_omnigent() {
   [ -f "$source/config.yaml" ] || die 'bundled Omnigent agent is missing'
   dest=$HOME/.omnigent/agents/harness-engineering
   rm -rf "$dest"; mkdir -p "$dest"; cp -R "$source"/. "$dest"/
+  # Bundle the orchestrator so the supervisor agent can call it from a known path.
+  # harness-control.mjs resolves the generator via $script/../../harness-generator,
+  # so the generator must live one level above the bundle dir.
+  mkdir -p "$dest/scripts"
+  cp "$TEMP_REPO/skills/supervisor/scripts/harness-control.mjs" "$dest/scripts/"
+  parent="$HOME/.omnigent/agents"
+  mkdir -p "$parent/harness-generator"
+  cp "$TEMP_REPO/skills/generator/orchestrator.mjs" "$TEMP_REPO/skills/generator/reconcile.mjs" "$parent/harness-generator/"
+  cp "$TEMP_REPO/skills/generator/claim.sh" "$TEMP_REPO/skills/generator/claim.ps1" "$parent/harness-generator/"
+  chmod +x "$dest/scripts/harness-control.mjs" "$parent/harness-generator/orchestrator.mjs" "$parent/harness-generator/reconcile.mjs" "$parent/harness-generator/claim.sh" "$parent/harness-generator/claim.ps1"
 }
 
 install_claude_marketplace() {
