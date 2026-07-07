@@ -69,7 +69,12 @@ preserve application files, and commit on main. Take no goal, feature, or \
 scope argument. You are running non-interactively: if you would normally \
 ask the user a question, print the question and options as your final \
 output and stop instead — do not guess, do not proceed on an assumed \
-default."
+default. Scope your work to ONLY this directory ($REPO). If you notice a \
+monorepo registry (e.g. .harness/projects.json) referencing sibling \
+subprojects, do NOT inspect, bootstrap, or dispatch any work for them — \
+each sibling is bootstrapped by a separate, later invocation of this same \
+job. Do not use parallel sub-agents or task dispatch for this job; do the \
+work yourself, directly, in this one process."
 
     if [ -f "$AWAITFILE" ] && [ -f "$ANSWERFILE" ]; then
       PROMPT="$BASE_PROMPT
