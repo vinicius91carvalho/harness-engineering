@@ -88,36 +88,60 @@ request, or a directive.
    and the run will stall asking you to write the spec by hand. **You never
    inspect the repo or load `setup` yourself — your context is too small for
    that.** Delegate the bootstrap to the first available full-context host,
-   one attempt, bounded by a timeout:
+   via a script that launches it in the background so this tool call returns
+   immediately — a full repo scan can take minutes; a small-context relay
+   must never hold a single tool call open that long:
 
    ```sh
-   host=""
-   for candidate in codex claude opencode; do
-     command -v "$candidate" >/dev/null 2>&1 && { host="$candidate"; break; }
-   done
-   SETUP_PROMPT="Load the installed harness setup skill and run it for this \
-   repository: inspect it, derive project_specs.xml and feature_list.json, \
-   preserve application files, and commit on main. Take no goal, feature, or \
-   scope argument."
-   case "$host" in
-     codex)    timeout 600 codex exec "$SETUP_PROMPT" ;;
-     claude)   timeout 600 claude -p "$SETUP_PROMPT" ;;
-     opencode) timeout 600 opencode run "$SETUP_PROMPT" ;;
-   esac
+   BOOT="bash $BUNDLE/scripts/bootstrap-setup.sh"
+   $BOOT check "$REPO"
    ```
 
-   Then one cheap check: `test -f "$REPO/project_specs.xml"`. If it now
-   exists, continue to step 2. If the command failed, timed out, or no host
-   was found (`host` empty), **delegate to the human** instead (a host-only
-   action): "That's the harness `setup` step and I couldn't run it via any
-   installed coding tool. Run `/harness:setup` yourself in your coding tool's
-   chat, then tell me when done." Do not retry, do not try a second host, and
-   do not load `setup` yourself — one attempt, then delegate or proceed.
+   This call always returns in under a second. React to exactly one of five
+   outcomes on the first output line:
+
+   - **`READY`** → the spec exists. Continue to step 2.
+   - **`RUNNING <host>`** → a job just started or is still running. Tell the
+     human once ("Setup running in the background via `<host>`, can take up
+     to 10 minutes") and re-issue this exact step on your next tick — it is
+     idempotent and will not relaunch a second job while one is alive.
+   - **`NO_HOST`** → nothing to delegate to. **Delegate to the human**:
+     "That's the harness `setup` step and I couldn't run it via any
+     installed coding tool. Run `/harness:setup` yourself in your coding
+     tool's chat, then tell me when done."
+   - **`ASKED`** (remaining lines are the tail of the job's log) → the job
+     stopped without producing a spec, almost always because it hit a
+     decision it could not make non-interactively (e.g. which of several
+     monorepo projects to set up). Relay those lines to the human verbatim
+     — that tail *is* the question — and tell them their reply will be fed
+     back automatically. Then wait.
+   - **`WAITING_FOR_ANSWER`** → you already surfaced the question above and
+     are still waiting; say nothing new, just wait for the human.
+
+   **The human's reply while an `ASKED`/`WAITING_FOR_ANSWER` state is
+   pending is the answer, not a new goal or a delegation-table request —
+   check for this before doing anything else with an incoming message.**
+   Pipe it straight through, unedited:
+
+   ```sh
+   printf '%s' "<human's exact words>" | $BOOT answer "$REPO"
+   $BOOT check "$REPO"
+   ```
+
+   The second call folds the prior question and this answer into a fresh
+   prompt for the same host and relaunches it — report the `RUNNING <host>`
+   result the same as above. If the same question keeps recurring after an
+   answer, tell the human they can instead run `/harness:setup` themselves
+   in their coding tool's chat.
+
+   One host at a time, no second host, no loading `setup` yourself — the
+   `timeout 600` inside the job still bounds each attempt; you only ever
+   poll for it, never block on it.
 
 2. **Forward the goal to the orchestrator.**
 
 ```sh
-$HC start --repo "$REPO" --host pi --summary-minutes 15
+$HC start --repo "$REPO" --host pi --summary-minutes 20
 ```
 
 (Fall back to `--host claude|codex|opencode` if `pi` is missing.) Then enter

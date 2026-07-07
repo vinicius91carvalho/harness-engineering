@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Bootstraps project_specs.xml via the first available full-context host
+# (opencode/codex/claude, same preference order as roles.example.json),
+# backgrounded so the relay's tool call returns immediately. Idempotent:
+# safe to call every tick. See skills/harness-relay/SKILL.md for how the
+# relay reacts to each outcome.
+set -euo pipefail
+
+cmd=${1:?"usage: bootstrap-setup.sh check|answer <repo>"}
+REPO=${2:?"usage: bootstrap-setup.sh check|answer <repo>"}
+REPO=$(CDPATH= cd -- "$REPO" && pwd)
+DIR="$REPO/.harness"
+LOGFILE="$DIR/bootstrap.log"
+PIDFILE="$DIR/bootstrap.pid"
+HOSTFILE="$DIR/bootstrap.host"
+ANSWERFILE="$DIR/bootstrap.answer"
+AWAITFILE="$DIR/bootstrap.awaiting"
+
+mkdir -p "$DIR"
+
+case "$cmd" in
+  answer)
+    cat > "$ANSWERFILE"
+    exit 0
+    ;;
+  check)
+    if [ -f "$REPO/project_specs.xml" ]; then
+      rm -f "$PIDFILE" "$AWAITFILE" "$ANSWERFILE"
+      echo READY
+      exit 0
+    fi
+
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+      echo "RUNNING $(cat "$HOSTFILE" 2>/dev/null || echo host)"
+      exit 0
+    fi
+
+    if [ -f "$PIDFILE" ]; then
+      # job just died without producing a spec — surface why, once
+      rm -f "$PIDFILE"
+      : > "$AWAITFILE"
+      echo ASKED
+      tail -c 2000 "$LOGFILE" 2>/dev/null
+      exit 0
+    fi
+
+    if [ -f "$AWAITFILE" ] && [ ! -f "$ANSWERFILE" ]; then
+      echo WAITING_FOR_ANSWER
+      exit 0
+    fi
+
+    host=""
+    for candidate in opencode codex claude; do
+      command -v "$candidate" >/dev/null 2>&1 && { host="$candidate"; break; }
+    done
+    if [ -z "$host" ]; then
+      echo NO_HOST
+      exit 0
+    fi
+
+    BASE_PROMPT="Load the installed harness setup skill and run it for this \
+repository: inspect it, derive project_specs.xml and feature_list.json, \
+preserve application files, and commit on main. Take no goal, feature, or \
+scope argument. You are running non-interactively: if you would normally \
+ask the user a question, print the question and options as your final \
+output and stop instead — do not guess, do not proceed on an assumed \
+default."
+
+    if [ -f "$AWAITFILE" ] && [ -f "$ANSWERFILE" ]; then
+      PROMPT="$BASE_PROMPT
+
+A prior attempt could not proceed non-interactively and asked:
+
+$(tail -c 2000 "$LOGFILE" 2>/dev/null)
+
+The user answered:
+
+$(cat "$ANSWERFILE")
+
+Proceed using that answer. Do not ask again; if another decision is
+unavoidable, print the question as your final output and stop."
+      rm -f "$AWAITFILE" "$ANSWERFILE"
+    else
+      PROMPT="$BASE_PROMPT"
+    fi
+
+    echo "$host" > "$HOSTFILE"
+    cd "$REPO" # host CLI must scan $REPO, not the relay/omni server's own cwd (a monorepo root)
+    case "$host" in
+      codex)    nohup timeout 600 codex exec "$PROMPT" >"$LOGFILE" 2>&1 & ;;
+      claude)   nohup timeout 600 claude -p "$PROMPT" >"$LOGFILE" 2>&1 & ;;
+      opencode) nohup timeout 600 opencode run "$PROMPT" >"$LOGFILE" 2>&1 & ;;
+    esac
+    echo $! > "$PIDFILE"
+    echo "RUNNING $host"
+    ;;
+  *)
+    echo "usage: bootstrap-setup.sh check|answer <repo>" >&2
+    exit 1
+    ;;
+esac

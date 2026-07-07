@@ -21,7 +21,7 @@ jobs:
       - name: Shell syntax
         run: |
           sh -n install.sh
-          bash -n scripts/statusline.sh scripts/sync-config.sh
+          bash -n scripts/statusline.sh scripts/sync-config.sh omnigent/harness-engineering/scripts/bootstrap-setup.sh
 
       - name: Selftests
         run: |
@@ -30,6 +30,7 @@ jobs:
           bash tests/supervisor_test.sh
           bash tests/site_test.sh
           bash tests/omnigent_test.sh
+          bash tests/bootstrap_setup_test.sh
           bash tests/reconcile_test.sh
           bash tests/setup_inventory_test.sh
           bash tests/claim_test.sh
@@ -58,6 +59,7 @@ jobs:
       - run: bash tests/supervisor_test.sh
       - run: bash tests/site_test.sh
       - run: bash tests/omnigent_test.sh
+      - run: bash tests/bootstrap_setup_test.sh
       - run: bash tests/reconcile_test.sh
       - run: bash tests/setup_inventory_test.sh
       - run: bash tests/claim_test.sh

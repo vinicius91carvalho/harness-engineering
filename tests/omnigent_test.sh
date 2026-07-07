@@ -70,6 +70,12 @@ grep -q 'Orchestrator-skill action' "$RELAY"
 grep -q 'Delegated to' "$RELAY"
 # Bootstrap never becomes self-inspection: relay delegates, never loads setup itself
 grep -q 'Never load .setup. yourself' "$RELAY"
-grep -q 'command -v' "$RELAY"
+grep -q 'bootstrap-setup.sh' "$RELAY"
+# A stuck bootstrap job's question must reach the human, not just "go run setup elsewhere"
+grep -q 'ASKED' "$RELAY"
+grep -q 'WAITING_FOR_ANSWER' "$RELAY"
+grep -q 'is the answer, not a new goal' "$RELAY"
+test -x "$BUNDLE/scripts/bootstrap-setup.sh"
+grep -q 'command -v' "$BUNDLE/scripts/bootstrap-setup.sh"
 
 echo 'ok - Omnigent bundle, worker templates, skills, role example, and relay recovery policy are structurally valid'
