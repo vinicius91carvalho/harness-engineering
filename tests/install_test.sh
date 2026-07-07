@@ -7,7 +7,7 @@ TMP=${TMPDIR:-/tmp}/harness-installer-test.$$
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/bin" "$TMP/home"
 
-for cli in claude codex opencode; do
+for cli in claude codex opencode pi; do
   cat >"$TMP/bin/$cli" <<'EOF'
 #!/bin/sh
 printf '%s %s\n' "$(basename "$0")" "$*" >>"$HARNESS_TEST_LOG"
@@ -116,6 +116,13 @@ second=$(find "$HOME/.config/opencode" -type f -exec shasum -a 256 {} \; | sort 
 [ "$first" = "$second" ] || fail 'repeated OpenCode install is not idempotent'
 [ ! -s "$HARNESS_TEST_LOG" ] || fail 'OpenCode asset install should not invoke another host'
 pass 'OpenCode assets are namespaced and idempotent'
+
+: >"$HARNESS_TEST_LOG"
+"$ROOT/install.sh" --cli pi --no </dev/null >"$TMP/out"
+grep -q '^pi install https://github.com/vinicius91carvalho/harness-engineering$' "$HARNESS_TEST_LOG" \
+  || fail 'Pi package install command is missing'
+if grep -Eq '^(claude|codex|opencode) ' "$HARNESS_TEST_LOG"; then fail 'unselected host was invoked'; fi
+pass 'Pi installs the harness repository as a pi package'
 
 : >"$HARNESS_TEST_LOG"
 "$ROOT/install.sh" --cli claude --yes </dev/null >"$TMP/out" 2>"$TMP/err"

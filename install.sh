@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install the harness plugin and optional integrations for Claude Code, Codex, and OpenCode.
+# Install the harness plugin and optional integrations for Claude Code, Codex, OpenCode, and Pi.
 set -eu
 
 MARKETPLACE_REPO="vinicius91carvalho/harness-engineering"
@@ -20,7 +20,7 @@ OWN_TEMP_REPO=""
 usage() {
   cat <<'EOF'
 Usage: install.sh [--yes|--no] [--dry-run]
-                  [--cli claude|codex|opencode|all]
+                  [--cli claude|codex|opencode|pi|all]
                   [--scope user|project|local]
 
 --yes/--no choose checklist contents; --cli chooses target hosts.
@@ -51,7 +51,7 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
-case "$CLI_REQUEST" in ""|claude|codex|opencode|all) ;; *) die "invalid --cli value: $CLI_REQUEST" ;; esac
+case "$CLI_REQUEST" in ""|claude|codex|opencode|pi|all) ;; *) die "invalid --cli value: $CLI_REQUEST" ;; esac
 case "$SCOPE" in ""|user|project|local) ;; *) die "invalid --scope value: $SCOPE" ;; esac
 
 command -v node >/dev/null 2>&1 || die 'Node.js 18 or newer is required'
@@ -76,11 +76,11 @@ cli_installed() {
 }
 
 detected_clis=""
-for cli in claude codex opencode; do
+for cli in claude codex opencode pi; do
   cli_installed "$cli" && detected_clis="$detected_clis $cli"
 done
 detected_clis=${detected_clis# }
-[ -n "$detected_clis" ] || die 'no supported CLI found (install Claude Code, Codex, or OpenCode)'
+[ -n "$detected_clis" ] || die 'no supported CLI found (install Claude Code, Codex, OpenCode, or Pi)'
 
 tty_available() { [ -r /dev/tty ] && [ -w /dev/tty ] && (set +e; : </dev/tty) >/dev/null 2>&1; }
 word_count() { set -- $1; echo "$#"; }
@@ -190,7 +190,8 @@ if [ -n "$SCOPE" ] && [ "$CLI" != claude ]; then die '--scope is only valid when
 
 plugin_clis() {
   case "$1" in
-    harness|omnigent|ponytail) echo 'claude codex opencode' ;;
+    harness) echo 'claude codex opencode pi' ;;
+    omnigent|ponytail) echo 'claude codex opencode' ;;
     codebase-memory-mcp|context7|playwright) echo 'claude codex opencode' ;;
     mcp-servers) echo 'claude codex opencode' ;;
     status-line) echo 'claude codex' ;;
@@ -312,6 +313,12 @@ install_opencode_plugin() {
   fi
 }
 
+install_pi_extension() {
+  command -v pi >/dev/null 2>&1 || die 'pi is required to install the harness Pi package'
+  if [ -n "$DRY" ]; then run pi install "https://github.com/$MARKETPLACE_REPO"; return; fi
+  pi install "https://github.com/$MARKETPLACE_REPO" >/dev/null || die 'pi install of harness failed'
+}
+
 install_plugin() {
   name=$1; cli=$2
   has_word "$(plugin_clis "$name")" "$cli" || return 0
@@ -331,6 +338,7 @@ install_plugin() {
       fi
       ;;
     opencode) install_opencode_plugin "$name" ;;
+    pi) install_pi_extension ;;
   esac
 }
 

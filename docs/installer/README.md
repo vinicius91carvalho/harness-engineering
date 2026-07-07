@@ -1,8 +1,8 @@
 # Installer behavior
 
-The shell and PowerShell installers target Claude Code, Codex, and OpenCode.
-Both require Node.js 18 or newer and stop before making changes when it is
-missing or too old.
+The shell and PowerShell installers target Claude Code, Codex, and OpenCode;
+the shell installer (`install.sh`) also targets Pi. Both require Node.js 18 or
+newer and stop before making changes when it is missing or too old.
 
 ```sh
 ./install.sh --cli claude --no
@@ -36,8 +36,11 @@ Dry-run is a strict zero-write mode: it does not clone, download, invoke host
 CLIs, normalize configuration, install dependencies, or run post-install actions.
 
 Claude and Codex use their marketplace/plugin CLIs. OpenCode receives namespaced
-skills, agents, and commands under `~/.config/opencode`. A piped PowerShell run
-stages the repository before it needs assets, because `$PSScriptRoot` is empty.
+skills, agents, and commands under `~/.config/opencode`. Pi installs the
+repository itself as a pi package (`pi install`); pi auto-discovers the root
+`skills/` directory with no manifest needed, so no files are copied or
+renamed. A piped PowerShell run stages the repository before it needs assets,
+because `$PSScriptRoot` is empty.
 
 `codebase-memory-mcp`, Context7, and Playwright are optional MCP integrations on
 all hosts. The memory server's upstream installer runs with `--skip-config`, its

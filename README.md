@@ -421,8 +421,8 @@ bash "$GEN/claim.sh" release "$PROJECT" "$CONTEXT"
 ## Optional: Omnigent control and routing
 
 [Omnigent](https://omnigent.ai/) is not required to plan, generate, validate,
-integrate, or review work. Without it, the selected Claude Code, Codex, or
-OpenCode tool runs the harness directly with its configured model.
+integrate, or review work. Without it, the selected Claude Code, Codex,
+OpenCode, or Pi tool runs the harness directly with its configured model.
 
 Installed and configured, Omnigent adds:
 

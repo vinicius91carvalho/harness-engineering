@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Install, run, verify, and maintain the Harness Engineering workflow with Claude Code, Codex, OpenCode, and optional Omnigent routing.">
+  <meta name="description" content="Install, run, verify, and maintain the Harness Engineering workflow with Claude Code, Codex, OpenCode, Pi, and optional Omnigent routing.">
   <meta name="theme-color" content="#0d1117">
   <title>Harness Engineering — complete guide</title>
   <link rel="stylesheet" href="styles.css">
@@ -29,7 +29,7 @@
       <div>
         <p class="kicker">Spec → build → QA → Goal Review</p>
         <h1>Durable delivery for AI coding tools.</h1>
-        <p>The harness owns the workflow. <a href="https://code.claude.com/docs/en/overview">Claude Code</a>, <a href="https://developers.openai.com/codex/">Codex</a>, and <a href="https://opencode.ai/">OpenCode</a> run it. <a href="https://omnigent.ai/">Omnigent</a> can optionally control and route it.</p>
+        <p>The harness owns the workflow. <a href="https://code.claude.com/docs/en/overview">Claude Code</a>, <a href="https://developers.openai.com/codex/">Codex</a>, <a href="https://opencode.ai/">OpenCode</a>, and Pi run it. <a href="https://omnigent.ai/">Omnigent</a> can optionally control and route it.</p>
         <a class="button" href="#install">Install the harness</a>
       </div>
     </section>
@@ -51,14 +51,14 @@
       <h2>One workflow, replaceable tools</h2>
       <div class="roles">
         <article><strong>Harness</strong><span>The specification, scheduler, QA loop, integration policy, durable state, and Goal Review.</span></article>
-        <article><strong><a href="https://code.claude.com/docs/en/overview">Claude Code</a> / <a href="https://developers.openai.com/codex/">Codex</a> / <a href="https://opencode.ai/">OpenCode</a></strong><span>Tools that plan, code, test, and review through the same workflow.</span></article>
+        <article><strong><a href="https://code.claude.com/docs/en/overview">Claude Code</a> / <a href="https://developers.openai.com/codex/">Codex</a> / <a href="https://opencode.ai/">OpenCode</a> / Pi</strong><span>Tools that plan, code, test, and review through the same workflow.</span></article>
         <article><strong><a href="https://omnigent.ai/">Omnigent</a></strong><span>An optional control surface and tool/model router. It is not another scheduler.</span></article>
         <article><strong><a href="https://tailscale.com/">Tailscale</a></strong><span>An optional private transport for reaching Omnigent from another device.</span></article>
       </div>
       <h3>Bounded contexts</h3>
       <p>Only the pipeline is required. The other three are independent and optional:</p>
       <div class="roles" aria-label="Bounded contexts">
-        <article><strong>Plugin marketplace</strong><span>The installer and manifests that put harness commands into Claude Code, Codex, or OpenCode.</span></article>
+        <article><strong>Plugin marketplace</strong><span>The installer and manifests that put harness commands into Claude Code, Codex, or OpenCode; the same installer registers the repository directly with Pi as a pi package.</span></article>
         <article><strong>Spec → build → QA → Goal Review pipeline</strong><span>The harness workflow itself — this is "the harness."</span></article>
         <article><strong>Omnigent agent bundle</strong><span>Optional control surface and tool/model router, including open-source model routing.</span></article>
         <article><strong>MCP servers</strong><span>Optional per-host tool integrations, unrelated to whether the pipeline runs.</span></article>
@@ -106,11 +106,11 @@ flowchart TD
     <section class="topic" id="prerequisites">
       <p class="step">Before installation</p>
       <h2>Install the runtime and one coding tool</h2>
-      <p>The repository machine needs <a href="https://git-scm.com/">Git</a>, <a href="https://www.gnu.org/software/bash/">Bash</a>, <strong><a href="https://nodejs.org/">Node.js 18 or newer</a></strong>, and one authenticated tool: <a href="https://code.claude.com/docs/en/overview">Claude Code</a>, <a href="https://developers.openai.com/codex/">Codex</a>, or <a href="https://opencode.ai/">OpenCode</a>. Node.js runs setup inventory, reconciliation, orchestration, and supervisor commands.</p>
+      <p>The repository machine needs <a href="https://git-scm.com/">Git</a>, <a href="https://www.gnu.org/software/bash/">Bash</a>, <strong><a href="https://nodejs.org/">Node.js 18 or newer</a></strong>, and one authenticated tool: <a href="https://code.claude.com/docs/en/overview">Claude Code</a>, <a href="https://developers.openai.com/codex/">Codex</a>, <a href="https://opencode.ai/">OpenCode</a>, or Pi. Node.js runs setup inventory, reconciliation, orchestration, and supervisor commands.</p>
       <pre><code>git --version
 bash --version
 node --version
-claude --version  # or: codex --version / opencode --version</code></pre>
+claude --version  # or: codex --version / opencode --version / pi --version</code></pre>
       <p class="files"><strong>Optional:</strong> <a href="https://omnigent.ai/">Omnigent</a> for control and routing; <a href="https://tailscale.com/">Tailscale</a> for private phone access. The installer adds <code>jq</code> when needed.</p>
     </section>
 
@@ -120,23 +120,23 @@ claude --version  # or: codex --version / opencode --version</code></pre>
       <p>Run the installer on the repository machine. It detects installed tools and presents one checklist. Keep <code>harness</code> selected; everything else is optional.</p>
       <pre><code>curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh</code></pre>
       <p>Native Windows users can run <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/install.ps1"><code>install.ps1</code></a>. Re-running either installer refreshes installed content safely.</p>
-      <div class="output"><strong>Verify</strong><code>node --version</code><code>claude --version</code><code>codex --version</code><code>opencode --version</code></div>
+      <div class="output"><strong>Verify</strong><code>node --version</code><code>claude --version</code><code>codex --version</code><code>opencode --version</code><code>pi --version</code></div>
     </section>
 
     <section class="topic compact-table" id="commands">
       <p class="step">Step 2</p>
       <h2>Use the command name for your tool</h2>
-      <p>Claude Code and Codex use the plugin's colon form. OpenCode installs the same skills with hyphenated names.</p>
+      <p>Claude Code and Codex use the plugin's colon form. OpenCode installs the same skills with hyphenated names. Pi registers each skill's own name as a <code>/skill:</code> command.</p>
       <table>
-        <thead><tr><th>Task</th><th>Claude Code / Codex</th><th>OpenCode</th></tr></thead>
+        <thead><tr><th>Task</th><th>Claude Code / Codex</th><th>OpenCode</th><th>Pi</th></tr></thead>
         <tbody>
-          <tr><td>Set up existing code</td><td><code>/harness:setup</code></td><td><code>/harness-setup</code></td></tr>
-          <tr><td>Plan a new goal</td><td><code>/harness:planner</code></td><td><code>/harness-planner</code></td></tr>
-          <tr><td>Build or resume</td><td><code>/harness:generator</code></td><td><code>/harness-generator</code></td></tr>
-          <tr><td>Review the goal</td><td><code>/harness:evaluator</code></td><td><code>/harness-evaluator</code></td></tr>
-          <tr><td>Operate supervisor</td><td><code>/harness:supervisor</code></td><td><code>/harness-supervisor</code></td></tr>
-          <tr><td>Capture lessons</td><td><code>/harness:learning-loop</code></td><td><code>/harness-learning-loop</code></td></tr>
-          <tr><td>Back up configuration</td><td><code>/harness:update-project</code></td><td><code>/harness-update-project</code></td></tr>
+          <tr><td>Set up existing code</td><td><code>/harness:setup</code></td><td><code>/harness-setup</code></td><td><code>/skill:setup</code></td></tr>
+          <tr><td>Plan a new goal</td><td><code>/harness:planner</code></td><td><code>/harness-planner</code></td><td><code>/skill:planner</code></td></tr>
+          <tr><td>Build or resume</td><td><code>/harness:generator</code></td><td><code>/harness-generator</code></td><td><code>/skill:generator</code></td></tr>
+          <tr><td>Review the goal</td><td><code>/harness:evaluator</code></td><td><code>/harness-evaluator</code></td><td><code>/skill:evaluator</code></td></tr>
+          <tr><td>Operate supervisor</td><td><code>/harness:supervisor</code></td><td><code>/harness-supervisor</code></td><td><code>/skill:supervisor</code></td></tr>
+          <tr><td>Capture lessons</td><td><code>/harness:learning-loop</code></td><td><code>/harness-learning-loop</code></td><td><code>/skill:learning-loop</code></td></tr>
+          <tr><td>Back up configuration</td><td><code>/harness:update-project</code></td><td><code>/harness-update-project</code></td><td><code>/skill:update-project</code></td></tr>
         </tbody>
       </table>
       <p class="files"><strong>Grilling:</strong> planner uses the grilling skill internally; it is not a separate harness workflow command. A user can still activate an installed grilling skill directly by asking “grill me.”</p>
@@ -175,7 +175,7 @@ claude --version  # or: codex --version / opencode --version</code></pre>
         </article>
       </div>
       <p>Setup inventories technologies, reports code/docs contradictions, creates the execution queue, and stops before implementation. An optional audit uses verify-first mode for only the selected work, so passing checks are recorded without a rewrite.</p>
-      <p class="files"><strong>OpenCode:</strong> substitute <code>/harness-planner</code>, <code>/harness-setup</code>, or <code>/harness-generator</code> using the command table above.</p>
+      <p class="files"><strong>OpenCode:</strong> substitute <code>/harness-planner</code>, <code>/harness-setup</code>, or <code>/harness-generator</code> using the command table above. <strong>Pi:</strong> substitute <code>/skill:planner</code>, <code>/skill:setup</code>, or <code>/skill:generator</code>.</p>
     </section>
 
     <section class="topic" id="worked-example">
@@ -345,7 +345,7 @@ bash "$GEN/claim.sh" list "$PROJECT"</code></pre>
     <section class="topic" id="omnigent">
       <p class="step">Optional tool</p>
       <h2>What <a href="https://omnigent.ai/">Omnigent</a> adds</h2>
-      <p>The harness runs directly through Claude Code, Codex, or OpenCode without Omnigent. When selected in the installer, Omnigent can:</p>
+      <p>The harness runs directly through Claude Code, Codex, OpenCode, or Pi without Omnigent. When selected in the installer, Omnigent can:</p>
       <ul>
         <li>provide a local web/mobile control surface;</li>
         <li>start and observe the detached supervisor;</li>
@@ -353,7 +353,7 @@ bash "$GEN/claim.sh" list "$PROJECT"</code></pre>
         <li>relay durable Input Requests.</li>
       </ul>
       <p>It does not own claims, retries, merges, QA policy, or Goal Review.</p>
-      <p>A project-local <code>.harness/roles.json</code> enables routing. Removing it returns to direct tool execution. The schema's existing <code>harness</code> key selects a Claude Code, Codex, or OpenCode adapter for each ordered candidate; the complete workflow remains the harness.</p>
+      <p>A project-local <code>.harness/roles.json</code> enables routing. Removing it returns to direct tool execution. The schema's existing <code>harness</code> key selects a Claude Code, Codex, OpenCode, or Pi adapter for each ordered candidate; the complete workflow remains the harness.</p>
     </section>
 
     <section class="topic" id="routing">
@@ -368,29 +368,33 @@ bash "$GEN/claim.sh" list "$PROJECT"</code></pre>
   "coding": [
     { "harness": "opencode", "model": "opencode-go/deepseek-v4-flash" },
     { "harness": "opencode", "model": "openrouter/moonshotai/kimi-k2.7-code" },
-    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
     { "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-pro" },
     { "harness": "opencode", "model": "openrouter/qwen/qwen3.7-max" },
+    { "harness": "pi", "model": "openrouter/z-ai/glm-5.2" },
     { "harness": "claude", "model": "claude-opus-4-7" },
     { "harness": "codex", "model": "gpt-5.5" }
   ],
   "validation": [
-    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
+    { "harness": "opencode", "model": "openrouter/minimax/minimax-m3" },
     { "harness": "opencode", "model": "openrouter/qwen/qwen3.7-max" },
     { "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-pro" },
+    { "harness": "pi", "model": "openrouter/z-ai/glm-5.2" },
     { "harness": "codex", "model": "gpt-5.5" },
     { "harness": "claude", "model": "claude-opus-4-7" }
   ],
   "repairPlanning": [
-    { "harness": "opencode", "model": "openrouter/qwen/qwen3.7-max" },
-    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
     { "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-pro" },
+    { "harness": "opencode", "model": "openrouter/qwen/qwen3.7-max" },
+    { "harness": "opencode", "model": "openrouter/minimax/minimax-m3" },
+    { "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-pro" },
+    { "harness": "pi", "model": "openrouter/z-ai/glm-5.2" },
     { "harness": "claude", "model": "claude-opus-4-7" },
     { "harness": "codex", "model": "gpt-5.5" }
   ],
   "goalReview": [
-    { "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
+    { "harness": "opencode", "model": "openrouter/minimax/minimax-m3" },
     { "harness": "opencode", "model": "openrouter/qwen/qwen3.7-max" },
+    { "harness": "pi", "model": "openrouter/z-ai/glm-5.2" },
     { "harness": "codex", "model": "gpt-5.5" },
     { "harness": "claude", "model": "claude-opus-4-7" }
   ],
