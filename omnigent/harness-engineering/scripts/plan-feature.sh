@@ -94,11 +94,15 @@ $GOAL
 You are running non-interactively: make reasonable product decisions \
 yourself. If you would normally ask the user a question, print the question \
 and options as your final output and stop instead -- do not guess, do not \
-proceed on an assumed default. After committing the spec, also find and run \
-the harness generator's reconcile.mjs against this repo (same way it runs \
-during initial setup) to map the new Acceptance Checks into feature_list.json \
-as new Work Items, and commit that too. When both commits are done, run \
-exactly this command as your last action: touch '$DONEFILE'"
+proceed on an assumed default. After committing the spec, also run \
+reconcile.mjs from your own installed harness generator skill -- the same \
+skill source you loaded the planner skill from -- against this repo, to map \
+the new Acceptance Checks into feature_list.json as new Work Items, and \
+commit that too. Do not search the filesystem for other copies of \
+reconcile.mjs (there are several, belonging to other tools/repos on this \
+machine that you do not have permission to read); use only the one that \
+came with your own installed skill. When both commits are done, run exactly \
+this command as your last action: touch '$DONEFILE'"
 
     if [ -f "$AWAITFILE" ] && [ -f "$ANSWERFILE" ]; then
       PROMPT="$BASE_PROMPT
