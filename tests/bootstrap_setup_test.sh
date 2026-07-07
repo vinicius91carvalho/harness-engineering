@@ -136,3 +136,46 @@ out=$(bash "$SCRIPT" check "$TMP/repo")
 echo "$out" | head -1 | grep -q '^ASKED$'
 rm -rf "$TMP"
 echo 'ok - bootstrap-setup.sh does not report READY when feature_list.json is missing'
+
+# A stuck job's log can contain multi-byte UTF-8 (TUI box-drawing chars etc).
+# tail -c 2000 cuts at a byte offset and can slice a character in half; that
+# half-character must not survive into the relaunch prompt, or the host CLI
+# rejects the argument outright ("invalid UTF-8 was detected in one or more
+# arguments") and the job dies with nothing written.
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/harness-bootstrap-setup-test.XXXXXX")
+mkdir -p "$TMP/bin" "$TMP/repo"
+cat > "$TMP/bin/opencode" <<'SH'
+#!/bin/sh
+set -eu
+shift
+prompt=$1
+count_file="$PWD/.harness/opencode-call-count"
+count=0; [ ! -f "$count_file" ] || count=$(cat "$count_file")
+count=$((count + 1)); printf '%s' "$count" > "$count_file"
+if [ "$count" -eq 1 ]; then
+  # pad past the 2000-byte tail cutoff, then end on a truncated 3-byte UTF-8
+  # character (E2 94 80, a box-drawing "─") so the cutoff lands mid-character.
+  awk 'BEGIN{for(i=0;i<2100;i++) printf "x"}'
+  printf '\342\224'
+  exit 0
+fi
+printf '%s' "$prompt" | iconv -f utf-8 -t utf-8 >/dev/null
+echo '<project_specification/>' > "$PWD/project_specs.xml"
+echo '[]' > "$PWD/feature_list.json"
+SH
+chmod +x "$TMP/bin/opencode"
+cd "$TMP/repo"
+export PATH="$TMP/bin:/usr/bin:/bin"
+out=$(bash "$SCRIPT" check "$TMP/repo")
+[ "$out" = "RUNNING opencode" ]
+wait_for_pid "$TMP/repo"
+out=$(bash "$SCRIPT" check "$TMP/repo")
+echo "$out" | head -1 | grep -q '^ASKED$'
+printf '%s' 'go' | bash "$SCRIPT" answer "$TMP/repo"
+out=$(bash "$SCRIPT" check "$TMP/repo")
+[ "$out" = "RUNNING opencode" ]
+wait_for_pid "$TMP/repo"
+out=$(bash "$SCRIPT" check "$TMP/repo")
+[ "$out" = "READY" ]
+rm -rf "$TMP"
+echo 'ok - bootstrap-setup.sh does not fold a truncated UTF-8 log tail into the relaunch prompt'

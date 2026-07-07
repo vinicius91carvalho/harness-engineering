@@ -27,6 +27,14 @@ DONEFILE="$DIR/plan.done"
 
 mkdir -p "$DIR"
 
+# tail -c cuts at a byte offset, which can slice a multi-byte UTF-8 character
+# in half (opencode/codex/claude TUI output is full of box-drawing/Unicode).
+# A half character embedded back into a host CLI prompt argument fails with
+# "invalid UTF-8 was detected in one or more arguments" and kills the job.
+log_tail() {
+  tail -c 2000 "$LOGFILE" 2>/dev/null | iconv -f utf-8 -t utf-8 -c 2>/dev/null || true
+}
+
 case "$cmd" in
   answer)
     cat > "$ANSWERFILE"
@@ -52,7 +60,7 @@ case "$cmd" in
       rm -f "$PIDFILE"
       : > "$AWAITFILE"
       echo ASKED
-      tail -c 2000 "$LOGFILE" 2>/dev/null
+      log_tail
       exit 0
     fi
 
@@ -95,7 +103,7 @@ touch '$DONEFILE'"
 
 A prior attempt could not proceed non-interactively and asked:
 
-$(tail -c 2000 "$LOGFILE" 2>/dev/null)
+$(log_tail)
 
 The user answered:
 

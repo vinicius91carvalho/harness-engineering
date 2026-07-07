@@ -114,3 +114,41 @@ wait_for_pid "$TMP/monorepo/core"
 [ "$(cat "$TMP/host-ran-in.txt")" = "$TMP/monorepo/core" ]
 rm -rf "$TMP"
 echo 'ok - plan-feature.sh runs the host CLI inside $REPO, not the callers cwd'
+
+# Same UTF-8 truncation hazard as bootstrap-setup.sh (shared log_tail pattern).
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/harness-plan-feature-test.XXXXXX")
+mkdir -p "$TMP/bin" "$TMP/repo/.harness"
+echo 'remove Stripe' > "$TMP/goal.txt"
+echo '<project_specification/>' > "$TMP/repo/project_specs.xml"
+cat > "$TMP/bin/opencode" <<'SH'
+#!/bin/sh
+set -eu
+shift
+prompt=$1
+count_file="$PWD/.harness/opencode-call-count"
+count=0; [ ! -f "$count_file" ] || count=$(cat "$count_file")
+count=$((count + 1)); printf '%s' "$count" > "$count_file"
+if [ "$count" -eq 1 ]; then
+  awk 'BEGIN{for(i=0;i<2100;i++) printf "x"}'
+  printf '\342\224'
+  exit 0
+fi
+printf '%s' "$prompt" | iconv -f utf-8 -t utf-8 >/dev/null
+touch "$PWD/.harness/plan.done"
+SH
+chmod +x "$TMP/bin/opencode"
+cd "$TMP/repo"
+export PATH="$TMP/bin:/usr/bin:/bin"
+out=$(bash "$SCRIPT" check "$TMP/repo" "$TMP/goal.txt")
+[ "$out" = "RUNNING opencode" ]
+wait_for_pid "$TMP/repo"
+out=$(bash "$SCRIPT" check "$TMP/repo" "$TMP/goal.txt")
+echo "$out" | head -1 | grep -q '^ASKED$'
+printf '%s' 'go' | bash "$SCRIPT" answer "$TMP/repo"
+out=$(bash "$SCRIPT" check "$TMP/repo" "$TMP/goal.txt")
+[ "$out" = "RUNNING opencode" ]
+wait_for_pid "$TMP/repo"
+out=$(bash "$SCRIPT" check "$TMP/repo" "$TMP/goal.txt")
+[ "$out" = "READY" ]
+rm -rf "$TMP"
+echo 'ok - plan-feature.sh does not fold a truncated UTF-8 log tail into the relaunch prompt'
