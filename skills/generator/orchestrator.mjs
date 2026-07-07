@@ -468,7 +468,12 @@ async function planRepair(feature, attempt, defectReport) {
 }
 
 async function acquireMergeLock() {
-  for (let tries = 0; tries < 600; tries++) {
+  // The merge lock is monorepo-wide (git-common-dir), not per-subproject, so
+  // running several subprojects' orchestrators concurrently against one repo
+  // means every worker across all of them serializes through this one lock.
+  // Default budget is generous enough for that; override for slower hosts.
+  const tryBudget = Number(process.env.HARNESS_MERGE_LOCK_TRIES || 3600)
+  for (let tries = 0; tries < tryBudget; tries++) {
     const result = command('bash', [claimScript, 'merge-acquire', options.repo, String(process.pid)], options.repo, true)
     const output = result.stdout.trim()
     if (result.status === 0 && output && output !== 'BUSY') return output
