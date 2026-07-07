@@ -104,8 +104,11 @@ Base it on the spec's tech stack. It MUST:
 
 - Create missing project structure only for an empty/new project. Never replace
   or reorganize an existing codebase during initialization.
-- Add `dev.log` and `.harness/` to `.gitignore`; these are runtime state, not the
-  tracked Workflow Journal.
+- Add `dev.log` and `.harness/` to `.gitignore` — and only these. Never add
+  `harness-progress/` (or any other journal directory Work Items/QA passes
+  write to): it is the tracked Workflow Journal, not runtime state, and
+  gitignoring it makes every future `git add` on it fail, crashing the
+  worker that hits it first.
 - Create `README.md` only when it does not exist.
 - `git init` if needed, commit everything on **`main`**:
   `"Initial setup: feature_list.json, init.sh, and project structure"`.
