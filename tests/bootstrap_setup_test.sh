@@ -26,6 +26,7 @@ fi
 printf '%s' "\$prompt" | grep -q 'Which should I initialize'
 printf '%s' "\$prompt" | grep -q 'initialize core'
 echo '<project_specification/>' > "\$PWD/project_specs.xml"
+echo '[]' > "\$PWD/feature_list.json"
 SH
   chmod +x "$bin_dir/$host"
 }
@@ -67,6 +68,7 @@ for host in opencode codex claude; do
   out=$(bash "$SCRIPT" check "$TMP/repo")
   [ "$out" = "READY" ]
   [ -f "$TMP/repo/project_specs.xml" ]
+  [ -f "$TMP/repo/feature_list.json" ]
 
   rm -rf "$TMP"
   echo "ok - bootstrap-setup.sh surfaces a stuck $host question and folds the human answer into a relaunch"
@@ -109,3 +111,28 @@ wait_for_pid "$TMP/monorepo/core"
 [ "$(cat "$TMP/host-ran-in.txt")" = "$TMP/monorepo/core" ]
 rm -rf "$TMP"
 echo 'ok - bootstrap-setup.sh runs the host CLI inside $REPO, not the callers cwd'
+
+# A host that dies after writing project_specs.xml but before feature_list.json
+# (e.g. hit the timeout mid-initializer) must NOT be reported READY -- that's
+# an unfinished setup, not a completed one, and the orchestrator's own
+# reconcile --check gate would just stall on it with a confusing "amend/abort"
+# input_required instead of a clean re-run.
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/harness-bootstrap-setup-test.XXXXXX")
+mkdir -p "$TMP/bin" "$TMP/repo"
+cat > "$TMP/bin/opencode" <<SH
+#!/bin/sh
+echo '<project_specification/>' > "\$PWD/project_specs.xml"
+exit 0
+SH
+chmod +x "$TMP/bin/opencode"
+cd "$TMP/repo"
+export PATH="$TMP/bin:/usr/bin:/bin"
+out=$(bash "$SCRIPT" check "$TMP/repo")
+[ "$out" = "RUNNING opencode" ]
+wait_for_pid "$TMP/repo"
+[ -f "$TMP/repo/project_specs.xml" ]
+[ ! -f "$TMP/repo/feature_list.json" ]
+out=$(bash "$SCRIPT" check "$TMP/repo")
+echo "$out" | head -1 | grep -q '^ASKED$'
+rm -rf "$TMP"
+echo 'ok - bootstrap-setup.sh does not report READY when feature_list.json is missing'

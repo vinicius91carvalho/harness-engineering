@@ -135,7 +135,7 @@ request, or a directive.
    in their coding tool's chat.
 
    One host at a time, no second host, no loading `setup` yourself — the
-   `timeout 600` inside the job still bounds each attempt; you only ever
+   `timeout` inside the job (`BOOTSTRAP_TIMEOUT_SECONDS`, default 1800) still bounds each attempt; you only ever
    poll for it, never block on it.
 
 2. **Forward the goal to the orchestrator.**

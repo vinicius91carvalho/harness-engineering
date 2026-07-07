@@ -6,6 +6,8 @@
 # relay reacts to each outcome.
 set -euo pipefail
 
+BOOTSTRAP_TIMEOUT_SECONDS="${BOOTSTRAP_TIMEOUT_SECONDS:-1800}"
+
 cmd=${1:?"usage: bootstrap-setup.sh check|answer <repo>"}
 REPO=${2:?"usage: bootstrap-setup.sh check|answer <repo>"}
 REPO=$(CDPATH= cd -- "$REPO" && pwd)
@@ -24,7 +26,10 @@ case "$cmd" in
     exit 0
     ;;
   check)
-    if [ -f "$REPO/project_specs.xml" ]; then
+    # feature_list.json is setup's own stop condition (skills/setup/SKILL.md
+    # step 5-6) — project_specs.xml alone can exist mid-run if the host died
+    # after writing the spec but before scaffolding+committing feature_list.json.
+    if [ -f "$REPO/project_specs.xml" ] && [ -f "$REPO/feature_list.json" ]; then
       rm -f "$PIDFILE" "$AWAITFILE" "$ANSWERFILE"
       echo READY
       exit 0
@@ -87,9 +92,9 @@ unavoidable, print the question as your final output and stop."
     echo "$host" > "$HOSTFILE"
     cd "$REPO" # host CLI must scan $REPO, not the relay/omni server's own cwd (a monorepo root)
     case "$host" in
-      codex)    nohup timeout 600 codex exec "$PROMPT" >"$LOGFILE" 2>&1 & ;;
-      claude)   nohup timeout 600 claude -p "$PROMPT" >"$LOGFILE" 2>&1 & ;;
-      opencode) nohup timeout 600 opencode run "$PROMPT" >"$LOGFILE" 2>&1 & ;;
+      codex)    nohup timeout "$BOOTSTRAP_TIMEOUT_SECONDS" codex exec "$PROMPT" >"$LOGFILE" 2>&1 & ;;
+      claude)   nohup timeout "$BOOTSTRAP_TIMEOUT_SECONDS" claude -p "$PROMPT" >"$LOGFILE" 2>&1 & ;;
+      opencode) nohup timeout "$BOOTSTRAP_TIMEOUT_SECONDS" opencode run "$PROMPT" >"$LOGFILE" 2>&1 & ;;
     esac
     echo $! > "$PIDFILE"
     echo "RUNNING $host"
