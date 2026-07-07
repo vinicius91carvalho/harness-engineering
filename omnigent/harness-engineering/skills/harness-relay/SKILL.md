@@ -31,7 +31,7 @@ root harness plugin, so the alias column is not optional.
 | User might say                | Bundle name        | Root name           | What it does                                                              | Owner                                                                                       |
 | ----------------------------- | ------------------ | ------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | "setup", "scaffold", "adopt"  | `setup`            | `setup`             | Bootstrap a project from an existing repo.                                | Delegated — the bootstrap step below shells out to another host; you never load it.         |
-| "plan", "planner", "interview"| `planning`         | `planner`           | Turn a rough idea into a spec via grilling.                              | Orchestrator — tell the user to invoke it (you forward the goal, the orchestrator loads it).|
+| "plan", "planner", "interview"| `planning`         | `planner`           | Turn a rough idea into a spec via grilling.                              | Split: layering a feature onto an already-bootstrapped, not-yet-started repo is delegated (see "Layering a feature" below); planning during an active run is the orchestrator's, same as `setup`. |
 | "build", "generate", "run"    | `generation`       | `generator`         | Build, isolated QA, integrate, Goal Review.                               | Orchestrator.                                                                               |
 | "validate", "QA", "evaluate"  | `validation`       | `evaluator`         | Independent QA on a Work Item.                                            | Orchestrator.                                                                               |
 | "merge"                       | `integration`      | (n/a)               | Merge latest `main` into each context.                                   | Orchestrator.                                                                               |
@@ -146,6 +146,43 @@ $HC start --repo "$REPO" --host pi --summary-minutes 20
 
 (Fall back to `--host claude|codex|opencode` if `pi` is missing.) Then enter
 the steady-state loop.
+
+## Layering a feature onto an already-bootstrapped repo
+
+When the human asks to add a feature / layer in a goal on a repo that
+already has `project_specs.xml` (baseline setup done), and no active run
+should be building yet — same delegated, backgrounded pattern as bootstrap,
+via `plan-feature.sh` instead of `bootstrap-setup.sh`. You never load
+`planning` yourself for this either.
+
+```sh
+PLAN="bash $BUNDLE/scripts/plan-feature.sh"
+$PLAN check "$REPO"
+```
+
+Same five outcomes as bootstrap, on the first output line:
+
+- **`READY`** → new Acceptance Checks are appended and committed. Tell the
+  human, then it's their call whether to `$HC start`/`resume` the run.
+- **`RUNNING <host>`** → job running in the background. Re-issue this exact
+  step on your next tick.
+- **`NO_HOST`** → delegate to the human: run `/harness:planner` (Feature
+  mode) yourself in your coding tool's chat, then tell me when done.
+- **`NO_GOAL_FILE <path>`** → the companion goal-text file is missing.
+  Delegate to the human: they need to create it (or point at one) — you
+  don't author feature goal text yourself.
+- **`ASKED`** (log tail follows) → same as bootstrap: relay the tail
+  verbatim, feed the human's reply back the same way:
+
+  ```sh
+  printf '%s' "<human's exact words>" | $PLAN answer "$REPO"
+  $PLAN check "$REPO"
+  ```
+
+If the run is currently active (`state.status = running`), tell the human
+you'll need it `pause`d first — never call `plan-feature.sh` concurrently
+with an active run on the same repo; the human resumes/starts it once the
+new checks land.
 
 ## Steady-state loop
 
@@ -327,8 +364,8 @@ decision.
   approved an Option-A proposal and you are running the `patch` one-liner.
 - **Never load `planning`, `generation`, `validation`, `integration`,
   `goal-review`, `harness-master`, or any other workflow-phase skill
-  outside the bootstrap exception.** Those are the orchestrator's.
-  Loading them makes you do the work yourself.
+  outside the bootstrap and feature-layering exceptions.** Those are the
+  orchestrator's. Loading them makes you do the work yourself.
 - **Never load `setup` yourself, ever — not even at bootstrap.** Delegate it
   to another host's CLI (see the bootstrap step) or to the human; loading it
   yourself is the exact anti-pattern that blew a Pi relay's context in the
