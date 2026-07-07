@@ -46,10 +46,12 @@ changes, and lost conversations.
 
 [Claude Code](https://code.claude.com/docs/en/overview),
 [Codex](https://developers.openai.com/codex/), and
-[OpenCode](https://opencode.ai/) are tools that can run the harness.
-[Omnigent](https://omnigent.ai/) is another optional tool: it provides a control
-surface and routes work between those coding tools. None of them replaces the
-harness workflow.
+[OpenCode](https://opencode.ai/) are interactive tools that can run the harness.
+Pi is a fourth, headless harness: the orchestrator can dispatch work to it
+directly (`--host pi`), and it can also run as the Omnigent supervisor relay
+for small-context hosts. [Omnigent](https://omnigent.ai/) is another optional
+tool: it provides a control surface and routes work between those coding
+tools. None of them replaces the harness workflow.
 
 ### Bounded contexts
 
@@ -83,7 +85,7 @@ keeps a durable, checkable record so "done" means the work actually passes.
 - **Parallel work is governed.** Dependencies, claims, resource limits, and
   serialized merges prevent workers from colliding.
 - **Tools are replaceable.** The same workflow runs through Claude Code, Codex,
-  OpenCode, or optional Omnigent routing.
+  OpenCode, Pi, or optional Omnigent routing.
 
 ## Framework
 
@@ -465,7 +467,8 @@ call it from a known path:
 | `~/.omnigent/agents/harness-engineering/config.yaml` | Agent spec and relay prompt. |
 | `~/.omnigent/agents/harness-engineering/scripts/harness-control.mjs` | Supervisor engine. |
 | `~/.omnigent/agents/harness-engineering/../harness-generator/` | `orchestrator.mjs`, `reconcile.mjs`, `claim.sh`, `claim.ps1` (sibling of the bundle so `harness-control.mjs` resolves the generator). |
-| `~/.omnigent/agents/harness-engineering/skills/harness-relay/` | Entry-point skill: defines the start → events → ack → respond loop. |
+| `~/.omnigent/agents/harness-engineering/skills/harness-relay/` | Entry-point skill: status/event/action semantics, stuck detection, recovery policy, and the proposal mechanism. |
+| `~/.omnigent/agents/harness-engineering/proposals/` | Created on first use by the relay: dated markdown files describing detected issues and the fix (created at runtime, not bundled). |
 
 **Relay contract.** On a new goal the agent:
 
@@ -480,6 +483,15 @@ call it from a known path:
 The agent never loads `setup`, `planning`, `generation`, `validation`,
 `integration`, `goal-review`, or `harness-master` — those are the
 orchestrator's skills, and loading them makes the relay do the work itself.
+
+**Stuck recovery.** When the orchestrator goes stale, the relay auto-recovers
+operational stuck states (one `$HC start` call to respawn; never call
+`start` again after an `amend` until the human says "done editing") and
+delegates contract issues by writing a proposal markdown to
+`$BUNDLE/proposals/<date>-<slug>.md`. The user reads the proposal, picks
+Option A (auto-apply via `awk | patch -p1 -d "$BUNDLE"`) or Option B
+(manual edit), and tells the relay which path to take. Full policy lives in
+`skills/harness-relay/SKILL.md`.
 
 ## Maintenance
 

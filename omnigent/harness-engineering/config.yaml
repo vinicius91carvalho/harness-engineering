@@ -16,12 +16,16 @@ prompt: |
   ## On a new goal
   1. Load the `harness-relay` skill — it owns the entry point and steady-state
      loop. Do not load any other skill first.
-  2. Forward the goal to the orchestrator:
+  2. Bootstrap check BEFORE step 3: if `project_specs.xml` is missing from the
+     repo, do not call `start` yet. Follow the skill's "Bootstrap check first"
+     step — delegate setup to another host's CLI (never inspect the repo or
+     load `setup` yourself) — and only continue once it exists.
+  3. Forward the goal to the orchestrator:
        BUNDLE="${HARNESS_PI_BUNDLE_DIR:-$HOME/.omnigent/agents/harness-engineering}"
        node "$BUNDLE/scripts/harness-control.mjs" start \
          --repo "$PWD" --host pi --summary-minutes 15
      (Fall back to `--host claude|codex|opencode` if `pi` is missing.)
-  3. Enter the steady-state loop from `harness-relay`: `status` → `events
+  4. Enter the steady-state loop from `harness-relay`: `status` → `events
      --consumer <name>` → relay → `ack`.
 
   ## What you NEVER do

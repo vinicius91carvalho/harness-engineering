@@ -30,7 +30,14 @@ found.
 - `.mcp.json` — MCP server configuration for Opencode and Codex.
 - `omnigent/harness-engineering/` — optional Omnigent agent bundle, worker
   templates, skills, and an editable OpenCode-first `roles.example.json` copied
-  by the installers to `~/.omnigent/agents/harness-engineering`.
+  by the installers to `~/.omnigent/agents/harness-engineering`. The bundle's
+  `skills/harness-relay/` skill carries the supervisor-relay contract: status /
+  event / response-action semantics, stuck detection, an auto-recover-vs-delegate
+  policy, and a proposal mechanism. Proposals are dated markdown files written
+  to `~/.omnigent/agents/harness-engineering/proposals/<date>-<slug>.md` at
+  runtime (the folder is created on first use, never bundled) so the human can
+  triage and approve Option A (`awk | patch -p1 -d "$BUNDLE"`) or Option B
+  (manual edit).
 - `scripts/` — bundled helpers: `statusline.sh`, `sync-config.sh`, and `jsonc-normalize.js` (string-safe JSONC normalization used before atomic OpenCode writes).
 - `config/settings.json` — committed shareable subset of `~/.claude/settings.json`, merged in by the installer's "shared config" prompt. Regenerate with `/harness:update-project`.
 - `config/mcp.json` — sanitized inventory of locally-configured MCP servers (user/local scope from `~/.claude.json`), written by `/harness:update-project`. Secrets are redacted to `${PLACEHOLDER}`. The installer's "MCP servers" checklist row walks these one by one, prompts (hidden) for each secret, and registers chosen servers at user scope via `claude mcp add-json`; ENTER on a prompt skips that server. Absent until there's an MCP server to back up.

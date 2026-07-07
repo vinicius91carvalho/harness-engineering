@@ -2,29 +2,33 @@
 	"coding": [
 		{ "harness": "opencode", "model": "opencode-go/deepseek-v4-flash" },
 		{ "harness": "opencode", "model": "openrouter/moonshotai/kimi-k2.7-code" },
-		{ "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
 		{ "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-pro" },
 		{ "harness": "opencode", "model": "openrouter/qwen/qwen3.7-max" },
+		{ "harness": "pi", "model": "openrouter/z-ai/glm-5.2" },
 		{ "harness": "claude", "model": "claude-opus-4-7" },
 		{ "harness": "codex", "model": "gpt-5.5" }
 	],
 	"validation": [
-		{ "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
+		{ "harness": "opencode", "model": "openrouter/minimax/minimax-m3" },
 		{ "harness": "opencode", "model": "openrouter/qwen/qwen3.7-max" },
 		{ "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-pro" },
+		{ "harness": "pi", "model": "openrouter/z-ai/glm-5.2" },
 		{ "harness": "codex", "model": "gpt-5.5" },
 		{ "harness": "claude", "model": "claude-opus-4-7" }
 	],
 	"repairPlanning": [
-		{ "harness": "opencode", "model": "openrouter/qwen/qwen3.7-max" },
-		{ "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
 		{ "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-pro" },
+		{ "harness": "opencode", "model": "openrouter/qwen/qwen3.7-max" },
+		{ "harness": "opencode", "model": "openrouter/minimax/minimax-m3" },
+		{ "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-pro" },
+		{ "harness": "pi", "model": "openrouter/z-ai/glm-5.2" },
 		{ "harness": "claude", "model": "claude-opus-4-7" },
 		{ "harness": "codex", "model": "gpt-5.5" }
 	],
 	"goalReview": [
-		{ "harness": "opencode", "model": "openrouter/z-ai/glm-5.2" },
+		{ "harness": "opencode", "model": "openrouter/minimax/minimax-m3" },
 		{ "harness": "opencode", "model": "openrouter/qwen/qwen3.7-max" },
+		{ "harness": "pi", "model": "openrouter/z-ai/glm-5.2" },
 		{ "harness": "codex", "model": "gpt-5.5" },
 		{ "harness": "claude", "model": "claude-opus-4-7" }
 	],
