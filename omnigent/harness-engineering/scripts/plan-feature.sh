@@ -94,9 +94,11 @@ $GOAL
 You are running non-interactively: make reasonable product decisions \
 yourself. If you would normally ask the user a question, print the question \
 and options as your final output and stop instead -- do not guess, do not \
-proceed on an assumed default. When you finish successfully (new checks \
-appended and committed), run exactly this command as your last action: \
-touch '$DONEFILE'"
+proceed on an assumed default. After committing the spec, also find and run \
+the harness generator's reconcile.mjs against this repo (same way it runs \
+during initial setup) to map the new Acceptance Checks into feature_list.json \
+as new Work Items, and commit that too. When both commits are done, run \
+exactly this command as your last action: touch '$DONEFILE'"
 
     if [ -f "$AWAITFILE" ] && [ -f "$ANSWERFILE" ]; then
       PROMPT="$BASE_PROMPT
