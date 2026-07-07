@@ -73,8 +73,11 @@ default. Scope your work to ONLY this directory ($REPO). If you notice a \
 monorepo registry (e.g. .harness/projects.json) referencing sibling \
 subprojects, do NOT inspect, bootstrap, or dispatch any work for them — \
 each sibling is bootstrapped by a separate, later invocation of this same \
-job. Do not use parallel sub-agents or task dispatch for this job; do the \
-work yourself, directly, in this one process."
+job. This restriction is about siblings only: any sub-agent dispatch the \
+setup skill itself defines for scaffolding THIS subproject (e.g. an \
+initializer sub-agent) is expected and fine, as long as it stays scoped to \
+$REPO — invoke it the normal way your tool provides, do not read another \
+agent's instruction file directly as a substitute."
 
     if [ -f "$AWAITFILE" ] && [ -f "$ANSWERFILE" ]; then
       PROMPT="$BASE_PROMPT
