@@ -30,8 +30,11 @@ const commands = {
   claude: (prompt) => ['claude', ['-p', prompt]],
   codex: (prompt) => ['codex', ['exec', prompt]],
   opencode: (prompt) => ['opencode', ['run', prompt]],
-  // ponytail: pi's default model is GLM 5.2 via OpenRouter (pi has no built-in default for it).
-  pi: (prompt) => ['pi', ['--model', 'openrouter/z-ai/glm-5.2', '-p', prompt]],
+  // ponytail: pi has no built-in default model, so it must be pinned explicitly.
+  // qwen3-coder:free requires an explicit maxTokens cap in ~/.pi/agent/models.json
+  // (unlisted models default to requesting ~the full context window as max_tokens,
+  // which is what made z-ai/glm-5.2 hit OpenRouter 402s on a low-balance account).
+  pi: (prompt) => ['pi', ['--model', 'openrouter/qwen/qwen3-coder:free', '-p', prompt]],
 }
 const roleNames = {
   CODING: 'coding', QA: 'validation', INTEGRATION_QA: 'validation',
