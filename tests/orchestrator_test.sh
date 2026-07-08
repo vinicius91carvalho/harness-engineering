@@ -55,6 +55,9 @@ case "$prompt" in
     if [ "${HARNESS_TEST_CODE_DECLINE:-}" = 1 ]; then
       printf '%s\n' '{"id":"WI-AC-001","implementation":false,"notes":"scope exceeds budget"}'; exit 0
     fi
+    if [ "${HARNESS_TEST_CODE_RATE_LIMIT:-}" = 1 ]; then
+      echo '429: {"message":"Rate limit exceeded"}' >&2; exit 1
+    fi
     if [ "$code_count" -eq 2 ]; then printf '%s' "$prompt" | grep -q 'fix the health response'; fi
     jq 'map(if .id=="WI-AC-001" then .implementation=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
     commit coding
@@ -157,6 +160,30 @@ jq -e '.passed == 1 and (.stuck | length) == 0' "$TMP/resumed-result.json" >/dev
 grep -q 'Explicit Resume' "$BLOCKED_WT/harness-progress/core.md"
 grep -q 'apply the reviewed fallback' "$BLOCKED_WT/harness-progress/core.md"
 echo 'ok - explicit guidance is journaled and starts a fresh bounded Attempt cycle'
+
+mkdir -p "$TMP/ratelimited"
+git -C "$TMP/ratelimited" init -b main -q
+git -C "$TMP/ratelimited" config user.name test
+git -C "$TMP/ratelimited" config user.email test@example.invalid
+cp "$TMP/repo/project_specs.xml" "$TMP/ratelimited/project_specs.xml"
+cat >"$TMP/ratelimited/feature_list.json" <<'JSON'
+[{"id":"WI-AC-001","context":"core","description":"health works","steps":["verify health"],"acceptance_checks":["AC-001"],"depends_on":[],"implementation":false,"qa":false,"integration":false,"retries":0}]
+JSON
+git -C "$TMP/ratelimited" add . && git -C "$TMP/ratelimited" commit -qm init
+bash "$ROOT/skills/generator/claim.sh" select-claim "$TMP/ratelimited" all '' 5001 >"$TMP/ratelimited-claim.json"
+RATELIMITED_WT=$(jq -r .worktree "$TMP/ratelimited-claim.json")
+START_NS=$(date +%s%N)
+PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" HARNESS_TEST_QA_COUNT="$TMP/ratelimited-qa-count" HARNESS_TEST_CODE_COUNT="$TMP/ratelimited-code-count" \
+  HARNESS_TEST_CODE_RATE_LIMIT=1 HARNESS_RATE_LIMIT_BACKOFF_MS=1500 \
+  "$NODE" "$ROOT/skills/generator/orchestrator.mjs" --host claude --repo "$TMP/ratelimited" \
+  --workdir "$RATELIMITED_WT" --context core --port 5170 --features WI-AC-001 \
+  --claim-script "$ROOT/skills/generator/claim.sh" >"$TMP/ratelimited-result.json"
+ELAPSED_MS=$(( ($(date +%s%N) - START_NS) / 1000000 ))
+jq -e '.stuck[0].status == "blocked" and .stuck[0].reason == "coding agent failed three times"' "$TMP/ratelimited-result.json" >/dev/null
+test "$(cat "$TMP/ratelimited-code-count")" -eq 3
+test "$ELAPSED_MS" -ge 3000 \
+  || { echo "not ok - a 429 was retried without backing off (elapsed ${ELAPSED_MS}ms, expected >= 2 backoffs of 1500ms)" >&2; exit 1; }
+echo 'ok - a rate-limited coding agent backs off before its next Attempt instead of instantly re-exhausting the same limit'
 
 mkdir -p "$TMP/omni/.harness"
 git -C "$TMP/omni" init -b main -q

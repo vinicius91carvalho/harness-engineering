@@ -43,6 +43,14 @@ const roleNames = {
 const reconcileScript = resolve(dirname(fileURLToPath(import.meta.url)), 'reconcile.mjs')
 const MAX_ATTEMPTS = 3
 const MAX_OPERATIONAL_FAILURES = 3
+const RATE_LIMIT_BACKOFF_MS = Number(process.env.HARNESS_RATE_LIMIT_BACKOFF_MS || 75_000)
+
+// ponytail: a 429 retried instantly just burns the same rate-limit window again --
+// this is what falsely exhausted MAX_OPERATIONAL_FAILURES on Work Items that were
+// never actually attempted. Back off once before the next attempt instead.
+async function backoffIfRateLimited(detail) {
+  if (/\b429\b|rate.?limit/i.test(detail || '')) await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_BACKOFF_MS))
+}
 
 function command(program, args, cwd = options.workdir, allowFailure = false) {
   const result = spawnSync(program, args, { cwd, encoding: 'utf8' })
@@ -654,6 +662,7 @@ async function runWorkItems() {
         if (!coded.ok || current.implementation !== true) {
           operationalFailures++
           if (operationalFailures >= MAX_OPERATIONAL_FAILURES) { results.push(await block(current, attempt, 'coding agent failed three times', [coded.detail])); break }
+          await backoffIfRateLimited(coded.detail)
           continue
         }
         operationalFailures = 0
@@ -673,6 +682,7 @@ async function runWorkItems() {
         if (!checked.ok && !checked.parsed) {
           operationalFailures++
           if (operationalFailures >= MAX_OPERATIONAL_FAILURES) { results.push(await block(current, attempt, 'QA agent failed three times', [checked.detail])); break }
+          await backoffIfRateLimited(checked.detail)
           continue
         }
         operationalFailures = 0
