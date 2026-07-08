@@ -411,6 +411,11 @@ function commitPaths(workdir, paths, message) {
 // ponytail: shared wrap instruction so every JSON-returning prompt uses the same delimiters parseObject looks for.
 const VERDICT_HINT = 'Emit that JSON as the very last thing you print, on its own lines, wrapped exactly:\n===HARNESS-VERDICT-BEGIN===\n{...}\n===HARNESS-VERDICT-END==='
 
+// MERGE and INTEGRATION_QA run in whichever worktree has main checked out --
+// often the repo root itself, shared by every other Work Item and every
+// other subproject in a monorepo. A destructive command here has no isolation.
+const SHARED_ROOT_WARNING = 'You are operating directly on this repository\'s shared main branch, used by every other Work Item and every other subproject in this monorepo -- there is no isolation here. Never run `git reset` (soft, mixed, or hard), `git checkout -- .`, `git clean -f`, or any other command that discards or rewrites committed history. If you are ever unsure whether an action is safe, stop and report the problem instead of guessing.'
+
 function featurePrompt(kind, feature, attempt, repairPlan = null, workdir = options.workdir) {
   const base = `WORKDIR=${workdir}\nPORT=${options.port}\nWork Item id=${feature.id} context=${feature.context}\n` +
     `Acceptance Checks=${(feature.acceptance_checks || []).join(',')}\nDescription=${feature.description || ''}\n`
@@ -429,12 +434,12 @@ function featurePrompt(kind, feature, attempt, repairPlan = null, workdir = opti
   if (kind === 'QA') return `You are the qa-agent. Independently test exactly this Work Item in its isolated worktree.\n${base}` +
     `Use a real browser for UI or real HTTP for API behavior. On pass set qa=true. On any defect set implementation=false and qa=false. Update the journal concisely and commit. Return only JSON: {"id":"...","qa":true|false,"implementation":true|false,"defects":["expected ...; observed ...; evidence ..."]}. ${VERDICT_HINT}`
   if (kind === 'INTEGRATION_QA') return `You are the qa-agent performing Integrated Verification on latest main.\n${base}` +
-    `Run the mapped Acceptance Checks and core smoke behavior at real external boundaries. On pass set integration=true for this Work Item. On any defect set implementation=false, qa=false, integration=false. Update the journal concisely and commit. Return only JSON: {"id":"...","integration":true|false,"implementation":true|false,"defects":["expected ...; observed ...; evidence ..."]}. ${VERDICT_HINT}`
+    `Run the mapped Acceptance Checks and core smoke behavior at real external boundaries. On pass set integration=true for this Work Item. On any defect set implementation=false, qa=false, integration=false. Update the journal concisely and commit. Return only JSON: {"id":"...","integration":true|false,"implementation":true|false,"defects":["expected ...; observed ...; evidence ..."]}. ${VERDICT_HINT}\n${SHARED_ROOT_WARNING}`
   if (kind === 'REPAIR_PLAN') return `Act as the orchestrator repair planner. Do not modify files. Diagnose the QA Defect Report against the Work Item and repository.\n${base}` +
     `Defect Report=${JSON.stringify(repairPlan)}\nReturn only concise JSON: {"summary":"...","rootCause":"...","actions":["..."],"validation":["..."]}. ${VERDICT_HINT}`
   if (kind === 'MERGE') return `You are resolving integration conflicts for one verified Checkpoint.\n${base}` +
     `Resolve only the current Git conflicts. Keep Work Items append-only; a newer Defect Report overrides older true flags. Run affected black-box checks, commit, and return only JSON: {"resolved":true|false,"notes":"..."}. ${VERDICT_HINT}\n` +
-    `You are operating directly on this repository's shared main branch, used by every other Work Item and every other subproject in this monorepo -- there is no isolation here. Never run \`git reset\` (soft, mixed, or hard), \`git checkout -- .\`, \`git clean -f\`, or any other command that discards or rewrites committed history. The only git operations you need are \`git add\`/\`git commit\` to resolve conflicts, and \`git merge --abort\` if you cannot resolve them cleanly -- the orchestrator already handles an abort as a normal, safe outcome (it reports the conflict as unresolved and retries later). If you are ever unsure whether an action is safe, abort instead of guessing.`
+    `${SHARED_ROOT_WARNING} The only git operations you need are \`git add\`/\`git commit\` to resolve conflicts, and \`git merge --abort\` if you cannot resolve them cleanly -- the orchestrator already handles an abort as a normal, safe outcome (it reports the conflict as unresolved and retries later).`
 }
 
 async function block(feature, attempt, reason, defects = []) {
