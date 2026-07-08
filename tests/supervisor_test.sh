@@ -149,6 +149,10 @@ echo 'ok - durable consumer acknowledgements survive chat context loss'
   --max-load-ratio 100 --reserve-memory-mb 0 | jq -e '.limit == 0 and .quota.slots == 0' >/dev/null
 echo 'ok - provider quota is a hard worker-admission limit'
 
+"$NODE" "$CONTROL" capacity --repo "$TMP/repo" --host claude \
+  | jq -e '.memory.perWorkerMb == 1024' >/dev/null
+echo 'ok - default per-worker memory budget is 1GB, calibrated to real ~250MB worker RSS not the old 2GB'
+
 git -C "$TMP/invalid" init -b main -q
 git -C "$TMP/invalid" config user.name test
 git -C "$TMP/invalid" config user.email test@example.invalid
