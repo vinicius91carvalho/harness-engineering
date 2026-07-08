@@ -202,6 +202,34 @@ jq -e '.retryQueue == {}' "$RETRY_STATE" >/dev/null
 jq -s -e 'any(.[]; .kind == "input_required" and .context == "ghost" and .reason == "Retry could not resume the Claim Lease")' "$RETRY_EVENTS" >/dev/null
 echo 'ok - a retry that can never resume its Claim Lease re-raises a bounded Input Request'
 
+mkdir -p "$TMP/prune"
+git -C "$TMP/prune" init -b main -q
+git -C "$TMP/prune" config user.name test
+git -C "$TMP/prune" config user.email test@example.invalid
+cp "$TMP/repo/project_specs.xml" "$TMP/prune/project_specs.xml"
+cat >"$TMP/prune/feature_list.json" <<'JSON'
+[{"id":"WI-AC-001","context":"realblock","description":"x","steps":["verify"],"acceptance_checks":["AC-001"],"depends_on":[],"implementation":true,"qa":true,"integration":false,"retries":0}]
+JSON
+git -C "$TMP/prune" add . && git -C "$TMP/prune" commit -qm init
+printf '%s\n' '{"realblock":{"context":"realblock","status":"blocked","worktree":"/nonexistent","branch":"gen/realblock","port":9,"featureIds":[]}}' \
+  >"$TMP/prune/.git/generator-claims.json"
+mkdir -p "$TMP/prune/.git/harness-control"
+cat >"$TMP/prune/.git/harness-control/state.json" <<'JSON'
+{"pendingInputs":{
+  "100":{"id":100,"kind":"input_required","scope":"context","context":"ghost-orphan","reason":"Work Item blocked","status":"pending","choices":["retry","pause","abort"]},
+  "101":{"id":101,"kind":"input_required","scope":"context","context":"realblock","reason":"Work Item blocked","status":"pending","choices":["retry","pause","abort"]},
+  "102":{"id":102,"kind":"input_required","scope":"goal","context":null,"reason":"goal needs a human decision","status":"pending","choices":["retry","pause","abort"]}
+}}
+JSON
+PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" "$NODE" "$CONTROL" run \
+  --repo "$TMP/prune" --host claude --once true --poll-ms 250 \
+  --max-workers 2 --quota-workers 2 --cpu-per-worker 0.25 \
+  --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100
+PRUNE_STATE="$TMP/prune/.git/harness-control/state.json"
+jq -e '(.pendingInputs | has("100") | not) and (.pendingInputs | has("101")) and (.pendingInputs | has("102"))' "$PRUNE_STATE" >/dev/null \
+  || { jq '.pendingInputs | keys' "$PRUNE_STATE"; echo 'not ok - orphaned pending was not pruned, or a real blocked/goal event was wrongly dropped' >&2; exit 1; }
+echo 'ok - an orphaned context Input Request (no live claim) is pruned while a blocked-claim event and a goal event are kept'
+
 mkdir -p "$TMP/circuit"
 git -C "$TMP/circuit" init -b main -q
 git -C "$TMP/circuit" config user.name test

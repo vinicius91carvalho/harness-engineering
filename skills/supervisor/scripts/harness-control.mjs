@@ -336,8 +336,31 @@ class Supervisor {
     return { counts, claims: Object.values(claims).map((claim) => claim.context), queue }
   }
 
+  // Drop orphaned pending Input Requests: context-scoped events whose context no
+  // longer maps to a live claim for this subproject, is not queued for retry, and
+  // has no active worker. These are residue -- cross-subproject contexts parked
+  // here before claims were scoped per-subproject (the ownClaims fix), or contexts
+  // whose work completed and released its claim, leaving a stale blocked/"could not
+  // resume" event that clutters status and never clears (no response action deletes
+  // one). A genuinely blocked item always keeps a status:'blocked' claim, so it is
+  // never pruned and inspectClaims still re-raises it below; goal-scoped events
+  // (real human decisions) are never pruned.
+  pruneOrphanPending(claims) {
+    const live = new Set(Object.values(claims).map((claim) => claim.context).filter(Boolean))
+    let pruned = 0
+    for (const [id, request] of Object.entries(this.state.pendingInputs || {})) {
+      const context = request.context
+      if (request.scope !== 'context' || !context) continue
+      if (live.has(context) || this.state.retryQueue?.[context] || this.workers.has(context)) continue
+      delete this.state.pendingInputs[id]
+      pruned++
+    }
+    return pruned
+  }
+
   async inspectClaims() {
     const claims = await ownClaims()
+    if (this.pruneOrphanPending(claims)) await this.save()
     let external = 0
     const recoverable = []
     for (const [claimKey, claim] of Object.entries(claims)) {
