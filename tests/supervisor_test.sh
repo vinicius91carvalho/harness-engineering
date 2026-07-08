@@ -197,3 +197,35 @@ RETRY_EVENTS="$TMP/retry/.git/harness-control/events.jsonl"
 jq -e '.retryQueue == {}' "$RETRY_STATE" >/dev/null
 jq -s -e 'any(.[]; .kind == "input_required" and .context == "ghost" and .reason == "Retry could not resume the Claim Lease")' "$RETRY_EVENTS" >/dev/null
 echo 'ok - a retry that can never resume its Claim Lease re-raises a bounded Input Request'
+
+mkdir -p "$TMP/circuit"
+git -C "$TMP/circuit" init -b main -q
+git -C "$TMP/circuit" config user.name test
+git -C "$TMP/circuit" config user.email test@example.invalid
+cp "$TMP/repo/project_specs.xml" "$TMP/circuit/project_specs.xml"
+cat >"$TMP/circuit/feature_list.json" <<'JSON'
+[{"id":"WI-AC-001","context":"core","description":"health works","steps":["verify health"],"acceptance_checks":["AC-001"],"depends_on":[],"implementation":false,"qa":false,"integration":false,"retries":0}]
+JSON
+git -C "$TMP/circuit" add . && git -C "$TMP/circuit" commit -qm init
+mkdir -p "$TMP/circuit/.git/harness-control" "$TMP/circuit/.git/harness-runs"
+printf '%s\n' '{"flaky":{"context":"flaky","status":"building","worktree":"/nonexistent","branch":"gen/flaky","port":9,"featureIds":[]}}' \
+  >"$TMP/circuit/.git/generator-claims.json"
+printf '%s\n' '{"status":"resuming","ownerPid":999999999,"childPid":null}' \
+  >"$TMP/circuit/.git/harness-runs/flaky.json"
+printf '%s\n' '{"crashCounts":{"flaky":5}}' >"$TMP/circuit/.git/harness-control/state.json"
+if ! PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" timeout 20 "$NODE" "$CONTROL" run \
+  --repo "$TMP/circuit" --host claude --poll-ms 250 \
+  --max-workers 2 --quota-workers 2 --cpu-per-worker 0.25 \
+  --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100; then
+  echo 'not ok - run never reached completion (a crash-looping context with no bound would hang here forever)' >&2; exit 1
+fi
+CIRCUIT_STATE="$TMP/circuit/.git/harness-control/state.json"
+CIRCUIT_EVENTS="$TMP/circuit/.git/harness-control/events.jsonl"
+jq -e '.status == "complete" and .progress.integrated == 1' "$CIRCUIT_STATE" >/dev/null \
+  || { cat "$CIRCUIT_STATE"; exit 1; }
+jq -e '.crashCounts.flaky == 5' "$CIRCUIT_STATE" >/dev/null \
+  || { echo 'not ok - a context already at the crash bound was touched (should stay untouched, never dispatched)' >&2; cat "$CIRCUIT_STATE" >&2; exit 1; }
+if jq -s -e 'any(.[]; .context == "flaky")' "$CIRCUIT_EVENTS" >/dev/null 2>&1; then
+  echo 'not ok - a context already at the crash bound was still dispatched/raised an event instead of being skipped' >&2; exit 1
+fi
+echo 'ok - a context already at the crash-count bound is never auto-recovered again, while its sibling context keeps completing normally'

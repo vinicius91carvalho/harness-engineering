@@ -337,6 +337,14 @@ class Supervisor {
       if (this.workers.has(context)) continue
       const runState = await readJson(runStateFile(context), {})
       if (this.state.retryQueue?.[context]) continue
+      // A worker that crashes before ever reaching a recognizable result (e.g. reconcile.mjs
+      // choking on a corrupted feature_list.json in its own worktree) never sets claim/runState
+      // status to 'blocked' -- so without this check it re-qualifies as recoverable on literally
+      // every tick, forever, monopolizing this subproject's capacity slots on a context that can
+      // never succeed. Mirror retryQueue's 5-attempt bound: once workerClosed's crashCounts for
+      // this context hits it, stop auto-resuming and leave the last-raised input_required as the
+      // terminal signal, same as an exhausted retryQueue entry.
+      if ((this.state.crashCounts?.[context] || 0) >= 5) continue
       if (claim.status === 'blocked' || runState.status === 'blocked') {
         await this.input('context', runState.lastResult || 'Work Item blocked', { nextAction: runState.nextAction, attempt: runState.attempt, evidence: runState.evidence }, context)
       } else if (runState.ownerHost && runState.ownerHost !== hostname()) {
@@ -439,8 +447,11 @@ class Supervisor {
     } else if (code === 0 && result?.stuck?.length === 0) {
       exec('bash', [claimScript, 'release', repo, key], repo, true)
       await this.emit('context_completed', { context: key, passed: result.passed, total: result.total })
+      delete this.state.crashCounts?.[key]
     } else {
       const goal = key === 'goal-review'
+      this.state.crashCounts = this.state.crashCounts || {}
+      this.state.crashCounts[key] = (this.state.crashCounts[key] || 0) + 1
       await this.input(goal ? 'goal' : 'context', `Worker exited with code ${code}`, { log: worker.logFile }, goal ? null : key)
     }
     this.workers.delete(key)
@@ -463,6 +474,7 @@ class Supervisor {
         await this.save({ status: 'paused' })
       } else if (response.action === 'retry' && request.context) {
         this.state.retryQueue[request.context] = { guidance: response.guidance || 'Retry after user review' }
+        delete this.state.crashCounts?.[request.context]
         await this.save()
       } else if (response.action === 'retry') {
         await this.save({ status: 'running' })
