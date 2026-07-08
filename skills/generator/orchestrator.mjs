@@ -31,10 +31,15 @@ const commands = {
   codex: (prompt) => ['codex', ['exec', prompt]],
   opencode: (prompt) => ['opencode', ['run', prompt]],
   // ponytail: pi has no built-in default model, so it must be pinned explicitly.
-  // qwen3-coder:free requires an explicit maxTokens cap in ~/.pi/agent/models.json
-  // (unlisted models default to requesting ~the full context window as max_tokens,
-  // which is what made z-ai/glm-5.2 hit OpenRouter 402s on a low-balance account).
-  pi: (prompt) => ['pi', ['--model', 'openrouter/qwen/qwen3-coder:free', '-p', prompt]],
+  // Every model referenced here needs an explicit maxTokens cap in
+  // ~/.pi/agent/models.json (unlisted models default to requesting ~the full
+  // context window as max_tokens, which is what made z-ai/glm-5.2 hit
+  // OpenRouter 402s on a low-balance account). Moved off openrouter/qwen/qwen3-coder:free
+  // (shared 8 req/min across this account, and across whatever else is
+  // saturating that specific free model on OpenRouter) to NVIDIA NIM's
+  // free tier (40 req/min, a separate unshared quota pool) after repeated
+  // rate-limit-storms across 4 concurrent causeflow-ai subprojects.
+  pi: (prompt) => ['pi', ['--model', 'nvidia-nim/deepseek-ai/deepseek-v4-pro', '-p', prompt]],
 }
 const roleNames = {
   CODING: 'coding', QA: 'validation', INTEGRATION_QA: 'validation',
