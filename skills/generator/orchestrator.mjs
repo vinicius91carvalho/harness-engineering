@@ -439,7 +439,8 @@ function featurePrompt(kind, feature, attempt, repairPlan = null, workdir = opti
     `Defect Report=${JSON.stringify(repairPlan)}\nReturn only concise JSON: {"summary":"...","rootCause":"...","actions":["..."],"validation":["..."]}. ${VERDICT_HINT}`
   if (kind === 'MERGE') return `You are resolving integration conflicts for one verified Checkpoint.\n${base}` +
     `Resolve only the current Git conflicts. Keep Work Items append-only; a newer Defect Report overrides older true flags. Run affected black-box checks, commit, and return only JSON: {"resolved":true|false,"notes":"..."}. ${VERDICT_HINT}\n` +
-    `${SHARED_ROOT_WARNING} The only git operations you need are \`git add\`/\`git commit\` to resolve conflicts, and \`git merge --abort\` if you cannot resolve them cleanly -- the orchestrator already handles an abort as a normal, safe outcome (it reports the conflict as unresolved and retries later).`
+    `${SHARED_ROOT_WARNING} The only git operations you need are \`git add\`/\`git commit\` to resolve conflicts, and \`git merge --abort\` if you cannot resolve them cleanly -- the orchestrator already handles an abort as a normal, safe outcome (it reports the conflict as unresolved and retries later).\n` +
+    `Before running \`git add\` on any file that had a conflict, actually edit it -- open it and remove every \`<<<<<<<\`, \`=======\`, \`>>>>>>>\` marker line, keeping the correct combined content underneath. \`git add\` only clears Git's own unresolved-merge flag on a path; it does not check whether the marker lines are still sitting in the file. Staging and committing a file that still contains literal marker lines corrupts it (the orchestrator now also checks for this and will abort and retry if it happens, but do not rely on that -- verify the file has zero marker lines yourself before adding it).`
 }
 
 async function block(feature, attempt, reason, defects = []) {
@@ -496,15 +497,36 @@ async function integrate(feature, attempt) {
   commitPaths(options.workdir, [journalFile], `chore(harness): checkpoint ${feature.id}`)
   const checkpointSha = git(['rev-parse', 'HEAD'], options.workdir).stdout.trim()
   const integrationDir = await acquireMergeLock()
+  const preMergeSha = git(['rev-parse', 'HEAD'], integrationDir).stdout.trim()
   try {
     await writeState({ phase: 'merge', nextAction: 'merge', integrationDir })
     const merged = command('bash', [claimScript, 'merge-do', options.repo, feature.context, integrationDir], options.repo, true)
     if (merged.status === 2) {
+      const conflictedFiles = git(['diff', '--name-only', '--diff-filter=U'], integrationDir).stdout.trim().split('\n').filter(Boolean)
       const resolved = await runAgent('MERGE', featurePrompt('MERGE', feature, attempt, null, integrationDir), feature.id, attempt, integrationDir)
       const unmerged = git(['diff', '--name-only', '--diff-filter=U'], integrationDir).stdout.trim()
-      if (unmerged) {
+      // `git add` clears a path's unresolved-merge status in the index regardless of
+      // whether the file's actual content still has literal conflict markers in it --
+      // the diff-filter=U check above passes trivially if the agent staged a file
+      // without truly resolving it. Check content on the files that were conflicted.
+      // Read from HEAD, not the worktree, since the agent may have already committed.
+      const markerPattern = /^(<{7} |={7}$|>{7} )/m
+      const stillMarked = conflictedFiles.some((relPath) => {
+        const shown = git(['show', `HEAD:${relPath}`], integrationDir, true)
+        return shown.status === 0 && markerPattern.test(shown.stdout)
+      })
+      if (unmerged || stillMarked) {
         git(['merge', '--abort'], integrationDir, true)
-        return { passed: false, operational: true, defects: ['merge conflict could not be resolved'], evidence: resolved.artifact }
+        // A merge agent is expected to `git commit` once it believes conflicts are
+        // resolved -- if it committed a marker-corrupted result before we could catch
+        // it, `merge --abort` has nothing left to abort (the merge already concluded).
+        // We captured this worktree's own pre-merge tip under our own exclusive merge
+        // lock, so resetting to it only ever discards this one failed attempt.
+        if (git(['rev-parse', 'HEAD'], integrationDir).stdout.trim() !== preMergeSha) {
+          git(['reset', '--hard', preMergeSha], integrationDir, true)
+        }
+        const reason = stillMarked && !unmerged ? 'merge conflict markers were committed without being resolved' : 'merge conflict could not be resolved'
+        return { passed: false, operational: true, defects: [reason], evidence: resolved.artifact }
       }
       const mergeHead = git(['rev-parse', '-q', '--verify', 'MERGE_HEAD'], integrationDir, true)
       if (mergeHead.status === 0) git(['commit', '--no-edit'], integrationDir)

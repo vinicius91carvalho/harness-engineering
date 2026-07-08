@@ -568,3 +568,74 @@ PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" HARNESS_TEST_QA_COUNT="$TMP/ver
 jq -e '.passed == 1 and (.stuck | length) == 0' "$TMP/verdict-result.json" >/dev/null
 jq -e '.[0].implementation and .[0].qa and .[0].integration and .[0].retries == 0' "$TMP/verdict/feature_list.json" >/dev/null
 echo 'ok - a delimited verdict block wins over distractor JSON-looking noise printed before it'
+
+# A MERGE agent that stages a conflicted file without actually removing the
+# <<<<<<</=======/>>>>>>> marker lines must not be allowed to commit it --
+# git add clears the path's unresolved-merge flag regardless of file content,
+# so integrate() needs its own content-level check, not just diff --diff-filter=U.
+mkdir -p "$TMP/mergecorrupt/bin"
+git -C "$TMP/mergecorrupt" init -b main -q
+git -C "$TMP/mergecorrupt" config user.name test
+git -C "$TMP/mergecorrupt" config user.email test@example.invalid
+cat >"$TMP/mergecorrupt/project_specs.xml" <<'XML'
+<project_specification>
+  <project_goal>A real boundary returns ready.</project_goal>
+  <acceptance_checks>
+    <acceptance_check id="AC-001" context="core" category="functional" depends_on="">
+      <description>The health boundary returns ready.</description>
+    </acceptance_check>
+  </acceptance_checks>
+</project_specification>
+XML
+cat >"$TMP/mergecorrupt/feature_list.json" <<'JSON'
+[{"id":"WI-AC-001","context":"core","description":"health works","steps":["verify health"],"acceptance_checks":["AC-001"],"depends_on":[],"implementation":false,"qa":false,"integration":false,"retries":0}]
+JSON
+git -C "$TMP/mergecorrupt" add . && git -C "$TMP/mergecorrupt" commit -qm init
+
+bash "$ROOT/skills/generator/claim.sh" select-claim "$TMP/mergecorrupt" all '' 9001 >"$TMP/mergecorrupt-claim.json"
+MC_WT=$(jq -r .worktree "$TMP/mergecorrupt-claim.json")
+
+# Diverge main after the claim so the worktree's checkpoint conflicts with it on
+# the exact same field when integrate() tries to merge back.
+jq '.[0].note = "changed on main"' "$TMP/mergecorrupt/feature_list.json" >"$TMP/mergecorrupt/feature_list.json.tmp"
+mv "$TMP/mergecorrupt/feature_list.json.tmp" "$TMP/mergecorrupt/feature_list.json"
+git -C "$TMP/mergecorrupt" commit -qam 'diverge main'
+
+cat >"$TMP/mergecorrupt/bin/claude" <<'SH'
+#!/bin/sh
+set -eu
+prompt=""; for arg in "$@"; do prompt=$arg; done
+tmp="$PWD/feature_list.json.tmp"
+commit() { git add feature_list.json; git commit -qm "$1"; }
+case "$prompt" in
+  *"resolving integration conflicts"*)
+    # Deliberately buggy "resolution": leave the marker lines in place and
+    # stage the file anyway -- this is exactly the failure this test guards.
+    git add feature_list.json
+    git commit -qm 'merge: resolve (broken)'
+    printf '%s\n' '{"resolved":true,"notes":"resolved"}'
+    ;;
+  *"coding-agent"*)
+    jq 'map(if .id=="WI-AC-001" then .implementation=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
+    commit coding
+    printf '%s\n' '{"id":"WI-AC-001","implementation":true,"notes":"implemented"}'
+    ;;
+  *"qa-agent"*)
+    jq 'map(if .id=="WI-AC-001" then .qa=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
+    commit qa-pass
+    printf '%s\n' '{"id":"WI-AC-001","qa":true,"implementation":true,"defects":[]}'
+    ;;
+esac
+SH
+chmod +x "$TMP/mergecorrupt/bin/claude"
+
+MC_BEFORE_HEAD=$(git -C "$TMP/mergecorrupt" rev-parse main)
+PATH="$TMP/mergecorrupt/bin:$(dirname "$NODE"):/usr/bin:/bin" \
+  "$NODE" "$ROOT/skills/generator/orchestrator.mjs" --host claude --repo "$TMP/mergecorrupt" \
+  --workdir "$MC_WT" --context core --port 5172 --features WI-AC-001 \
+  --claim-script "$ROOT/skills/generator/claim.sh" >"$TMP/mergecorrupt-result.json" || true
+jq -e '.passed == 1' "$TMP/mergecorrupt-result.json" >/dev/null && { echo 'FAIL: a marker-corrupted merge was accepted as passing'; exit 1; }
+jq -e '.stuck[0].defects[0] | test("marker")' "$TMP/mergecorrupt-result.json" >/dev/null
+test "$(git -C "$TMP/mergecorrupt" rev-parse main)" = "$MC_BEFORE_HEAD"
+! grep -q '^<<<<<<< ' "$TMP/mergecorrupt/feature_list.json"
+echo 'ok - a MERGE agent that stages a conflict without removing marker lines is caught and its commit is aborted, not landed on main'
