@@ -107,6 +107,11 @@ Planner uses the bundled grilling skill internally; it is not a separate harness
 workflow command. A user can still activate an installed grilling skill directly
 by asking “grill me.”
 
+Generator also bundles a `worktree-git-recovery` reference skill — not a
+top-level command either, but consulted when a context's own worktree needs a
+narrow, git-only fix (an abandoned conflict, a worktree stuck on a pre-recovery
+base) dispatched through a sandboxed host CLI rather than edited directly.
+
 ```mermaid
 flowchart TD
     I[idea or existing repository] --> S[project_specs.xml]
