@@ -433,7 +433,8 @@ function featurePrompt(kind, feature, attempt, repairPlan = null, workdir = opti
   if (kind === 'REPAIR_PLAN') return `Act as the orchestrator repair planner. Do not modify files. Diagnose the QA Defect Report against the Work Item and repository.\n${base}` +
     `Defect Report=${JSON.stringify(repairPlan)}\nReturn only concise JSON: {"summary":"...","rootCause":"...","actions":["..."],"validation":["..."]}. ${VERDICT_HINT}`
   if (kind === 'MERGE') return `You are resolving integration conflicts for one verified Checkpoint.\n${base}` +
-    `Resolve only the current Git conflicts. Keep Work Items append-only; a newer Defect Report overrides older true flags. Run affected black-box checks, commit, and return only JSON: {"resolved":true|false,"notes":"..."}. ${VERDICT_HINT}`
+    `Resolve only the current Git conflicts. Keep Work Items append-only; a newer Defect Report overrides older true flags. Run affected black-box checks, commit, and return only JSON: {"resolved":true|false,"notes":"..."}. ${VERDICT_HINT}\n` +
+    `You are operating directly on this repository's shared main branch, used by every other Work Item and every other subproject in this monorepo -- there is no isolation here. Never run \`git reset\` (soft, mixed, or hard), \`git checkout -- .\`, \`git clean -f\`, or any other command that discards or rewrites committed history. The only git operations you need are \`git add\`/\`git commit\` to resolve conflicts, and \`git merge --abort\` if you cannot resolve them cleanly -- the orchestrator already handles an abort as a normal, safe outcome (it reports the conflict as unresolved and retries later). If you are ever unsure whether an action is safe, abort instead of guessing.`
 }
 
 async function block(feature, attempt, reason, defects = []) {
