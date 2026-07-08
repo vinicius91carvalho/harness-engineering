@@ -191,7 +191,8 @@ if [ -n "$SCOPE" ] && [ "$CLI" != claude ]; then die '--scope is only valid when
 plugin_clis() {
   case "$1" in
     harness) echo 'claude codex opencode pi' ;;
-    omnigent|ponytail|skill-creator) echo 'claude codex opencode' ;;
+    omnigent|ponytail) echo 'claude codex opencode' ;;
+    skill-creator) echo 'opencode' ;;
     codebase-memory-mcp|context7|playwright) echo 'claude codex opencode' ;;
     mcp-servers) echo 'claude codex opencode' ;;
     status-line) echo 'claude codex' ;;
