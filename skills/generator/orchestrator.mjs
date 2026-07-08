@@ -29,17 +29,31 @@ const wanted = (options.features || '').split(',').filter(Boolean)
 const commands = {
   claude: (prompt) => ['claude', ['-p', prompt]],
   codex: (prompt) => ['codex', ['exec', prompt]],
-  opencode: (prompt) => ['opencode', ['run', prompt]],
+  // Pinned explicitly for the same reason `pi` is below -- opencode's own
+  // default model may differ from what the account is provisioned to use
+  // at volume, and the harness shouldn't depend on whatever is currently
+  // set interactively.
+  opencode: (prompt) => ['opencode', ['run', '--model', 'opencode-go/deepseek-v4-flash', prompt]],
   // ponytail: pi has no built-in default model, so it must be pinned explicitly.
   // Every model referenced here needs an explicit maxTokens cap in
   // ~/.pi/agent/models.json (unlisted models default to requesting ~the full
   // context window as max_tokens, which is what made z-ai/glm-5.2 hit
   // OpenRouter 402s on a low-balance account). Moved off openrouter/qwen/qwen3-coder:free
-  // (shared 8 req/min across this account, and across whatever else is
-  // saturating that specific free model on OpenRouter) to NVIDIA NIM's
-  // free tier (40 req/min, a separate unshared quota pool) after repeated
-  // rate-limit-storms across 4 concurrent causeflow-ai subprojects.
-  pi: (prompt) => ['pi', ['--model', 'nvidia-nim/deepseek-ai/deepseek-v4-pro', '-p', prompt]],
+  // (shared 8 req/min across the account, further saturated by external
+  // OpenRouter demand) to OpenCode Go's deepseek-v4-flash, which has a far
+  // higher throughput ceiling (~30k requests per 5-hour window vs. 8/min) and
+  // isn't a shared public free pool. Credentials for a provider pi already
+  // knows natively (nvidia, opencode-go, openrouter, ...) belong in
+  // ~/.pi/agent/auth.json, NOT as an "apiKey"/"baseUrl" pair under a
+  // made-up provider key in models.json -- that silently fails with "Model
+  // not found" (the models.json entry needs an "api" field, which only a
+  // genuinely unrecognized custom provider needs) or "No API key found"
+  // (models.json's own "apiKey" field is only consulted for those same
+  // unrecognized custom providers, per pi's documented credential
+  // resolution order). models.json is still the right place to add/override
+  // per-model metadata (maxTokens, contextWindow) under the provider's
+  // correct native key.
+  pi: (prompt) => ['pi', ['--model', 'opencode-go/deepseek-v4-flash', '-p', prompt]],
 }
 const roleNames = {
   CODING: 'coding', QA: 'validation', INTEGRATION_QA: 'validation',
