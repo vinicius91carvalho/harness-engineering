@@ -47,9 +47,17 @@ const RATE_LIMIT_BACKOFF_MS = Number(process.env.HARNESS_RATE_LIMIT_BACKOFF_MS |
 
 // ponytail: a 429 retried instantly just burns the same rate-limit window again --
 // this is what falsely exhausted MAX_OPERATIONAL_FAILURES on Work Items that were
-// never actually attempted. Back off once before the next attempt instead.
+// never actually attempted. Back off once before the next attempt instead. Prefer
+// the provider's own retry_after_seconds hint when present -- several independent
+// subproject processes share one account-wide rate limit with no coordination
+// between them, so a fixed guess alone isn't reliably enough once a few of them
+// wake up and retry at the same moment. A little jitter spreads those wake-ups out.
 async function backoffIfRateLimited(detail) {
-  if (/\b429\b|rate.?limit/i.test(detail || '')) await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_BACKOFF_MS))
+  if (!/\b429\b|rate.?limit/i.test(detail || '')) return
+  const hintSeconds = Number(detail.match(/retry_after_seconds"?\s*[:=]\s*"?(\d+(?:\.\d+)?)/)?.[1])
+  const baseMs = hintSeconds > 0 ? Math.max(hintSeconds * 1000, RATE_LIMIT_BACKOFF_MS / 3) : RATE_LIMIT_BACKOFF_MS
+  const jitterMs = Math.floor(Math.random() * 10_000)
+  await new Promise((resolve) => setTimeout(resolve, baseMs + jitterMs))
 }
 
 function command(program, args, cwd = options.workdir, allowFailure = false) {
