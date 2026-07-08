@@ -56,6 +56,20 @@ const supervisorLog = join(root, 'supervisor.log')
 const supervisorLock = join(root, 'supervisor.lock')
 const supervisorOwner = join(supervisorLock, 'owner.json')
 
+// generator-claims.json lives under commonGit (the shared .git of the whole
+// monorepo, not this subproject alone) so every sibling subproject's claims
+// sit in the same file, namespaced by claim.sh's own `<projectId>--<context>`
+// key convention. Reading it unfiltered makes every subproject's supervisor
+// process every OTHER subproject's claims too -- ghost input_required events
+// under the wrong runId, and `blocked` counts that are a monorepo-wide total
+// mislabeled as this subproject's own. Scope to this subproject's own keys.
+async function ownClaims() {
+  const claims = await readJson(join(commonGit, 'generator-claims.json'), {})
+  if (!projectPrefix) return claims
+  const prefix = `${projectId}--`
+  return Object.fromEntries(Object.entries(claims).filter(([key]) => key.startsWith(prefix)))
+}
+
 function runStateFile(context) {
   const name = context.replace(/[^a-zA-Z0-9_-]/g, '_')
   return join(commonGit, 'harness-runs', projectPrefix ? `${projectId}--${name}.json` : `${name}.json`)
@@ -303,7 +317,7 @@ class Supervisor {
 
   async snapshot() {
     const queue = await readJson(join(repo, 'feature_list.json'), [])
-    const claims = await readJson(join(commonGit, 'generator-claims.json'), {})
+    const claims = await ownClaims()
     const counts = { total: queue.length, implemented: 0, qa: 0, integrated: 0, blocked: 0 }
     for (const item of queue) {
       if (item.implementation === true) counts.implemented++
@@ -315,7 +329,7 @@ class Supervisor {
   }
 
   async inspectClaims() {
-    const claims = await readJson(join(commonGit, 'generator-claims.json'), {})
+    const claims = await ownClaims()
     let external = 0
     const recoverable = []
     for (const [claimKey, claim] of Object.entries(claims)) {

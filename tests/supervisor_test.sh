@@ -99,6 +99,27 @@ jq -e '.status == "complete"' "$TMP/monorepo/.git/harness-control/app/state.json
 echo 'ok - nested projects recover and complete project-namespaced Run State'
 test -f "$TMP/monorepo/unrelated.txt"
 
+mkdir -p "$TMP/mono2/appA" "$TMP/mono2/appB"
+cp "$TMP/repo/project_specs.xml" "$TMP/mono2/appA/project_specs.xml"
+jq 'map(.implementation=true | .qa=true | .integration=true)' "$TMP/repo/feature_list.json" \
+  >"$TMP/mono2/appA/feature_list.json"
+git -C "$TMP/mono2" init -b main -q
+git -C "$TMP/mono2" config user.name test
+git -C "$TMP/mono2" config user.email test@example.invalid
+git -C "$TMP/mono2" add .
+git -C "$TMP/mono2" commit -qm init
+mkdir -p "$TMP/mono2/.git"
+printf '%s\n' '{"appB--ghost":{"context":"ghost","status":"blocked"}}' >"$TMP/mono2/.git/generator-claims.json"
+PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" "$NODE" "$CONTROL" run \
+  --repo "$TMP/mono2/appA" --host claude --once true --poll-ms 250 \
+  --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100
+jq -e '.progress.blocked == 0' "$TMP/mono2/.git/harness-control/appA/state.json" >/dev/null \
+  || { cat "$TMP/mono2/.git/harness-control/appA/state.json"; echo 'not ok - sibling subproject appB'"'"'s blocked claim leaked into appA'"'"'s own blocked count' >&2; exit 1; }
+if jq -s -e 'any(.[]; .context == "ghost")' "$TMP/mono2/.git/harness-control/appA/events.jsonl" >/dev/null 2>&1; then
+  echo 'not ok - appA raised a ghost input_required event for sibling appB'"'"'s context' >&2; exit 1
+fi
+echo 'ok - a subproject'"'"'s status/claims inspection never sees a sibling subproject'"'"'s claims in a shared monorepo .git'
+
 "$NODE" "$CONTROL" start --repo "$TMP/repo" --host claude | jq -e '.started == false and .status == "complete"' >/dev/null
 git clone -q "$TMP/repo" "$TMP/detached"
 git -C "$TMP/detached" config user.name test
