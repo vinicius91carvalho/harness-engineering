@@ -1,0 +1,10 @@
+{
+  "name": "skill-creator",
+  "version": "1.0.0",
+  "description": "Create new skills, modify and improve existing skills, and measure skill performance.",
+  "author": {
+    "name": "Anthropic",
+    "url": "https://github.com/anthropics/skills"
+  },
+  "skills": "./"
+}

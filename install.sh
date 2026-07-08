@@ -192,7 +192,7 @@ plugin_clis() {
   case "$1" in
     harness) echo 'claude codex opencode pi' ;;
     omnigent|ponytail) echo 'claude codex opencode' ;;
-    skill-creator) echo 'opencode' ;;
+    skill-creator) echo 'claude codex opencode pi' ;;
     codebase-memory-mcp|context7|playwright) echo 'claude codex opencode' ;;
     mcp-servers) echo 'claude codex opencode' ;;
     status-line) echo 'claude codex' ;;
@@ -510,6 +510,26 @@ install_memory() {
   done
 }
 
+install_skill_creator() {
+  for cli in $CLI; do
+    has_word "$(plugin_clis "skill-creator")" "$cli" || continue
+    case "$cli" in
+      claude)
+        if [ -n "$DRY" ]; then echo "DRY RUN — install skill-creator to ~/.claude/skills/"
+        else
+          ensure_repo
+          dest="$HOME/.claude/skills/skill-creator"
+          mkdir -p "$HOME/.claude/skills"
+          rm -rf "$dest"
+          cp -R "$TEMP_REPO/skills/skill-creator" "$dest"
+        fi ;;
+      opencode) install_opencode_plugin skill-creator ;;
+      codex) install_plugin skill-creator "$cli" ;;
+      pi) install_pi_extension ;;
+    esac
+  done
+}
+
 install_portable_mcp() {
   name=$1
   ensure_jq
@@ -548,6 +568,7 @@ done
 for item in $SELECTED; do
   case "$item" in
     omnigent) install_omnigent ;;
+    skill-creator) install_skill_creator ;;
     codebase-memory-mcp) install_memory ;;
     context7|playwright) install_portable_mcp "$item" ;;
     status-line) for cli in $CLI; do case "$cli" in claude) enable_status_line ;; codex) enable_codex_status_line ;; esac; done ;;

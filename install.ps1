@@ -404,6 +404,30 @@ function Install-Memory {
   }
 }
 
+function Install-SkillCreator {
+  foreach ($target in $Targets) {
+    if ($PluginClis["skill-creator"] -notcontains $target) { continue }
+    switch ($target) {
+      claude {
+        if ($DryRun) { Write-Host "DRY RUN - install skill-creator to ~/.claude/skills/"; continue }
+        $source = Join-Path (Get-Repository) "skills/skill-creator"
+        $dest = Join-Path $HOME ".claude/skills/skill-creator"
+        Remove-Item $dest -Recurse -Force -ErrorAction SilentlyContinue
+        New-Item -ItemType Directory -Force (Split-Path $dest -Parent) | Out-Null
+        Copy-Item $source $dest -Recurse -Force
+      }
+      opencode { Install-OpenCodePlugin "skill-creator" }
+      codex {
+        & codex plugin marketplace upgrade $CodexMarketplace *> $null
+        Invoke-Native codex @("plugin", "add", "skill-creator@$CodexMarketplace")
+      }
+      pi {
+        & pi install "https://github.com/$MarketplaceRepo.git" *> $null
+      }
+    }
+  }
+}
+
 function Install-PortableMcp([string]$Name) {
   $server = if ($Name -eq "context7") {
     [pscustomobject]@{ type="http"; url="https://mcp.context7.com/mcp" }
@@ -462,6 +486,7 @@ foreach ($target in $Targets) {
 
 foreach ($item in $Selected) {
   if ($item -eq "omnigent") { Install-Omnigent; continue }
+  if ($item -eq "skill-creator") { Install-SkillCreator; continue }
   if ($item -eq "codebase-memory-mcp") { Install-Memory; continue }
   if ($item -eq "context7" -or $item -eq "playwright") { Install-PortableMcp $item; continue }
   if ($item -eq "status-line") {
