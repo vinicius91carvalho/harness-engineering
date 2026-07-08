@@ -208,10 +208,12 @@ cat >"$TMP/circuit/feature_list.json" <<'JSON'
 JSON
 git -C "$TMP/circuit" add . && git -C "$TMP/circuit" commit -qm init
 mkdir -p "$TMP/circuit/.git/harness-control" "$TMP/circuit/.git/harness-runs"
-printf '%s\n' '{"flaky":{"context":"flaky","status":"building","worktree":"/nonexistent","branch":"gen/flaky","port":9,"featureIds":[]}}' \
+printf '%s\n' '{"flaky":{"context":"flaky","status":"building","worktree":"/nonexistent","branch":"gen/flaky","port":9,"featureIds":[]},"boom":{"context":"boom","status":"building","worktree":"'"$TMP"'/circuit","branch":"gen/boom","port":9,"featureIds":[]}}' \
   >"$TMP/circuit/.git/generator-claims.json"
 printf '%s\n' '{"status":"resuming","ownerPid":999999999,"childPid":null}' \
   >"$TMP/circuit/.git/harness-runs/flaky.json"
+printf '%s\n' '{"status":"resuming","ownerPid":999999999,"childPid":null}' \
+  >"$TMP/circuit/.git/harness-runs/boom.json"
 printf '%s\n' '{"crashCounts":{"flaky":5}}' >"$TMP/circuit/.git/harness-control/state.json"
 if ! PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" timeout 20 "$NODE" "$CONTROL" run \
   --repo "$TMP/circuit" --host claude --poll-ms 250 \
@@ -229,3 +231,7 @@ if jq -s -e 'any(.[]; .context == "flaky")' "$CIRCUIT_EVENTS" >/dev/null 2>&1; t
   echo 'not ok - a context already at the crash bound was still dispatched/raised an event instead of being skipped' >&2; exit 1
 fi
 echo 'ok - a context already at the crash-count bound is never auto-recovered again, while its sibling context keeps completing normally'
+
+jq -s -e 'any(.[]; .kind == "input_required" and .context == "boom" and (.reason | contains("--features is required")))' "$CIRCUIT_EVENTS" >/dev/null \
+  || { echo 'not ok - a worker crash reason did not surface the actual error from its log (still just "Worker exited with code N")' >&2; cat "$CIRCUIT_EVENTS" >&2; exit 1; }
+echo 'ok - a worker crash surfaces its real log-level error in the Input Request reason, not just an exit code'

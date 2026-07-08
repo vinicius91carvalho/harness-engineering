@@ -452,7 +452,11 @@ class Supervisor {
       const goal = key === 'goal-review'
       this.state.crashCounts = this.state.crashCounts || {}
       this.state.crashCounts[key] = (this.state.crashCounts[key] || 0) + 1
-      await this.input(goal ? 'goal' : 'context', `Worker exited with code ${code}`, { log: worker.logFile }, goal ? null : key)
+      // ponytail: the real cause (e.g. "reconcile: ENOENT: ...") is already the log's last
+      // line -- surfacing it here saves a manual log read every time a worker crashes.
+      const lastLine = tail.trim().split('\n').filter(Boolean).pop()?.slice(0, 200)
+      const reason = lastLine ? `Worker exited with code ${code}: ${lastLine}` : `Worker exited with code ${code}`
+      await this.input(goal ? 'goal' : 'context', reason, { log: worker.logFile }, goal ? null : key)
     }
     this.workers.delete(key)
     await this.save()
