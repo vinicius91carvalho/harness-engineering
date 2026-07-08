@@ -269,6 +269,19 @@ merge_do() {
   local repo="$1" ctx="$2" integ="$3"
   local key branch output status unmerged; key="$(claim_key "$repo" "$ctx")"; branch="$(jq -r --arg c "$key" '.[$c].branch // empty' <<<"$(read_claims "$repo")")"
   [ -z "$branch" ] && branch="gen/$(project_id "$repo")-$(sani "$ctx")"
+  # A prior INTEGRATION_QA pass starts the app in this shared integration checkout;
+  # if the app writes a runtime log that a pre-fix .gitignore left tracked, that
+  # dirty tracked file makes `git merge` abort with "local changes would be
+  # overwritten by merge" and the Work Item is wrongly reported as unable to
+  # integrate. We run under the orchestrator's exclusive merge lock and this
+  # checkout never holds legitimate uncommitted work (workers commit in their own
+  # worktrees), so restoring dirty runtime-log files to HEAD is safe and unblocks
+  # the merge. Scoped to log paths only -- never source.
+  # Log filenames never contain newlines in practice (dev.log, mintdev-<port>.log),
+  # so a newline-delimited read is safe and portable (no GNU-only xargs -d/-0).
+  git -C "$integ" diff --name-only -- '*.log' 'logs/' 2>/dev/null | while IFS= read -r logpath; do
+    [ -n "$logpath" ] && git -C "$integ" checkout -- "$logpath" 2>/dev/null || true
+  done
   set +e
   output="$(git -C "$integ" merge --no-edit "$branch" 2>&1)"; status=$?
   set -e

@@ -107,6 +107,35 @@ test ! -s "$TMP/merge.out"
 grep -q 'would be overwritten by merge' "$TMP/merge.err"
 echo 'ok - operational merge failures are not misclassified as conflicts'
 
+# A tracked runtime log left dirty in the shared integration checkout (a pre-fix
+# .gitignore let the app's log get committed; a prior INTEGRATION_QA app run then
+# rewrote it) must not abort the integration merge. merge-do restores dirty
+# runtime-log files to HEAD before merging -- scoped to logs, so the dirty
+# *source* file in the collision case above still aborts, not silently discarded.
+LOGREPO="$TMP/logrepo"
+mkdir -p "$LOGREPO/logs"
+git -C "$LOGREPO" init -b main -q
+git -C "$LOGREPO" config user.name test
+git -C "$LOGREPO" config user.email test@example.invalid
+printf 'base\n' >"$LOGREPO/logs/app.log"
+printf 'keep\n' >"$LOGREPO/app.js"
+git -C "$LOGREPO" add . && git -C "$LOGREPO" commit -qm init
+git -C "$LOGREPO" checkout -q -b gen/root-core
+printf 'branchval\n' >"$LOGREPO/logs/app.log"
+printf 'feature\n' >"$LOGREPO/app.js"
+git -C "$LOGREPO" commit -aqm 'branch work'
+git -C "$LOGREPO" checkout -q main
+printf 'runtime-noise\n' >"$LOGREPO/logs/app.log"   # dirty tracked runtime log
+set +e
+bash "$ROOT/skills/generator/claim.sh" merge-do "$LOGREPO" core "$LOGREPO" >"$TMP/logmerge.out" 2>"$TMP/logmerge.err"
+logstatus=$?
+set -e
+test "$logstatus" -eq 0
+grep -q clean "$TMP/logmerge.out"
+test "$(cat "$LOGREPO/logs/app.log")" = branchval
+test "$(cat "$LOGREPO/app.js")" = feature
+echo 'ok - a dirty tracked runtime log is restored before the integration merge instead of aborting it'
+
 mkdir -p "$TMP/strikes"
 git -C "$TMP/strikes" init -b main -q
 git -C "$TMP/strikes" config user.name test

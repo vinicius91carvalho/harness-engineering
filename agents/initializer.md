@@ -104,7 +104,11 @@ Base it on the spec's tech stack. It MUST:
 
 - Create missing project structure only for an empty/new project. Never replace
   or reorganize an existing codebase during initialization.
-- Add `dev.log` and `.harness/` to `.gitignore` — and only these. Never add
+- Add runtime output to `.gitignore`: `.harness/`, `dev.log`, and any log the
+  app itself writes — `*.log` plus any log directory the stack emits into (e.g.
+  `logs/`). These are transient; if a runtime log gets committed, the app
+  rewrites it on the next run and that dirty tracked file aborts a later
+  integration merge ("local changes would be overwritten by merge"). Never add
   `harness-progress/` (or any other journal directory Work Items/QA passes
   write to): it is the tracked Workflow Journal, not runtime state, and
   gitignoring it makes every future `git add` on it fail, crashing the
