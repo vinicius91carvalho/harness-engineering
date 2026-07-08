@@ -55,16 +55,30 @@ write_strikes() {
 }
 
 acquire_state_lock() {
-  local repo="$1" ld tries=0 token; ld="$(stateld "$repo")"
+  local repo="$1" ld tries=0 token pid current_host owner_host owner_pid; ld="$(stateld "$repo")"
   mkdir -p "$(dirname "$ld")"
-  token="${BASHPID:-$$}.$RANDOM.$(date +%s)"
+  pid="${BASHPID:-$$}"
+  token="$pid.$RANDOM.$(date +%s)"
+  current_host="$(hostname 2>/dev/null || echo unknown)"
   while :; do
     if mkdir "$ld" 2>/dev/null; then
       printf '%s\n' "$token" > "$ld/owner"
+      hostname > "$ld/host" 2>/dev/null || echo unknown > "$ld/host"
       sleep 0.02
       if [ "$(cat "$ld/owner" 2>/dev/null || true)" = "$token" ]; then
         STATE_LOCK_TOKEN=$token
         return 0
+      fi
+    else
+      # A crashed/killed holder (e.g. a supervisor force-killed mid-claim)
+      # otherwise wedges every future claim on this repo forever -- this lock
+      # has no other liveness check, unlike merge_acquire's, which already
+      # steals from a dead same-host owner.
+      owner_host="$(cat "$ld/host" 2>/dev/null || true)"
+      owner_pid="$(cat "$ld/owner" 2>/dev/null | cut -d. -f1 || true)"
+      if [ "$owner_host" = "$current_host" ] && [ -n "$owner_pid" ] && ! kill -0 "$owner_pid" 2>/dev/null; then
+        rm -f "$ld/owner" "$ld/host"; rmdir "$ld" 2>/dev/null || true
+        continue
       fi
     fi
     tries=$((tries + 1)); [ "$tries" -lt 300 ] || die "timed out waiting for state lock: $ld"
@@ -74,7 +88,7 @@ acquire_state_lock() {
 release_state_lock() {
   local ld owner; ld="$(stateld "$1")"; owner="$(cat "$ld/owner" 2>/dev/null || true)"
   [ -n "${STATE_LOCK_TOKEN:-}" ] && [ "$owner" = "$STATE_LOCK_TOKEN" ] || return 0
-  rm -f "$ld/owner"; rmdir "$ld" 2>/dev/null || true
+  rm -f "$ld/owner" "$ld/host"; rmdir "$ld" 2>/dev/null || true
 }
 
 # ---- select-claim <repo> <mode> <selector> <session> -----------------------

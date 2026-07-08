@@ -134,3 +134,18 @@ test -f "$TMP/repo/.git/harness-runs/strikes--root.json"
 bash "$ROOT/skills/generator/claim.sh" release "$TMP/repo" beta >/dev/null
 test ! -f "$TMP/repo/.git/harness-runs/strikes--root.json"
 echo 'ok - the per-run strike scoreboard clears only when the last claim releases'
+
+# A state lock left by a killed holder (e.g. a force-killed supervisor mid-claim)
+# must not wedge every future claim operation forever -- same class of bug the
+# merge lock already guards against, ported to the state lock.
+STATE_LOCK_DIR="$TMP/repo/.git/harness-locks/generator-state"
+mkdir -p "$STATE_LOCK_DIR"
+( exit 0 ) & dead_pid=$!; wait "$dead_pid" 2>/dev/null || true
+printf '%s\n' "$dead_pid.1.$(date +%s)" > "$STATE_LOCK_DIR/owner"
+hostname > "$STATE_LOCK_DIR/host" 2>/dev/null || echo unknown > "$STATE_LOCK_DIR/host"
+start=$(date +%s)
+bash "$ROOT/skills/generator/claim.sh" resume "$TMP/repo" alpha 9001 >/dev/null 2>&1 || true
+elapsed=$(( $(date +%s) - start ))
+test "$elapsed" -lt 5
+test ! -d "$STATE_LOCK_DIR"
+echo 'ok - a state lock left by a killed holder is stolen immediately, not waited out for 30s'
