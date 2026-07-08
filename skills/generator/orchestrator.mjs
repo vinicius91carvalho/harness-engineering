@@ -489,6 +489,16 @@ async function acquireMergeLock() {
   fail('timed out waiting for merge lock')
 }
 
+// Best-effort: keep the worker's own worktree in sync with the main it just
+// helped advance, so its next claim in this context starts from a fresh base.
+// This is not the conflict-resolution-critical path (that's the shared
+// integrationDir merge above) -- a conflict here must not crash the whole
+// worker and abandon a Work Item that already integrated successfully.
+function syncWorkdirWithMain(workdir) {
+  const result = git(['merge', '--no-edit', 'main'], workdir, true)
+  if (result.status !== 0) git(['merge', '--abort'], workdir, true)
+}
+
 async function integrate(feature, attempt) {
   await stopApp(options.workdir)
   const journalFile = await journal(options.workdir, 'Checkpoint ready', {
@@ -551,7 +561,7 @@ async function integrate(feature, attempt) {
         Outcome: 'passed on integrated main', Evidence: verified.artifact, NextAction: 'next Ready Work Item',
       })
       commitPaths(integrationDir, [join(integrationDir, 'feature_list.json'), file], `verify(harness): integrate ${feature.id}`)
-      git(['merge', '--no-edit', 'main'], options.workdir)
+      syncWorkdirWithMain(options.workdir)
       await writeState({ phase: 'integrated', nextAction: 'next-work-item', lastResult: 'Integrated Verification passed' })
       return { passed: true }
     }
@@ -562,7 +572,7 @@ async function integrate(feature, attempt) {
       Attempt: `${attempt}/${MAX_ATTEMPTS}`, WorkItem: feature.id, Defects: defects, Evidence: verified.artifact, NextAction: 'Repair Plan',
     })
     commitPaths(integrationDir, [join(integrationDir, 'feature_list.json'), file], `qa(${feature.context}): ${feature.id} integration defect`)
-    git(['merge', '--no-edit', 'main'], options.workdir)
+    syncWorkdirWithMain(options.workdir)
     return { passed: false, defects, evidence: verified.artifact }
   } finally {
     command('bash', [claimScript, 'merge-release', options.repo, String(process.pid)], options.repo, true)
