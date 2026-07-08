@@ -8,7 +8,7 @@ CODEX_MARKETPLACE="harness-engineering"
 REPO_URL="https://github.com/$MARKETPLACE_REPO.git"
 MEMORY_INSTALLER="https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh"
 OMNIGENT_INSTALLER="https://raw.githubusercontent.com/omnigent-ai/omnigent/main/scripts/install_oss.sh"
-OPTIONAL="omnigent ponytail codebase-memory-mcp context7 playwright status-line shared-config mcp-servers"
+OPTIONAL="omnigent ponytail skill-creator codebase-memory-mcp context7 playwright status-line shared-config mcp-servers"
 
 ASSUME=""
 DRY=""
@@ -191,7 +191,7 @@ if [ -n "$SCOPE" ] && [ "$CLI" != claude ]; then die '--scope is only valid when
 plugin_clis() {
   case "$1" in
     harness) echo 'claude codex opencode pi' ;;
-    omnigent|ponytail) echo 'claude codex opencode' ;;
+    omnigent|ponytail|skill-creator) echo 'claude codex opencode' ;;
     codebase-memory-mcp|context7|playwright) echo 'claude codex opencode' ;;
     mcp-servers) echo 'claude codex opencode' ;;
     status-line) echo 'claude codex' ;;
@@ -421,8 +421,8 @@ install_mcp_inventory() {
     json=$(jq -c --arg name "$name" '.mcpServers[$name]' "$inventory")
     for placeholder in $(printf '%s' "$json" | grep -o '\${[A-Za-z0-9_]*}' | sort -u || true); do
       key=$(printf '%s' "$placeholder" | tr -d '${}')
-      printf 'Value for %s (input hidden; paste supported; Enter skips %s): ' "$key" "$name" >/dev/tty
-      saved=$(stty -g </dev/tty); stty -echo </dev/tty; IFS= read -r value </dev/tty || value=; stty "$saved" </dev/tty; printf '\n' >/dev/tty
+      printf 'Value for %s (paste supported; Enter skips %s): ' "$key" "$name" >/dev/tty
+      IFS= read -r value </dev/tty || value=
       [ -n "$value" ] || { json=; break; }
       json=$(printf '%s' "$json" | jq -c --arg from "$placeholder" --arg to "$value" 'walk(if type=="string" then split($from) | join($to) else . end)')
     done

@@ -13,11 +13,12 @@ $MarketplaceRepo = "vinicius91carvalho/harness-engineering"
 $ClaudeMarketplace = "harness-engineering"
 $CodexMarketplace = "harness-engineering"
 $MemoryInstaller = "https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.ps1"
-$Optional = @("omnigent", "ponytail", "codebase-memory-mcp", "context7", "playwright", "status-line", "shared-config", "mcp-servers")
+$Optional = @("omnigent", "ponytail", "skill-creator", "codebase-memory-mcp", "context7", "playwright", "status-line", "shared-config", "mcp-servers")
 $PluginClis = @{
   harness = @("claude", "codex", "opencode")
   omnigent = @("claude", "codex", "opencode")
   ponytail = @("claude", "codex", "opencode")
+  "skill-creator" = @("claude", "codex", "opencode")
   "codebase-memory-mcp" = @("claude", "codex", "opencode")
   context7 = @("claude", "codex", "opencode"); playwright = @("claude", "codex", "opencode")
   "mcp-servers" = @("claude", "codex", "opencode")
@@ -317,7 +318,7 @@ function Read-PasteableSecret([string]$Prompt) {
     }
     if (-not [char]::IsControl($key.KeyChar)) {
       [void]$value.Append($key.KeyChar)
-      Write-Host -NoNewline "*"
+      Write-Host -NoNewline $key.KeyChar
     }
   }
 }
