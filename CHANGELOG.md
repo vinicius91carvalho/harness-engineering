@@ -11,6 +11,18 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [2.1.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.0.0...v2.1.0) (2026-07-09)
+
+
+### Features
+
+* **install:** stage latest GitHub release tag instead of main tip ([6982a93](https://github.com/vinicius91carvalho/harness-engineering/commit/6982a93ed99da31c390308ba070168ff53584fc8))
+
+
+### Bug Fixes
+
+* **docs:** clarify quickstart, plan branch, and file examples ([ffe7da3](https://github.com/vinicius91carvalho/harness-engineering/commit/ffe7da38375187ed53c78f267308ed1fad2a86da))
+
 ## [2.0.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v1.2.0...v2.0.0) (2026-07-09)
 
 
