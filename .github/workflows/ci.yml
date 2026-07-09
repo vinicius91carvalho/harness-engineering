@@ -22,7 +22,7 @@ jobs:
       - name: Shell syntax
         run: |
           sh -n install.sh
-          bash -n scripts/statusline.sh scripts/sync-config.sh omnigent/harness-engineering/scripts/bootstrap-setup.sh omnigent/harness-engineering/scripts/plan-feature.sh
+          bash -n scripts/statusline.sh scripts/sync-config.sh omnigent/harness-engineering/scripts/bootstrap-setup.sh omnigent/harness-engineering/scripts/plan-feature.sh omnigent/harness-engineering/scripts/portable-timeout.sh
 
       - name: Selftests
         run: |

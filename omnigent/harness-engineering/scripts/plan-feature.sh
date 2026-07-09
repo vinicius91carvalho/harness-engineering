@@ -11,6 +11,9 @@
 # text to retype per subproject or per tick.
 set -euo pipefail
 
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+TIMEOUT="$SCRIPT_DIR/portable-timeout.sh"
+
 PLAN_TIMEOUT_SECONDS="${PLAN_TIMEOUT_SECONDS:-1800}"
 
 cmd=${1:?"usage: plan-feature.sh check|answer <repo> [goal-file]"}
@@ -125,10 +128,10 @@ unavoidable, print the question as your final output and stop."
     echo "$host" > "$HOSTFILE"
     cd "$REPO" # host CLI must scan $REPO, not the relay/omni server's own cwd (a monorepo root)
     case "$host" in
-      codex)    nohup timeout "$PLAN_TIMEOUT_SECONDS" codex exec --dangerously-bypass-approvals-and-sandbox "$PROMPT" >"$LOGFILE" 2>&1 & ;;
-      claude)   nohup timeout "$PLAN_TIMEOUT_SECONDS" claude -p "$PROMPT" >"$LOGFILE" 2>&1 & ;;
-      opencode) nohup timeout "$PLAN_TIMEOUT_SECONDS" opencode run "$PROMPT" >"$LOGFILE" 2>&1 & ;;
-      agent)    nohup timeout "$PLAN_TIMEOUT_SECONDS" agent -p --force --trust "$PROMPT" >"$LOGFILE" 2>&1 & ;;
+      codex)    nohup "$TIMEOUT" "$PLAN_TIMEOUT_SECONDS" codex exec --dangerously-bypass-approvals-and-sandbox "$PROMPT" >"$LOGFILE" 2>&1 & ;;
+      claude)   nohup "$TIMEOUT" "$PLAN_TIMEOUT_SECONDS" claude -p "$PROMPT" >"$LOGFILE" 2>&1 & ;;
+      opencode) nohup "$TIMEOUT" "$PLAN_TIMEOUT_SECONDS" opencode run "$PROMPT" >"$LOGFILE" 2>&1 & ;;
+      agent)    nohup "$TIMEOUT" "$PLAN_TIMEOUT_SECONDS" agent -p --force --trust "$PROMPT" >"$LOGFILE" 2>&1 & ;;
     esac
     echo $! > "$PIDFILE"
     echo "RUNNING $host"
