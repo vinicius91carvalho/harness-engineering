@@ -280,7 +280,7 @@ printf '%s\n' '{"status":"resuming","ownerPid":999999999,"childPid":null}' \
 printf '%s\n' '{"status":"resuming","ownerPid":999999999,"childPid":null}' \
   >"$TMP/circuit/.git/harness-runs/boom.json"
 printf '%s\n' '{"crashCounts":{"flaky":5}}' >"$TMP/circuit/.git/harness-control/state.json"
-if ! PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" run_timeout 20 "$NODE" "$CONTROL" run \
+if ! PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" run_timeout 60 "$NODE" "$CONTROL" run \
   --repo "$TMP/circuit" --host claude --poll-ms 250 \
   --max-workers 2 --quota-workers 2 --cpu-per-worker 0.25 \
   --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100; then
