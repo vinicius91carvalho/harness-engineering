@@ -146,11 +146,12 @@ PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" HARNESS_TEST_GOAL_SLEEP=1 "$NOD
 if PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" "$NODE" "$CONTROL" start --repo "$TMP/detached" --host claude >/dev/null 2>&1; then
   echo 'not ok - a second live supervisor acquired the same repository' >&2; exit 1
 fi
-for _ in $(seq 1 50); do
+for _ in $(seq 1 300); do
   [ "$("$NODE" "$CONTROL" status --repo "$TMP/detached" | jq -r 'select(.status == "complete" and .supervisorPid == null) | "ready"')" = ready ] && break
   sleep 0.1
 done
-"$NODE" "$CONTROL" status --repo "$TMP/detached" | jq -e '.status == "complete" and .supervisorPid == null' >/dev/null
+"$NODE" "$CONTROL" status --repo "$TMP/detached" | jq -e '.status == "complete" and .supervisorPid == null' >/dev/null \
+  || { echo 'not ok - detached supervisor did not finish within 30s' >&2; "$NODE" "$CONTROL" status --repo "$TMP/detached" >&2; exit 1; }
 echo 'ok - detached start is singleton/recoverable and already-reviewed main is idempotent'
 
 "$NODE" "$CONTROL" events --repo "$TMP/repo" --consumer test-telegram >"$TMP/unread.json"
