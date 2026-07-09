@@ -28,6 +28,10 @@ cat >"$TMP/bin/claude" <<'SH'
 #!/bin/sh
 set -eu
 prompt=""; for arg in "$@"; do prompt=$arg; done
+if [ "${HARNESS_TEST_USAGE_LIMIT:-}" = 1 ]; then
+  echo "ERROR: You've hit your usage limit. Try again at Jul 9th, 2026 12:17 AM." >&2
+  exit 1
+fi
 case "$prompt" in
   *"Integrated Verification"*)
     printf '%s\n' '{"id":"WI-AC-001","implementation":true,"integration":true,"defects":[]}'
@@ -150,8 +154,24 @@ echo 'ok - durable consumer acknowledgements survive chat context loss'
 echo 'ok - provider quota is a hard worker-admission limit'
 
 "$NODE" "$CONTROL" capacity --repo "$TMP/repo" --host claude \
-  | jq -e '.memory.perWorkerMb == 1024' >/dev/null
-echo 'ok - default per-worker memory budget is 1GB, calibrated to real ~250MB worker RSS not the old 2GB'
+  | jq -e '.memory.perWorkerMb == 1024 and .memory.reserveMb == 1024' >/dev/null
+echo 'ok - default memory gate is 1GB/worker plus 1GB reserve, calibrated to real ~250MB worker RSS not the old 2GB gate'
+
+git clone -q "$TMP/repo" "$TMP/quota-limit"
+git -C "$TMP/quota-limit" config user.name test
+git -C "$TMP/quota-limit" config user.email test@example.invalid
+jq 'map(.implementation=false | .qa=false | .integration=false)' \
+  "$TMP/quota-limit/feature_list.json" >"$TMP/quota-limit/feature_list.json.tmp"
+mv "$TMP/quota-limit/feature_list.json.tmp" "$TMP/quota-limit/feature_list.json"
+git -C "$TMP/quota-limit" add feature_list.json && git -C "$TMP/quota-limit" commit -qm reset
+PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" HARNESS_TEST_USAGE_LIMIT=1 HARNESS_RATE_LIMIT_BACKOFF_MS=100 HARNESS_RATE_LIMIT_JITTER_MS=0 timeout 8 "$NODE" "$CONTROL" run \
+  --repo "$TMP/quota-limit" --host claude --poll-ms 250 --quota-cooldown-seconds 60 \
+  --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100 >/dev/null 2>&1 || true
+jq -s -e 'any(.[]; .kind == "quota_wait") and all(.[]; .kind != "input_required")' \
+  "$TMP/quota-limit/.git/harness-control/events.jsonl" >/dev/null
+jq -e '.retryQueue.core.guidance | contains("Provider quota")' \
+  "$TMP/quota-limit/.git/harness-control/state.json" >/dev/null
+echo 'ok - provider usage limits pause quota and auto-retry instead of raising a false Work Item Input Request'
 
 git -C "$TMP/invalid" init -b main -q
 git -C "$TMP/invalid" config user.name test

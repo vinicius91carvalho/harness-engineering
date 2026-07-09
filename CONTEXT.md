@@ -1,6 +1,51 @@
 # Harness Workflow
 
-The harness workflow turns a project goal into independently checked work while preserving enough durable state for another session to continue safely.
+The harness turns a **Project Goal** into independently checked work while keeping enough durable state for another session to continue safely.
+
+## Bounded contexts
+
+Four contexts matter.
+Only the **workflow pipeline** is required to deliver software; the others are optional packaging or control surfaces.
+
+| Context | What lives here | You interact through |
+| --- | --- | --- |
+| **Plugin marketplace** | `install.sh`, manifests, host configuration | Installer checklist |
+| **Workflow pipeline** | `project_specs.xml`, `feature_list.json`, `orchestrator.mjs`, `claim.sh`, Goal Review policy | Skills below + files in your repo |
+| **Supervisor control** | `harness-control.mjs`, Resource Governor, Control Events, Input Requests | `/harness:supervisor` or Omnigent relay |
+| **Optional routing** | Omnigent bundle, `.harness/roles.json`, MCP servers | Installer + `roles.json` |
+
+**Skills** (under `skills/`) are what **you** type in chat — planner, setup, generator, supervisor, evaluator.
+They prepare specs, start runs, or relay progress.
+They do not replace the orchestrator.
+
+**Agents** (under `agents/`) are what the **orchestrator** spawns per phase — coding-agent, qa-agent, initializer.
+You do not invoke them directly; the state machine selects them from `roles.json` or the active host.
+
+```mermaid
+flowchart LR
+  subgraph User["User conversation — Skills"]
+    P[planner]
+    S[setup]
+    G[generator]
+    SV[supervisor]
+  end
+  subgraph Engine["Execution engine — deterministic"]
+    HC[harness-control]
+    OR[orchestrator]
+  end
+  subgraph Workers["LLM workers — Agents"]
+    C[coding-agent]
+    Q[qa-agent]
+    I[initializer]
+  end
+  P -->|writes spec| SPEC[(project_specs.xml)]
+  S -->|maps repo| SPEC
+  G --> OR
+  SV --> HC --> OR
+  OR --> C
+  OR --> Q
+  G -.->|scaffold once| I
+```
 
 ## Language
 
@@ -76,13 +121,21 @@ _Avoid_: Foundation phase, execution order
 A queued Work Item whose mapped Acceptance Check dependencies have all passed Integrated Verification.
 _Avoid_: Pending task, next feature
 
+**Skill**:
+A user-invoked harness command (`/harness:planner`, `/harness:generator`, …) defined under `skills/<name>/SKILL.md`.
+_Avoid_: Agent, plugin command, slash command for workers
+
+**Agent**:
+An orchestrator-spawned executor with a fixed JSON contract (`agents/coding-agent.md`, `agents/qa-agent.md`, `agents/initializer.md`).
+_Avoid_: Skill, subagent, chat session
+
 **Initializer**:
 The scaffold-only agent that maps stable Acceptance Checks into `feature_list.json`, creates a PORT-parameterized `init.sh` and project structure, and makes the first commit on `main`. Idempotent; never implements Work Items.
-_Avoid_: Code Agent, generator
+_Avoid_: Code Agent, generator skill
 
 **Supervisor**:
-The single long-lived agent per project, chosen at launch via `omni run <bundle> --harness <X>`, that submits Project Goals, presents harness status, and relays user decisions without owning execution policy. Its engine is `harness-control.mjs`.
-_Avoid_: worker, scheduler
+The single long-lived control loop per project (`harness-control.mjs`) that admits workers, relays Control Events, and escalates Input Requests without owning execution policy.
+_Avoid_: worker, scheduler, generator skill
 
 **Orchestrator**:
 The deterministic per-Work-Item state machine (`orchestrator.mjs`, no LLM) that sequences Code → QA → integrate → Goal Review and owns `roles.json` routing and Demotion.
@@ -117,11 +170,11 @@ The human who sets up the harness, requests features or refactors, answers escal
 _Avoid_: operator, client
 
 **Code Agent**:
-The coding executor selected by `roles.json` `coding` routing and run via `omni run agents/<harness>`, responsible for implementing one Work Item.
-_Avoid_: QA Agent, worker
+The coding executor (`agents/coding-agent.md`) selected by `roles.json` `coding` routing, responsible for implementing one Work Item.
+_Avoid_: QA Agent, generator skill
 
 **QA Agent**:
-The validation executor selected by `roles.json` `validation` routing and run independently of the Code Agent, so the reviewer is never the coder.
+The validation executor (`agents/qa-agent.md`) selected by `roles.json` `validation` routing and run independently of the Code Agent, so the reviewer is never the coder.
 _Avoid_: Code Agent, self-review
 
 **Strike Count**:

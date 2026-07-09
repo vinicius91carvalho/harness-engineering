@@ -43,17 +43,13 @@ jq empty opencode.json
 grep -qF 'skills/*/SKILL.md' install.sh
 echo 'ok - Claude, Codex, Cursor Agent, and OpenCode manifests all key off the same skills/ directory convention'
 
-# ---- (ii) parseObject drift: the two independent copies must stay byte-identical ----------------
-extract_parse_object() {
-  awk '/^function parseObject\(text\) \{$/{flag=1} flag{print} flag && /^\}$/{exit}' "$1"
-}
+# ---- (ii) verdict parsing: both runtime scripts must import the shared lib ----
 GEN=skills/generator/orchestrator.mjs
 SUP=skills/supervisor/scripts/harness-control.mjs
-gen_fn=$(extract_parse_object "$GEN")
-sup_fn=$(extract_parse_object "$SUP")
-test -n "$gen_fn" || { echo "not ok - could not find parseObject in $GEN" >&2; exit 1; }
-test -n "$sup_fn" || { echo "not ok - could not find parseObject in $SUP" >&2; exit 1; }
-diff <(printf '%s' "$gen_fn") <(printf '%s' "$sup_fn") || { echo "not ok - parseObject drifted between $GEN and $SUP" >&2; exit 1; }
-echo 'ok - parseObject is byte-identical between the generator orchestrator and supervisor control script'
+LIB=skills/generator/lib/verdict.mjs
+grep -q "from './lib/verdict.mjs'" "$GEN" || { echo "not ok - $GEN must import ./lib/verdict.mjs" >&2; exit 1; }
+grep -q "importLib('verdict.mjs')" "$SUP" || grep -q "lib/verdict.mjs" "$SUP" || { echo "not ok - $SUP must load skills/generator/lib/verdict.mjs" >&2; exit 1; }
+grep -q 'export function parseObject' "$LIB" || { echo "not ok - $LIB must export parseObject" >&2; exit 1; }
+echo 'ok - verdict parsing is centralized in skills/generator/lib/verdict.mjs'
 
 echo 'ok - manifest and parseObject parity guards passed'

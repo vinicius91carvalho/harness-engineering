@@ -223,7 +223,7 @@ while [ "$#" -gt 0 ]; do
 done
 harness=$(basename "$target")
 case "$model" in
-  rate-limit) echo 'HTTP 429 rate limit' >&2; exit 1 ;;
+  rate-limit) echo "ERROR: You've hit your usage limit. Try again at Jul 9th, 2026 12:17 AM." >&2; exit 1 ;;
   auth-fail) echo 'authentication credential rejected' >&2; exit 1 ;;
   missing-model) echo 'model is unavailable' >&2; exit 1 ;;
   missing-cli) echo 'claude: command not found' >&2; exit 127 ;;

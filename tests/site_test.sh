@@ -10,7 +10,7 @@ test -s "$HTML"
 test -s "$ROOT/site/styles.css"
 test -s "$ROOT/.github/workflows/pages.yml"
 
-for id in why architecture workflow prerequisites install commands start worked-example add-feature files monorepo operate troubleshoot advanced omnigent routing run-omnigent mobile maintenance help; do
+for id in why architecture language workflow prerequisites install commands start worked-example add-feature files monorepo operate troubleshoot advanced omnigent routing run-omnigent mobile maintenance help; do
   grep -q "id=\"$id\"" "$HTML"
 done
 while IFS= read -r id; do

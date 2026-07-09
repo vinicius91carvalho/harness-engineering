@@ -2,9 +2,9 @@
 import { appendFile, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { createWriteStream, existsSync } from 'node:fs'
 import { spawn, spawnSync } from 'node:child_process'
-import { availableParallelism, freemem, hostname, loadavg, totalmem } from 'node:os'
+import { hostname } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
 
 const commandName = process.argv[2]
@@ -23,6 +23,19 @@ const namespacedGenerator = resolve(dirname(scriptFile), '..', '..', 'harness-ge
 const defaultGenerator = existsSync(bundledGenerator) ? bundledGenerator : namespacedGenerator
 const repo = resolve(options.repo || '.')
 const generatorDir = resolve(options['generator-dir'] || defaultGenerator)
+const libDir = join(generatorDir, 'lib')
+async function importLib(name) {
+  return import(pathToFileURL(join(libDir, name)).href)
+}
+const { readJson, atomicJson } = await importLib('fs-json.mjs')
+const { parseObject, isProviderQuotaLimited } = await importLib('verdict.mjs')
+const { computeCapacity } = await importLib('capacity.mjs')
+const { scopeClaims, runStateFile: runStatePath } = await importLib('project-keys.mjs')
+const { readWorkerResult } = await importLib('worker-result.mjs')
+const { cleanupBrowserOrphans } = await importLib('browser-cleanup.mjs')
+const { isWorkerStuck, isHarnessInfrastructureError, stuckThresholdMs } = await importLib('stuck-worker.mjs')
+const { interpretWorkerOutcome } = await importLib('worker-outcome.mjs')
+const { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } = await importLib('supervisor-tick.mjs')
 const claimScript = join(generatorDir, 'claim.sh')
 const orchestrator = join(generatorDir, 'orchestrator.mjs')
 const reconciler = join(generatorDir, 'reconcile.mjs')
@@ -64,26 +77,11 @@ const supervisorOwner = join(supervisorLock, 'owner.json')
 // under the wrong runId, and `blocked` counts that are a monorepo-wide total
 // mislabeled as this subproject's own. Scope to this subproject's own keys.
 async function ownClaims() {
-  const claims = await readJson(join(commonGit, 'generator-claims.json'), {})
-  if (!projectPrefix) return claims
-  const prefix = `${projectId}--`
-  return Object.fromEntries(Object.entries(claims).filter(([key]) => key.startsWith(prefix)))
+  return scopeClaims(await readJson(join(commonGit, 'generator-claims.json'), {}), projectPrefix)
 }
 
 function runStateFile(context) {
-  const name = context.replace(/[^a-zA-Z0-9_-]/g, '_')
-  return join(commonGit, 'harness-runs', projectPrefix ? `${projectId}--${name}.json` : `${name}.json`)
-}
-
-async function readJson(file, fallback = null) {
-  try { return JSON.parse(await readFile(file, 'utf8')) } catch { return fallback }
-}
-
-async function atomicJson(file, value) {
-  await mkdir(dirname(file), { recursive: true })
-  const temporary = `${file}.tmp.${process.pid}.${randomUUID()}`
-  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`)
-  await rename(temporary, file)
+  return runStatePath(commonGit, projectPrefix, context)
 }
 
 async function readEvents() {
@@ -164,63 +162,24 @@ function baseConfig() {
     cpuPerWorker: Math.max(0.25, number('cpu-per-worker', 2)),
     // ponytail: workers are thin clients of a *remote* model (observed ~250MB
     // RSS steady; occasional local-build spikes ride on the machine's swap), so
-    // 1GB/worker still leaves ~4x headroom while doubling memory slots vs the old
-    // 2GB default -- the single biggest throughput limiter on a typical dev box,
-    // where 2GB reserve + 2GB/worker against a few GB free yielded just one slot.
+    // 1GB/worker with a 1GB reserve still leaves ~4x headroom while avoiding the
+    // old 2GB reserve + 2GB/worker gate that idled typical dev boxes at 0 slots.
     // freeMb is re-read every tick and maxWorkers caps a single subproject, so
-    // this self-limits and can't runaway-OOM. Raise --memory-per-worker-mb for a
-    // genuinely heavyweight local-build host that needs more headroom per worker.
+    // this self-limits and can't runaway-OOM. Raise --memory-per-worker-mb or
+    // --reserve-memory-mb for a genuinely heavyweight local-build host.
     memoryPerWorkerMb: Math.max(128, number('memory-per-worker-mb', 1024)),
-    reserveMemoryMb: Math.max(0, number('reserve-memory-mb', 2048)),
+    reserveMemoryMb: Math.max(0, number('reserve-memory-mb', 1024)),
     maxLoadRatio: Math.max(0.1, number('max-load-ratio', 0.85)),
     quotaCooldownSeconds: Math.max(1, number('quota-cooldown-seconds', 300)),
-    summaryMinutes: Math.max(1, number('summary-minutes', 15)),
+    summaryMinutes: Math.max(1, number('summary-minutes', 20)),
+    stuckTimeoutMs: Math.max(60_000, number('stuck-timeout-ms', stuckThresholdMs())),
     pollMs: Math.max(250, number('poll-ms', 2000)),
     supervisorLeaseSeconds: Math.max(10, number('supervisor-lease-seconds', 30)),
   }
 }
 
 async function capacity(config, active = 0) {
-  active = Math.max(0, Math.floor(active))
-  const cores = availableParallelism()
-  const cpuSlots = Math.max(0, Math.floor(cores / config.cpuPerWorker))
-  const freeMb = Math.floor(freemem() / 1024 / 1024)
-  const memorySlots = Math.max(0, Math.floor((freeMb - config.reserveMemoryMb) / config.memoryPerWorkerMb))
-  const loadRatio = loadavg()[0] / Math.max(1, cores)
-  const quota = await readJson(quotaFile, {})
-  const now = Math.floor(Date.now() / 1000)
-  const quotaPaused = Number(quota.pauseUntil || 0) > now
-  const quotaSlots = quotaPaused ? 0 : Math.max(0, Math.floor(Number(quota.maxWorkers ?? config.quotaWorkers)))
-  const limit = loadRatio >= config.maxLoadRatio ? 0 : Math.max(0, Math.min(config.maxWorkers, cpuSlots, memorySlots, quotaSlots))
-  return {
-    limit,
-    available: Math.max(0, limit - active),
-    active,
-    cpu: { cores, loadRatio: Number(loadRatio.toFixed(2)), maxLoadRatio: config.maxLoadRatio, slots: cpuSlots },
-    memory: { freeMb, totalMb: Math.floor(totalmem() / 1024 / 1024), reserveMb: config.reserveMemoryMb, perWorkerMb: config.memoryPerWorkerMb, slots: memorySlots },
-    quota: { slots: quotaSlots, configuredSlots: config.quotaWorkers, pauseUntil: quota.pauseUntil || null },
-    configuredMax: config.maxWorkers,
-  }
-}
-
-function parseObject(text) {
-  const trimmed = text.trim()
-  const BEGIN = '===HARNESS-VERDICT-BEGIN===', END = '===HARNESS-VERDICT-END==='
-  const open = trimmed.lastIndexOf(BEGIN)
-  if (open >= 0) {
-    const rest = trimmed.slice(open + BEGIN.length)
-    const close = rest.indexOf(END)
-    const body = (close >= 0 ? rest.slice(0, close) : rest).trim()
-    try { const v = JSON.parse(body); if (v && typeof v === 'object') return v } catch {}
-  }
-  // ponytail: fallback positional scan keeps un-delimited (older) agents working
-  const candidates = [trimmed, ...trimmed.split('\n').reverse()]
-  const start = trimmed.indexOf('{'), end = trimmed.lastIndexOf('}')
-  if (start >= 0 && end > start) candidates.push(trimmed.slice(start, end + 1))
-  for (const candidate of candidates) {
-    try { const parsed = JSON.parse(candidate); if (parsed && typeof parsed === 'object') return parsed } catch {}
-  }
-  return null
+  return computeCapacity(config, quotaFile, active)
 }
 
 async function mainCheckout() {
@@ -433,36 +392,56 @@ class Supervisor {
     await this.save({ status: 'complete', completedAt: new Date().toISOString() })
   }
 
+  async inspectStuckWorkers() {
+    for (const [key, worker] of [...this.workers]) {
+      const runState = await readJson(runStateFile(key), {})
+      if (!(await isWorkerStuck({ logFile: worker.logFile, runState, thresholdMs: this.config.stuckTimeoutMs }))) continue
+      await this.emit('worker_stuck', { context: key, logFile: worker.logFile, phase: runState.phase }, true)
+      try { worker.child.kill('SIGTERM') } catch {}
+      setTimeout(() => { try { worker.child.kill('SIGKILL') } catch {} }, 5000)
+      this.state.retryQueue ||= {}
+      this.state.retryQueue[key] = {
+        guidance: 'Supervisor detected a stuck worker with no recent log or heartbeat activity; resume after confirming the worktree is healthy',
+        attempts: this.state.retryQueue[key]?.attempts || 0,
+      }
+      await this.save()
+    }
+  }
+
   async workerClosed(key, code, capturedTail) {
     const worker = this.workers.get(key)
     if (!worker) return
     await new Promise((done) => { worker.log.once('finish', done); worker.log.end() })
     let tail = capturedTail
     try { tail = (await readFile(worker.logFile, 'utf8')).slice(-64_000) || tail } catch {}
-    let result = parseObject(tail)
-    if (!result) {
-      const runState = await readJson(runStateFile(key), {})
-      if (key === 'goal-review' && runState.status === 'complete' && runState.phase === 'complete') {
-        result = { goal: true, summary: runState.lastResult, durable: true }
-      } else if (key === 'goal-review' && runState.status === 'complete' && runState.phase === 'defects-found') {
-        const queue = await readJson(join(repo, 'feature_list.json'), [])
-        result = { goal: false, reopened: queue.filter((item) => item.integration !== true).map((item) => item.id), summary: runState.lastResult, durable: true }
-      } else if (runState.status === 'blocked') {
-        result = { blocked: true, summary: runState.lastResult, durable: true }
-      } else if (key !== 'goal-review' && runState.status === 'complete') {
-        const queue = await readJson(join(repo, 'feature_list.json'), [])
-        const selected = queue.filter((item) => worker.featureIds.includes(item.id))
-        if (selected.length === worker.featureIds.length && selected.every((item) => item.integration === true)) {
-          result = { total: selected.length, passed: selected.length, stuck: [], durable: true }
-        }
-      }
-    }
-    const rateLimited = /(?:\b429\b|rate.?limit|quota exceeded|too many requests)/i.test(tail)
+    const persisted = await readWorkerResult(runStateFile(key))
+    const runState = await readJson(runStateFile(key), {})
+    const queue = await readJson(join(repo, 'feature_list.json'), [])
+    const result = interpretWorkerOutcome({
+      key,
+      exitCode: code,
+      tail,
+      persisted,
+      runState,
+      featureIds: worker.featureIds,
+      queue,
+    })
+    const rateLimited = isProviderQuotaLimited(tail)
     if (rateLimited) {
       const pauseUntil = Math.floor(Date.now() / 1000) + this.config.quotaCooldownSeconds
       const quota = await readJson(quotaFile, {})
       await atomicJson(quotaFile, { ...quota, pauseUntil, reason: 'worker reported provider rate limit' })
       await this.emit('quota_wait', { context: key, pauseUntil }, true)
+      this.state.retryQueue ||= {}
+      this.state.retryQueue[key] = {
+        guidance: 'Provider quota/rate limit; retry automatically after the quota window',
+        attempts: this.state.retryQueue[key]?.attempts || 0,
+      }
+      delete this.state.crashCounts?.[key]
+      await this.save()
+      this.workers.delete(key)
+      cleanupBrowserOrphans({ port: worker.port })
+      return
     }
     if (result?.goal === true) {
       // A passing Goal Review doesn't mean the run is actually finished if a lease is still
@@ -487,9 +466,23 @@ class Supervisor {
       // line -- surfacing it here saves a manual log read every time a worker crashes.
       const lastLine = tail.trim().split('\n').filter(Boolean).pop()?.slice(0, 200)
       const reason = lastLine ? `Worker exited with code ${code}: ${lastLine}` : `Worker exited with code ${code}`
+      if (isHarnessInfrastructureError(tail)) {
+        await this.emit('harness_issue', { context: key, reason, log: worker.logFile }, true)
+        if (process.env.HARNESS_AUTO_REPAIR === 'true' && !this.state.harnessRepairs?.[key]) {
+          this.state.harnessRepairs ||= {}
+          this.state.harnessRepairs[key] = true
+          this.state.retryQueue[key] = { guidance: `Fix harness infrastructure issue, then retry: ${lastLine || reason}` }
+          delete this.state.crashCounts?.[key]
+          await this.save()
+          this.workers.delete(key)
+          cleanupBrowserOrphans({ port: worker.port })
+          return
+        }
+      }
       await this.input(goal ? 'goal' : 'context', reason, { log: worker.logFile }, goal ? null : key)
     }
     this.workers.delete(key)
+    cleanupBrowserOrphans({ port: worker.port })
     await this.save()
   }
 
@@ -560,6 +553,7 @@ class Supervisor {
     }
     await this.processResponses()
     if (this.stopping || this.state.status === 'stopped' || this.state.status === 'complete') return
+    await this.inspectStuckWorkers()
     const { external, recoverable } = await this.inspectClaims()
     const active = this.workers.size + external
     const cap = await capacity(this.config, active)
@@ -568,23 +562,27 @@ class Supervisor {
     await this.save({ capacity: cap, progress: snapshot.counts })
     if (this.state.status === 'paused' || this.state.status === 'needs_input') return
     let slots = cap.available
-    for (const [context, retry] of Object.entries(this.state.retryQueue || {})) {
+    const { attempts: retryAttempts } = drainRetryQueue(this.state.retryQueue, slots)
+    for (const { context, retry } of retryAttempts) {
       if (slots < 1) break
       if (await this.resumeClaim(context, 'force', retry.guidance)) {
-        delete this.state.retryQueue[context]
-        slots--
+        const outcome = applyRetryResumeOutcome(this.state.retryQueue, context, retry, true)
+        this.state.retryQueue = outcome.updatedQueue
+        slots += outcome.remainingSlotsDelta
         await this.save()
-      } else if ((retry.attempts = (retry.attempts || 0) + 1) >= 5) {
-        // A context that can never re-acquire its Claim Lease would otherwise spin here forever,
-        // invisible to inspectClaims (which skips retryQueue entries) and to the user.
-        delete this.state.retryQueue[context]
-        await this.input('context', 'Retry could not resume the Claim Lease', { attempts: retry.attempts }, context)
+      } else {
+        const outcome = applyRetryResumeOutcome(this.state.retryQueue, context, retry, false)
+        this.state.retryQueue = outcome.updatedQueue
+        if (outcome.exhausted) {
+          await this.input('context', 'Retry could not resume the Claim Lease', { attempts: outcome.exhausted.attempts }, context)
+        }
       }
     }
-    if (this.pendingGoalResult) {
-      if (Object.keys(this.state.retryQueue || {}).length === 0) await this.completeGoal(this.pendingGoalResult)
+    if (shouldFinalizePendingGoal(this.state.retryQueue, this.pendingGoalResult)) {
+      await this.completeGoal(this.pendingGoalResult)
       return
     }
+    if (this.pendingGoalResult) return
     if (await this.maybeGoalReview(snapshot, active, slots)) return
     for (const item of recoverable) {
       if (slots < 1) break

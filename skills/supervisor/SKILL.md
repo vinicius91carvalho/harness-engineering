@@ -71,7 +71,7 @@ machine or provider contract is known:
 node "$CONTROL/scripts/harness-control.mjs" start --repo "$REPO" \
   --host "$WORKER_HOST" --max-workers 4 --quota-workers 2 \
   --cpu-per-worker 2 --memory-per-worker-mb 2048 --reserve-memory-mb 2048 \
-  --summary-minutes 15
+  --summary-minutes 20
 node "$CONTROL/scripts/harness-control.mjs" quota --repo "$REPO" --workers 1
 node "$CONTROL/scripts/harness-control.mjs" capacity --repo "$REPO" --host "$WORKER_HOST"
 ```
@@ -93,7 +93,7 @@ For each returned event:
 
 - Deliver `immediate:true` events immediately. An `input_required` message must
   include its event ID, scope/context, reason, evidence, and permitted choices.
-- Deliver `progress` as the `--summary-minutes` status update (default 15). It
+- Deliver `progress` as the `--summary-minutes` status update (default 20). It
   already contains queue, worker, blocked, and capacity counts.
 - `run_completed` is the only completion notification.
 - Other events may be folded into the next progress message.

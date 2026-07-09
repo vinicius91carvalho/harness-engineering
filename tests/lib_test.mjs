@@ -9,6 +9,9 @@ import { readyWorkItems, isWorkItemReady } from '../skills/generator/lib/ready-w
 import { claimKey, projectIdFromPrefix, resultFileFromRunState } from '../skills/generator/lib/project-keys.mjs'
 import { isHarnessInfrastructureError, stuckThresholdMs } from '../skills/generator/lib/stuck-worker.mjs'
 import { pickClaimCandidate, mergeDo, restoreDirtyRuntimeLogs } from '../skills/generator/lib/claim-lease.mjs'
+import { MARKER_PATTERN, hasMergeMarkers } from '../skills/generator/lib/integrate-checkpoint.mjs'
+import { interpretWorkerOutcome } from '../skills/generator/lib/worker-outcome.mjs'
+import { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } from '../skills/generator/lib/supervisor-tick.mjs'
 
 test('parseObject reads delimited verdict', () => {
   const body = `${VERDICT_BEGIN}\n{"goal":true}\n${VERDICT_END}`
@@ -102,4 +105,84 @@ test('mergeDo restores dirty runtime logs before merging', () => {
   assert.equal(result.status, 'clean')
   assert.equal(spawnSync('cat', [join(tmp, 'logs', 'app.log')], { encoding: 'utf8' }).stdout, 'branchval\n')
   assert.equal(spawnSync('cat', [join(tmp, 'app.js')], { encoding: 'utf8' }).stdout, 'feature\n')
+})
+
+test('MARKER_PATTERN detects unresolved merge markers', () => {
+  assert.equal(hasMergeMarkers('line\n<<<<<<< ours\n'), true)
+  assert.equal(hasMergeMarkers('line\n=======\n'), true)
+  assert.equal(hasMergeMarkers('line\n>>>>>>> theirs\n'), true)
+  assert.equal(hasMergeMarkers('clean merged content\n'), false)
+  assert.equal(MARKER_PATTERN.test('<<<<<<< HEAD\n'), true)
+})
+
+test('interpretWorkerOutcome goal-review complete', () => {
+  const result = interpretWorkerOutcome({
+    key: 'goal-review',
+    tail: '',
+    persisted: null,
+    runState: { status: 'complete', phase: 'complete', lastResult: 'all checks passed' },
+    featureIds: [],
+    queue: [],
+  })
+  assert.equal(result.goal, true)
+  assert.equal(result.durable, true)
+})
+
+test('interpretWorkerOutcome blocked context', () => {
+  const result = interpretWorkerOutcome({
+    key: 'core',
+    tail: '',
+    persisted: null,
+    runState: { status: 'blocked', lastResult: 'Attempt budget exhausted' },
+    featureIds: ['WI-1'],
+    queue: [{ id: 'WI-1', integration: false }],
+  })
+  assert.equal(result.blocked, true)
+  assert.equal(result.summary, 'Attempt budget exhausted')
+})
+
+test('interpretWorkerOutcome context complete when integrated', () => {
+  const result = interpretWorkerOutcome({
+    key: 'core',
+    tail: '',
+    persisted: null,
+    runState: { status: 'complete' },
+    featureIds: ['WI-1', 'WI-2'],
+    queue: [
+      { id: 'WI-1', integration: true },
+      { id: 'WI-2', integration: true },
+    ],
+  })
+  assert.equal(result.total, 2)
+  assert.equal(result.passed, 2)
+  assert.deepEqual(result.stuck, [])
+})
+
+test('drainRetryQueue respects slot budget on successful resume', () => {
+  const retryQueue = {
+    alpha: { guidance: 'retry alpha', attempts: 0 },
+    beta: { guidance: 'retry beta', attempts: 0 },
+  }
+  const { attempts } = drainRetryQueue(retryQueue, 2)
+  assert.equal(attempts.length, 2)
+  assert.equal(attempts[0].context, 'alpha')
+
+  let slots = 1
+  const first = applyRetryResumeOutcome(retryQueue, 'alpha', retryQueue.alpha, true)
+  slots += first.remainingSlotsDelta
+  assert.equal(slots, 0)
+  assert.equal(first.updatedQueue.alpha, undefined)
+})
+
+test('applyRetryResumeOutcome exhausts after max attempts', () => {
+  const retry = { guidance: 'retry', attempts: 4 }
+  const outcome = applyRetryResumeOutcome({ core: retry }, 'core', retry, false, 5)
+  assert.equal(outcome.exhausted.attempts, 5)
+  assert.equal(outcome.updatedQueue.core, undefined)
+})
+
+test('shouldFinalizePendingGoal waits for empty retry queue', () => {
+  assert.equal(shouldFinalizePendingGoal({}, { goal: true }), true)
+  assert.equal(shouldFinalizePendingGoal({ core: { guidance: 'x' } }, { goal: true }), false)
+  assert.equal(shouldFinalizePendingGoal({}, null), false)
 })

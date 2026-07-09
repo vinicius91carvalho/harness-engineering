@@ -6,6 +6,13 @@ import { randomUUID } from 'node:crypto'
 import { homedir, hostname } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { readJson, atomicJson } from './lib/fs-json.mjs'
+import { parseObject, VERDICT_HINT, isProviderQuotaLimited, fallbackReason } from './lib/verdict.mjs'
+import { writeWorkerResult } from './lib/worker-result.mjs'
+import { cleanupBrowserOrphans } from './lib/browser-cleanup.mjs'
+import { integrateCheckpoint } from './lib/integrate-checkpoint.mjs'
+import { hostCommands, roleNames } from './adapters/hosts.mjs'
+import { featurePrompt as buildFeaturePrompt } from './prompts/feature.mjs'
 
 function fail(message) {
   process.stderr.write(`orchestrator: ${message}\n`)
@@ -26,57 +33,20 @@ options.workdir = realpathSync(resolve(options.workdir))
 options.repo = realpathSync(resolve(options.repo || options.workdir))
 const claimScript = options['claim-script'] || resolve(dirname(fileURLToPath(import.meta.url)), 'claim.sh')
 const wanted = (options.features || '').split(',').filter(Boolean)
-const commands = {
-  claude: (prompt) => ['claude', ['-p', prompt]],
-  codex: (prompt) => ['codex', ['exec', '--dangerously-bypass-approvals-and-sandbox', prompt]],
-  // Pinned explicitly for the same reason `pi` is below -- opencode's own
-  // default model may differ from what the account is provisioned to use
-  // at volume, and the harness shouldn't depend on whatever is currently
-  // set interactively.
-  opencode: (prompt) => ['opencode', ['run', '--model', 'opencode-go/deepseek-v4-flash', prompt]],
-  // ponytail: pi has no built-in default model, so it must be pinned explicitly.
-  // Every model referenced here needs an explicit maxTokens cap in
-  // ~/.pi/agent/models.json (unlisted models default to requesting ~the full
-  // context window as max_tokens, which is what made z-ai/glm-5.2 hit
-  // OpenRouter 402s on a low-balance account). Moved off openrouter/qwen/qwen3-coder:free
-  // (shared 8 req/min across the account, further saturated by external
-  // OpenRouter demand) to OpenCode Go's deepseek-v4-flash, which has a far
-  // higher throughput ceiling (~30k requests per 5-hour window vs. 8/min) and
-  // isn't a shared public free pool. Credentials for a provider pi already
-  // knows natively (nvidia, opencode-go, openrouter, ...) belong in
-  // ~/.pi/agent/auth.json, NOT as an "apiKey"/"baseUrl" pair under a
-  // made-up provider key in models.json -- that silently fails with "Model
-  // not found" (the models.json entry needs an "api" field, which only a
-  // genuinely unrecognized custom provider needs) or "No API key found"
-  // (models.json's own "apiKey" field is only consulted for those same
-  // unrecognized custom providers, per pi's documented credential
-  // resolution order). models.json is still the right place to add/override
-  // per-model metadata (maxTokens, contextWindow) under the provider's
-  // correct native key.
-  pi: (prompt) => ['pi', ['--model', 'opencode-go/deepseek-v4-flash', '-p', prompt]],
-  agent: (prompt) => ['agent', ['-p', '--force', '--trust', prompt]],
-}
-const roleNames = {
-  CODING: 'coding', QA: 'validation', INTEGRATION_QA: 'validation',
-  REPAIR_PLAN: 'repairPlanning', MERGE: 'coding', GOAL_REVIEW: 'goalReview',
-}
 const reconcileScript = resolve(dirname(fileURLToPath(import.meta.url)), 'reconcile.mjs')
 const MAX_ATTEMPTS = 3
 const MAX_OPERATIONAL_FAILURES = 3
 const RATE_LIMIT_BACKOFF_MS = Number(process.env.HARNESS_RATE_LIMIT_BACKOFF_MS || 75_000)
+const RATE_LIMIT_JITTER_MS = Number(process.env.HARNESS_RATE_LIMIT_JITTER_MS || 10_000)
 
 // ponytail: a 429 retried instantly just burns the same rate-limit window again --
 // this is what falsely exhausted MAX_OPERATIONAL_FAILURES on Work Items that were
-// never actually attempted. Back off once before the next attempt instead. Prefer
-// the provider's own retry_after_seconds hint when present -- several independent
-// subproject processes share one account-wide rate limit with no coordination
-// between them, so a fixed guess alone isn't reliably enough once a few of them
-// wake up and retry at the same moment. A little jitter spreads those wake-ups out.
+// never actually attempted. Back off once before the next attempt instead.
 async function backoffIfRateLimited(detail) {
-  if (!/\b429\b|rate.?limit/i.test(detail || '')) return
+  if (!isProviderQuotaLimited(detail)) return
   const hintSeconds = Number(detail.match(/retry_after_seconds"?\s*[:=]\s*"?(\d+(?:\.\d+)?)/)?.[1])
   const baseMs = hintSeconds > 0 ? Math.max(hintSeconds * 1000, RATE_LIMIT_BACKOFF_MS / 3) : RATE_LIMIT_BACKOFF_MS
-  const jitterMs = Math.floor(Math.random() * 10_000)
+  const jitterMs = Math.floor(Math.random() * Math.max(0, RATE_LIMIT_JITTER_MS))
   await new Promise((resolve) => setTimeout(resolve, baseMs + jitterMs))
 }
 
@@ -116,17 +86,6 @@ function terminateChild(signal = 'SIGTERM') {
     if (process.platform === 'win32') child.kill(signal)
     else process.kill(-child.pid, signal)
   } catch { try { child.kill(signal) } catch {} }
-}
-
-async function readJson(file, fallback) {
-  try { return JSON.parse(await readFile(file, 'utf8')) } catch { return fallback }
-}
-
-async function atomicJson(file, value) {
-  await mkdir(dirname(file), { recursive: true })
-  const temporary = `${file}.tmp.${process.pid}.${randomUUID()}`
-  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`)
-  await rename(temporary, file)
 }
 
 async function writeState(change = {}) {
@@ -274,26 +233,6 @@ async function updateFeature(workdir, id, changes) {
   return feature
 }
 
-function parseObject(text) {
-  const trimmed = text.trim()
-  const BEGIN = '===HARNESS-VERDICT-BEGIN===', END = '===HARNESS-VERDICT-END==='
-  const open = trimmed.lastIndexOf(BEGIN)
-  if (open >= 0) {
-    const rest = trimmed.slice(open + BEGIN.length)
-    const close = rest.indexOf(END)
-    const body = (close >= 0 ? rest.slice(0, close) : rest).trim()
-    try { const v = JSON.parse(body); if (v && typeof v === 'object') return v } catch {}
-  }
-  // ponytail: fallback positional scan keeps un-delimited (older) agents working
-  const candidates = [trimmed, ...trimmed.split('\n').reverse()]
-  const start = trimmed.indexOf('{'), end = trimmed.lastIndexOf('}')
-  if (start >= 0 && end > start) candidates.push(trimmed.slice(start, end + 1))
-  for (const candidate of candidates) {
-    try { const parsed = JSON.parse(candidate); if (parsed && typeof parsed === 'object') return parsed } catch {}
-  }
-  return null
-}
-
 async function evidence(id, attempt, kind, detail, route = null) {
   const dir = join(runDir, 'evidence', context.replace(/[^a-zA-Z0-9_-]/g, '_'))
   await mkdir(dir, { recursive: true })
@@ -301,15 +240,6 @@ async function evidence(id, attempt, kind, detail, route = null) {
   const header = route ? `route=${JSON.stringify(route)}\n` : ''
   await writeFile(file, `${header}${detail}`)
   return file
-}
-
-function fallbackReason(result) {
-  const detail = result.timedOut ? 'timeout' : result.detail || ''
-  if (/\b429\b|rate.?limit/i.test(detail)) return 'rate-limited'
-  if (/auth|credential|unauthorized|forbidden|login/i.test(detail)) return 'authentication-failure'
-  if (/model.{0,40}(unavailable|not available|not found|unknown)|unavailable.{0,20}model/i.test(detail)) return 'model-unavailable'
-  if (/\b402\b|insufficient credits|payment required|quota exceeded|billing/i.test(detail)) return 'no-credits'
-  return result.timedOut ? 'launch-timeout' : 'launch-failure'
 }
 
 async function spawnAgent(program, args, cwd) {
@@ -385,7 +315,7 @@ async function runAgent(kind, prompt, id, attempt, cwd = options.workdir) {
       independence,
     }
     const [program, args] = direct
-      ? commands[candidate.harness](referencedPrompt)
+      ? hostCommands[candidate.harness](referencedPrompt)
       : [process.env.HARNESS_OMNIGENT_BIN || 'omni', ['run', join(process.env.HARNESS_OMNIGENT_BUNDLE || join(homedir(), '.omnigent', 'agents', 'harness-engineering'), 'agents', candidate.harness), '--no-session', ...(candidate.model ? ['--model', candidate.model] : []), '--prompt', referencedPrompt]]
     await writeState({ agentRoute: route, childPid: null })
     const result = await spawnAgent(program, args, direct ? cwd : gitTopLevel(cwd))
@@ -421,6 +351,7 @@ async function stopApp(workdir) {
   if (!pid) { if (state.appPid) await writeState({ appPid: null }); return }
   try { process.kill(pid, 'SIGTERM') } catch {}
   try { await unlink(pidFile) } catch {}
+  cleanupBrowserOrphans({ port: options.port })
   await writeState({ appPid: null })
 }
 
@@ -447,39 +378,11 @@ function commitPaths(workdir, paths, message) {
   if (staged.status !== 0) git(['commit', '-m', message], workdir)
 }
 
-// ponytail: shared wrap instruction so every JSON-returning prompt uses the same delimiters parseObject looks for.
-const VERDICT_HINT = 'Emit that JSON as the very last thing you print, on its own lines, wrapped exactly:\n===HARNESS-VERDICT-BEGIN===\n{...}\n===HARNESS-VERDICT-END==='
-
-// MERGE and INTEGRATION_QA run in whichever worktree has main checked out --
-// often the repo root itself, shared by every other Work Item and every
-// other subproject in a monorepo. A destructive command here has no isolation.
-const SHARED_ROOT_WARNING = 'You are operating directly on this repository\'s shared main branch, used by every other Work Item and every other subproject in this monorepo -- there is no isolation here. Never run `git reset` (soft, mixed, or hard), `git checkout -- .`, `git clean -f`, or any other command that discards or rewrites committed history. If you are ever unsure whether an action is safe, stop and report the problem instead of guessing. Run every git command one at a time and wait for it to finish before running the next -- never issue two git commands in parallel or overlapping tool calls, even independent-looking ones like `git status` alongside `git add`. Two git processes writing to this same working tree at once collide on `.git/index.lock` (`fatal: Unable to create .../index.lock: File exists`) and the Work Item gets reported as failed even though nothing was actually wrong with your resolution.'
-
 function featurePrompt(kind, feature, attempt, repairPlan = null, workdir = options.workdir) {
-  const base = `WORKDIR=${workdir}\nPORT=${options.port}\nWork Item id=${feature.id} context=${feature.context}\n` +
-    `Acceptance Checks=${(feature.acceptance_checks || []).join(',')}\nDescription=${feature.description || ''}\n`
-  if (kind === 'CODING') {
-    // Per-Work-Item verify_first: baseline items (initializer, existing-codebase) audit;
-    // items appended after the baseline (new features/refactor) build in implement mode.
-    // Fall back to the global spec mode for legacy queues that predate the field.
-    const verifyFirst = feature.verify_first === undefined ? verifyFirstCache.get(workdir) : feature.verify_first === true
-    const head = verifyFirst
-      ? `You are the coding-agent in VERIFY-FIRST mode (existing codebase). First exercise every mapped Acceptance Check against the EXISTING code at a real external boundary (HTTP or browser). If all pass, set implementation=true and make NO code changes (a zero-diff checkpoint is valid; commit only if you intentionally changed tracked files). If any check fails, fix only the root cause with the smallest possible diff — do not refactor, restructure, or rewrite working code. The bar is "the AC passes at a real boundary," not "the code is idiomatic."\n${base}`
-      : `You are the coding-agent. Implement exactly this Work Item, then stop.\n${base}`
-    return head +
-      `${repairPlan ? `Follow this Repair Plan from the orchestrator:\n${JSON.stringify(repairPlan)}\n` : ''}` +
-      `Read the exact queue entry and Workflow Journal. Bring up the app on the assigned ports, run black-box behavior tests, set only this item implementation=true after success, update the journal concisely, and commit. Return one JSON object: {"id":"...","implementation":true|false,"notes":"..."}. ${VERDICT_HINT}`
-  }
-  if (kind === 'QA') return `You are the qa-agent. Independently test exactly this Work Item in its isolated worktree.\n${base}` +
-    `Use a real browser for UI or real HTTP for API behavior. On pass set qa=true. On any defect set implementation=false and qa=false. Update the journal concisely and commit. Return only JSON: {"id":"...","qa":true|false,"implementation":true|false,"defects":["expected ...; observed ...; evidence ..."]}. ${VERDICT_HINT}`
-  if (kind === 'INTEGRATION_QA') return `You are the qa-agent performing Integrated Verification on latest main.\n${base}` +
-    `Run the mapped Acceptance Checks and core smoke behavior at real external boundaries. On pass set integration=true for this Work Item. On any defect set implementation=false, qa=false, integration=false. Update the journal concisely and commit. Return only JSON: {"id":"...","integration":true|false,"implementation":true|false,"defects":["expected ...; observed ...; evidence ..."]}. ${VERDICT_HINT}\n${SHARED_ROOT_WARNING}`
-  if (kind === 'REPAIR_PLAN') return `Act as the orchestrator repair planner. Do not modify files. Diagnose the QA Defect Report against the Work Item and repository.\n${base}` +
-    `Defect Report=${JSON.stringify(repairPlan)}\nReturn only concise JSON: {"summary":"...","rootCause":"...","actions":["..."],"validation":["..."]}. ${VERDICT_HINT}`
-  if (kind === 'MERGE') return `You are resolving integration conflicts for one verified Checkpoint.\n${base}` +
-    `Resolve only the current Git conflicts. Keep Work Items append-only; a newer Defect Report overrides older true flags. Run affected black-box checks, commit, and return only JSON: {"resolved":true|false,"notes":"..."}. ${VERDICT_HINT}\n` +
-    `${SHARED_ROOT_WARNING} The only git operations you need are \`git add\`/\`git commit\` to resolve conflicts, and \`git merge --abort\` if you cannot resolve them cleanly -- the orchestrator already handles an abort as a normal, safe outcome (it reports the conflict as unresolved and retries later).\n` +
-    `Before running \`git add\` on any file that had a conflict, actually edit it -- open it and remove every \`<<<<<<<\`, \`=======\`, \`>>>>>>>\` marker line, keeping the correct combined content underneath. \`git add\` only clears Git's own unresolved-merge flag on a path; it does not check whether the marker lines are still sitting in the file. Staging and committing a file that still contains literal marker lines corrupts it (the orchestrator now also checks for this and will abort and retry if it happens, but do not rely on that -- verify the file has zero marker lines yourself before adding it).`
+  return buildFeaturePrompt(kind, feature, attempt, repairPlan, workdir, {
+    port: options.port,
+    getVerifyFirst: (wd) => verifyFirstCache.get(wd),
+  })
 }
 
 async function block(feature, attempt, reason, defects = []) {
@@ -539,83 +442,27 @@ function syncWorkdirWithMain(workdir) {
 }
 
 async function integrate(feature, attempt) {
-  await stopApp(options.workdir)
-  const journalFile = await journal(options.workdir, 'Checkpoint ready', {
-    Attempt: `${attempt}/${MAX_ATTEMPTS}`, WorkItem: feature.id, Outcome: 'isolated QA passed', NextAction: 'Integrated Verification',
+  return integrateCheckpoint({
+    feature,
+    attempt,
+    workdir: options.workdir,
+    repo: options.repo,
+    claimScript,
+    maxAttempts: MAX_ATTEMPTS,
+    git,
+    command,
+    runAgent,
+    featurePrompt,
+    stopApp,
+    journal,
+    commitPaths,
+    updateFeature,
+    readFeatures,
+    writeState,
+    syncWorkdirWithMain,
+    join,
+    acquireMergeLock,
   })
-  commitPaths(options.workdir, [journalFile], `chore(harness): checkpoint ${feature.id}`)
-  const checkpointSha = git(['rev-parse', 'HEAD'], options.workdir).stdout.trim()
-  const integrationDir = await acquireMergeLock()
-  const preMergeSha = git(['rev-parse', 'HEAD'], integrationDir).stdout.trim()
-  try {
-    await writeState({ phase: 'merge', nextAction: 'merge', integrationDir })
-    const merged = command('bash', [claimScript, 'merge-do', options.repo, feature.context, integrationDir], options.repo, true)
-    if (merged.status === 2) {
-      const conflictedFiles = git(['diff', '--name-only', '--diff-filter=U'], integrationDir).stdout.trim().split('\n').filter(Boolean)
-      const resolved = await runAgent('MERGE', featurePrompt('MERGE', feature, attempt, null, integrationDir), feature.id, attempt, integrationDir)
-      const unmerged = git(['diff', '--name-only', '--diff-filter=U'], integrationDir).stdout.trim()
-      // `git add` clears a path's unresolved-merge status in the index regardless of
-      // whether the file's actual content still has literal conflict markers in it --
-      // the diff-filter=U check above passes trivially if the agent staged a file
-      // without truly resolving it. Check content on the files that were conflicted.
-      // Read from HEAD, not the worktree, since the agent may have already committed.
-      const markerPattern = /^(<{7} |={7}$|>{7} )/m
-      const stillMarked = conflictedFiles.some((relPath) => {
-        const shown = git(['show', `HEAD:${relPath}`], integrationDir, true)
-        return shown.status === 0 && markerPattern.test(shown.stdout)
-      })
-      if (unmerged || stillMarked) {
-        git(['merge', '--abort'], integrationDir, true)
-        // A merge agent is expected to `git commit` once it believes conflicts are
-        // resolved -- if it committed a marker-corrupted result before we could catch
-        // it, `merge --abort` has nothing left to abort (the merge already concluded).
-        // We captured this worktree's own pre-merge tip under our own exclusive merge
-        // lock, so resetting to it only ever discards this one failed attempt.
-        if (git(['rev-parse', 'HEAD'], integrationDir).stdout.trim() !== preMergeSha) {
-          git(['reset', '--hard', preMergeSha], integrationDir, true)
-        }
-        const reason = stillMarked && !unmerged ? 'merge conflict markers were committed without being resolved' : 'merge conflict could not be resolved'
-        return { passed: false, operational: true, defects: [reason], evidence: resolved.artifact }
-      }
-      const mergeHead = git(['rev-parse', '-q', '--verify', 'MERGE_HEAD'], integrationDir, true)
-      if (mergeHead.status === 0) git(['commit', '--no-edit'], integrationDir)
-    } else if (merged.status !== 0) {
-      return { passed: false, operational: true, defects: [merged.stderr.trim() || 'merge failed'] }
-    }
-    if (git(['merge-base', '--is-ancestor', checkpointSha, 'HEAD'], integrationDir, true).status !== 0) {
-      git(['merge', '--abort'], integrationDir, true)
-      return { passed: false, operational: true, defects: ['Checkpoint was not integrated into main'] }
-    }
-
-    await writeState({ phase: 'integration-qa', nextAction: 'integration-qa' })
-    const verified = await runAgent('INTEGRATION_QA', featurePrompt('INTEGRATION_QA', feature, attempt, null, integrationDir), feature.id, attempt, integrationDir)
-    await stopApp(integrationDir)
-    if (verified.ok && verified.parsed?.implementation === true && verified.parsed?.integration === true) {
-      await updateFeature(integrationDir, feature.id, { implementation: true, qa: true, integration: true })
-    }
-    const current = (await readFeatures(integrationDir)).list.find((item) => String(item.id) === String(feature.id))
-    if (verified.ok && current?.implementation === true && current?.qa === true && current?.integration === true) {
-      const file = await journal(integrationDir, 'Integrated Verification passed', {
-        Attempt: `${attempt}/${MAX_ATTEMPTS}`, WorkItem: feature.id, AcceptanceChecks: feature.acceptance_checks || [],
-        Outcome: 'passed on integrated main', Evidence: verified.artifact, NextAction: 'next Ready Work Item',
-      })
-      commitPaths(integrationDir, [join(integrationDir, 'feature_list.json'), file], `verify(harness): integrate ${feature.id}`)
-      syncWorkdirWithMain(options.workdir)
-      await writeState({ phase: 'integrated', nextAction: 'next-work-item', lastResult: 'Integrated Verification passed' })
-      return { passed: true }
-    }
-
-    const defects = verified.parsed?.defects?.length ? verified.parsed.defects : [verified.detail.slice(-2000) || 'Integrated Verification failed']
-    await updateFeature(integrationDir, feature.id, { implementation: false, qa: false, integration: false, retries: attempt })
-    const file = await journal(integrationDir, 'Integrated Verification defect', {
-      Attempt: `${attempt}/${MAX_ATTEMPTS}`, WorkItem: feature.id, Defects: defects, Evidence: verified.artifact, NextAction: 'Repair Plan',
-    })
-    commitPaths(integrationDir, [join(integrationDir, 'feature_list.json'), file], `qa(${feature.context}): ${feature.id} integration defect`)
-    syncWorkdirWithMain(options.workdir)
-    return { passed: false, defects, evidence: verified.artifact }
-  } finally {
-    command('bash', [claimScript, 'merge-release', options.repo, String(process.pid)], options.repo, true)
-  }
 }
 
 async function runWorkItems() {
@@ -837,4 +684,5 @@ async function runGoalReview() {
 }
 
 const result = options.mode === 'goal-review' ? await runGoalReview() : await runWorkItems()
+await writeWorkerResult(stateFile, { exitCode: 0, payload: result })
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
