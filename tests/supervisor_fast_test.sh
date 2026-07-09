@@ -86,9 +86,9 @@ PATH="$SUPERVISOR_PATH" supervisor_common_run_once --repo "$TMP/invalid" --host 
 echo 'ok - invalid planning emits a durable goal Input Request and consumes its idempotent response after restart'
 
 mkdir -p "$TMP/retry"
-supervisor_common_init_git_repo "$TMP/retry" true
+supervisor_common_init_git_repo "$TMP/retry" false
 mkdir -p "$TMP/retry/.git/harness-control"
-printf '%s\n' '{"retryQueue":{"ghost":{"guidance":"","attempts":3}}}' >"$TMP/retry/.git/harness-control/state.json"
+printf '%s\n' '{"retryQueue":{"ghost":{"guidance":"","attempts":4}}}' >"$TMP/retry/.git/harness-control/state.json"
 supervisor_common_run_once --repo "$TMP/retry" --host claude --once true --poll-ms 50 \
   --max-workers 2 --quota-workers 2 --cpu-per-worker 0.25 \
   --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100
@@ -144,6 +144,10 @@ cp -R "$ROOT/skills/generator" "$TMP/installed/skills/harness-generator"
 git clone -q "$TMP/repo" "$TMP/namespaced"
 git -C "$TMP/namespaced" config user.name test
 git -C "$TMP/namespaced" config user.email test@example.invalid
+mkdir -p "$TMP/namespaced/.git/harness-control" "$TMP/namespaced/.git/harness-runs"
+cp "$TMP/repo/.git/harness-control/state.json" "$TMP/namespaced/.git/harness-control/"
+cp "$TMP/repo/.git/harness-control/events.jsonl" "$TMP/namespaced/.git/harness-control/"
+cp "$TMP/repo/.git/harness-runs/goal-review.json" "$TMP/namespaced/.git/harness-runs/"
 PATH="$SUPERVISOR_PATH" "$NODE" \
   "$TMP/installed/skills/harness-supervisor/scripts/harness-control.mjs" run \
   --repo "$TMP/namespaced" --host claude --once true --poll-ms 50 --quota-workers 1 \
@@ -172,7 +176,8 @@ printf '%s\n' '{"status":"resuming","ownerPid":999999999,"childPid":null}' \
 printf '%s\n' '{"status":"resuming","ownerPid":999999999,"childPid":null}' \
   >"$TMP/circuit/.git/harness-runs/boom.json"
 printf '%s\n' '{"crashCounts":{"flaky":5}}' >"$TMP/circuit/.git/harness-control/state.json"
-supervisor_common_run_once --repo "$TMP/circuit" --host claude --once true --poll-ms 50 \
+supervisor_common_run_timeout 15 env PATH="$SUPERVISOR_PATH" "$NODE" "$CONTROL" run \
+  --repo "$TMP/circuit" --host claude --once true --poll-ms 50 \
   --max-workers 2 --quota-workers 2 --cpu-per-worker 0.25 \
   --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100
 CIRCUIT_EVENTS="$TMP/circuit/.git/harness-control/events.jsonl"

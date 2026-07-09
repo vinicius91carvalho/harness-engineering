@@ -136,7 +136,10 @@ async function acquireSupervisorLock(token, pid, status, leaseSeconds) {
 
 async function updateSupervisorLock(token, status = 'running', pid = process.pid) {
   const owner = await readJson(supervisorOwner, {})
-  if (owner.token !== token) fatal('supervisor lease was lost')
+  if (owner.token !== token) {
+    if (status === 'stopping') return
+    fatal('supervisor lease was lost')
+  }
   await atomicJson(supervisorOwner, { ...owner, pid, host: hostname(), status, heartbeatEpoch: Math.floor(Date.now() / 1000) })
 }
 
@@ -510,6 +513,14 @@ class Supervisor {
   async workerClosed(key, code, capturedTail) {
     const worker = this.workers.get(key)
     if (!worker) return
+    if (this.stopping) {
+      if (worker.log) {
+        await new Promise((done) => { worker.log.once('finish', done); worker.log.end() })
+      }
+      this.workers.delete(key)
+      cleanupBrowserOrphans({ port: worker.port, workdir: worker.worktree })
+      return
+    }
     if (worker.log) {
       await new Promise((done) => { worker.log.once('finish', done); worker.log.end() })
     }
@@ -633,6 +644,14 @@ class Supervisor {
 
   async maybeGoalReview(snapshot, active, available) {
     if (!snapshot.queue.length || snapshot.counts.integrated !== snapshot.counts.total || active > 0 || available < 1 || this.workers.has('goal-review')) return false
+    const goalStateName = projectPrefix ? `${projectId}--goal-review.json` : 'goal-review.json'
+    const goalState = await readJson(join(commonGit, 'harness-runs', goalStateName), {})
+    const head = git(['rev-parse', integrationBranchName(repo)], true).stdout.trim()
+    const clean = git(['status', '--porcelain'], true).stdout.trim() === ''
+    if (goalState.status === 'complete' && goalState.reviewedHead === head && clean) {
+      await this.save({ status: 'complete' })
+      return true
+    }
     const worktree = await integrationCheckout()
     const claim = { context: 'goal-review', worktree, port: 5170, featureIds: [] }
     const args = [orchestrator, '--host', this.config.host, '--repo', repo, '--workdir', worktree,
@@ -743,12 +762,17 @@ class Supervisor {
       }
       while (!this.stopping && this.state.status !== 'stopped' && this.state.status !== 'complete') {
         await this.tick()
-        if (options.once === 'true' && this.state.status === 'needs_input') break
+        if (options.once === 'true') break
         await new Promise((done) => setTimeout(done, this.config.pollMs))
       }
       this.stopping = true
       await this.save({ status: this.state.status })
     } finally {
+      this.stopping = true
+      const deadline = Date.now() + 5000
+      while (this.workers.size > 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25))
+      }
       await this.drainFinalizers()
       await releaseSupervisorLock(this.leaseToken)
     }
