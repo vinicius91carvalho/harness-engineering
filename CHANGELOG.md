@@ -11,6 +11,14 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [2.2.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.1.0...v2.2.0) (2026-07-09)
+
+
+### Features
+
+* deepen admission/attempt seams, auto herdr panes, open-source-first roles ([dad4943](https://github.com/vinicius91carvalho/harness-engineering/commit/dad49435ae923838b8a205c936fa8e1491701cfe))
+* install Pi skills at user level and free-first role routing ([bd0645a](https://github.com/vinicius91carvalho/harness-engineering/commit/bd0645a8072f81c4890a272d578389bd74d1ac9c))
+
 ## [2.1.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.0.0...v2.1.0) (2026-07-09)
 
 
