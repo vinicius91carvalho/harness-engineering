@@ -11,11 +11,16 @@
 
 ## Quickstart
 
-Type these in your **coding tool's chat** ([Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://developers.openai.com/codex/), [OpenCode](https://opencode.ai/), [Cursor Agent](https://cursor.com/docs/cli/overview), or [Pi](https://pi.dev/)), not in a terminal.
+**1. Install once in a terminal** ([details](#install)):
+
+```sh
+curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh
+```
+
+**2–4. Then type these in your coding tool's chat** ([Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://developers.openai.com/codex/), [OpenCode](https://opencode.ai/), [Cursor Agent](https://cursor.com/docs/cli/overview), or [Pi](https://pi.dev/)) — not in a terminal:
 
 | Step | What you type | What happens |
 | --- | --- | --- |
-| **1. Install** (once, in terminal) | `curl -sSL …/install.sh \| sh` | Adds harness skills to your tools ([details](#install)) |
 | **2. Plan** | `/harness:planner Build a notes app where a user can publish a note and find it after reloading.` | Writes `project_specs.xml` with Acceptance Checks |
 | **3. Build** | `/harness:generator` | Claims work, codes, QA's, integrates — answer **All** for a new project |
 | **4. Know you're done** | Goal Review passes; every Work Item shows `implementation`, `qa`, and `integration` | Not when the chat goes quiet |
@@ -135,6 +140,10 @@ Requires Git, Bash, **[Node.js 18 or newer](https://nodejs.org/)**, `jq`, and on
 curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh
 ```
 
+The one-liner fetches the installer script from `main`, then that script stages the **latest GitHub Release tag** (not the moving `main` tip).
+Override the tag with `VERSION=vX.Y.Z` or `--version vX.Y.Z` (also `HARNESS_INSTALL_REF`).
+A local checkout of this repository installs from the working tree instead (dev mode).
+
 Arrow-key checklist: keep `harness` checked; add MCP or extras if you want them.
 Windows: [`install.ps1`](install.ps1). Details: [installer docs](docs/installer/README.md).
 
@@ -160,7 +169,7 @@ Choose **All** when generator asks for scope.
 
 ### Existing codebase
 
-run setup **without a goal, feature, scope, or other text**:
+Run setup **without a goal, feature, scope, or other text**:
 
 ```text
 /harness:setup
@@ -192,6 +201,48 @@ Select only the new context when generator lists unbuilt work.
 * `implementation` means coding completed.
 * `qa` means isolated QA passed.
 * `integration` means the behavior passed after merging.
+
+### Example: `project_specs.xml`
+
+The specification is the completion contract — stable Acceptance Checks that define what "done" means.
+
+```xml
+<project_specification>
+  <project_name>Notes</project_name>
+  <project_goal>
+    Published notes remain available after reload.
+  </project_goal>
+  <acceptance_checks>
+    <acceptance_check
+      id="AC-001"
+      context="notes"
+      category="functional"
+      depends_on="">
+      <description>
+        Publish a note, reload, and observe the same title and text.
+      </description>
+    </acceptance_check>
+  </acceptance_checks>
+</project_specification>
+```
+
+### Example: `feature_list.json`
+
+The queue is execution state plus three proof flags per Work Item (`implementation`, `qa`, `integration`).
+
+```json
+[
+  {
+    "id": "WI-AC-001",
+    "context": "notes",
+    "acceptance_checks": ["AC-001"],
+    "depends_on": [],
+    "implementation": false,
+    "qa": false,
+    "integration": false
+  }
+]
+```
 
 Dependencies need `integration:true`; Goal Review still runs afterward.
 

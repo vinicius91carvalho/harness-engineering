@@ -36,7 +36,7 @@ grep -Fq 'Node.js 18 or newer' "$README"
 grep -Fq 'Node.js 18 or newer' "$HTML"
 grep -Fq '/harness:setup` | `/harness-setup' "$README"
 grep -Fq '/harness:setup</code></td><td><code>/harness-setup' "$HTML"
-grep -Fq 'run setup **without a goal, feature, scope, or other text**' "$README"
+grep -Fq 'Run setup **without a goal, feature, scope, or other text**' "$README"
 grep -Fq 'with no goal, feature, scope, or other text' "$HTML"
 ! grep -Eq '/harness[:-]setup +(Add|Your|Build)' "$README" "$HTML"
 ! grep -Fiq 'For non-interactive OpenCode setup' "$README" "$HTML"
@@ -93,5 +93,24 @@ for str in 'A long unattended run with monitoring/pause/resume' 'To independentl
 done
 
 ! grep -Eq 'Hermes|Telegram' "$HTML"
+
+# README Quickstart: install is terminal, skills are chat (no blanket "type these in chat" covering install)
+! grep -Fq 'Type these in your **coding tool''s chat**' "$README"
+grep -Fq 'Install once in a terminal' "$README"
+grep -Fq 'Then type these in your coding tool' "$README"
+
+# Install contract: release tags, not main tip
+grep -Fq 'latest GitHub Release tag' "$README"
+grep -Fq 'latest GitHub Release tag' "$HTML"
+
+# README file structure examples
+grep -Fq 'id="AC-001"' "$README"
+grep -Fq 'WI-AC-001' "$README"
+
+# Site: plan integration branch model (not Goal Review on main)
+grep -Fq 'plan integration branch' "$HTML"
+! grep -Fq 'Final independent audit of the whole spec on <code>main</code>' "$HTML"
+! grep -Fq 'Checks run again after merging into current <code>main</code>' "$HTML"
+! grep -Fq 'proves completion on <code>main</code>' "$HTML"
 
 echo 'ok - README is a short quick-start pointing into the complete site, which documents the full workflow, role routing, and optional herdr visibility'

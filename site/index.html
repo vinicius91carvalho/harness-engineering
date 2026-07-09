@@ -95,7 +95,7 @@
           <div>
             <p class="kicker">Open-source harness for AI coding</p>
             <h1>Checked delivery for long runs.</h1>
-            <p class="lead">You describe a goal once. The harness keeps the contract, splits coding from QA, merges safely, and proves completion on <code>main</code> — even if you close the chat overnight.</p>
+            <p class="lead">You describe a goal once. The harness keeps the contract, splits coding from QA, merges safely, and proves completion on the plan integration branch — even if you close the chat overnight.</p>
             <p class="lead">Think of it as hiring a project manager (deterministic orchestrator) who delegates to specialists (agents) while you stay the product owner (skills in chat).</p>
           </div>
           <img src="https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/assets/banner.svg" alt="Harness Engineering banner">
@@ -109,7 +109,7 @@
           <div class="card-grid benefits">
             <article><strong>Stable contract</strong><span>Observable Acceptance Checks decide what done means — not vibes.</span></article>
             <article><strong>Independent QA</strong><span>The coding tool does not approve its own work when another tool is available.</span></article>
-            <article><strong>Integrated proof</strong><span>Checks run again after merging into current <code>main</code>.</span></article>
+            <article><strong>Integrated proof</strong><span>Checks run again after merging into the plan integration branch.</span></article>
             <article><strong>Durable state</strong><span>Claims, attempts, evidence, repairs, and input requests survive sessions.</span></article>
           </div>
         </section>
@@ -213,7 +213,7 @@ flowchart LR
               <tr><td>Map an existing repo</td><td><code>/harness:setup</code></td><td>initializer (scaffold only)</td></tr>
               <tr><td>Build or resume work</td><td><code>/harness:generator</code></td><td>coding-agent → qa-agent</td></tr>
               <tr><td>Run overnight with progress every ~20 min</td><td><code>/harness:supervisor</code></td><td>orchestrator workers via harness-control</td></tr>
-              <tr><td>Re-audit integrated main</td><td><code>/harness:evaluator</code></td><td>Goal Review agent</td></tr>
+              <tr><td>Re-audit an already-integrated plan branch</td><td><code>/harness:evaluator</code></td><td>Goal Review agent</td></tr>
             </tbody>
           </table>
           <h3>Core terms</h3>
@@ -225,7 +225,7 @@ flowchart LR
             <article><strong>Claim Lease</strong><span>Proof that only one worker owns a context.</span></article>
             <article><strong>Attempt</strong><span>One code → QA → (maybe) integrate cycle.</span></article>
             <article><strong>Repair Plan</strong><span>Diagnosis + instructions after a QA defect.</span></article>
-            <article><strong>Goal Review</strong><span>Final independent audit of the whole spec on <code>main</code>.</span></article>
+            <article><strong>Goal Review</strong><span>Final independent audit of the whole spec on the plan integration branch.</span></article>
             <article><strong>Input Request</strong><span>Durable “need your decision” with evidence and choices.</span></article>
           </div>
           <p class="files">Full glossary: <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/CONTEXT.md">CONTEXT.md</a> on GitHub.</p>
@@ -245,8 +245,11 @@ claude --version  # or: codex --version / opencode --version / pi --version</cod
         <section class="topic" id="install">
           <p class="step">Step 1</p>
           <h2>Install the harness</h2>
-          <p>Run once on the machine that holds the Git repository. The checklist keeps <code>harness</code> selected by default.</p>
+          <p>Run once <strong>in a terminal</strong> on the machine that holds the Git repository. The checklist keeps <code>harness</code> selected by default.</p>
           <pre><code>curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh</code></pre>
+          <p>The curl one-liner fetches the installer from <code>main</code>, then stages the <strong>latest GitHub Release tag</strong>.
+            Override with <code>VERSION=vX.Y.Z</code> or <code>--version vX.Y.Z</code>.
+            A local checkout of this repository installs from the working tree.</p>
           <p>Native Windows users can run <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/install.ps1"><code>install.ps1</code></a>. Re-running either installer refreshes installed content safely.</p>
           <div class="output"><strong>Verify</strong><code>node --version</code><code>claude --version</code><code>codex --version</code><code>opencode --version</code><code>pi --version</code></div>
         </section>
@@ -284,7 +287,7 @@ claude --version  # or: codex --version / opencode --version / pi --version</cod
               <tr><td>To independently re-audit an already-integrated integration branch</td><td><code>/harness:evaluator</code></td></tr>
             </tbody>
           </table>
-          <p>Type each <code>/harness:...</code> command below into your coding tool's chat session, not a terminal.</p>
+          <p>Type each <code>/harness:...</code> skill command below into your coding tool's chat session, not a terminal. (Install above is terminal-only.)</p>
           <div class="paths">
             <article>
               <h3>New project or new goal</h3>
@@ -335,7 +338,7 @@ claude --version  # or: codex --version / opencode --version / pi --version</cod
             <li>
               <strong>Start the build</strong>
               <p><span class="you">You</span> type <code>/harness:generator</code> and choose <strong>All</strong> contexts.</p>
-              <p><span class="agent">Initializer agent</span> maps checks → <code>feature_list.json</code>, creates <code>init.sh</code>, scaffolds the repo, commits to <code>main</code>. It never implements features.</p>
+              <p><span class="agent">Initializer agent</span> maps checks → <code>feature_list.json</code>, creates <code>init.sh</code>, scaffolds the repo, and makes the first commit. It never implements features.</p>
             </li>
             <li>
               <strong>Claim isolated workspaces</strong>
@@ -353,12 +356,12 @@ claude --version  # or: codex --version / opencode --version / pi --version</cod
               <p>On defect: Defect Report → Repair Plan → next Attempt. On pass: ready to integrate.</p>
             </li>
             <li>
-              <strong>Integrate on main</strong>
-              <p><span class="harness">Orchestrator</span> merges the worktree branch and reruns checks on integrated <code>main</code> (Integrated Verification).</p>
+              <strong>Integrate on the plan branch</strong>
+              <p><span class="harness">Orchestrator</span> merges the worktree branch into the plan integration branch and reruns checks there (Integrated Verification).</p>
             </li>
             <li>
               <strong>Goal Review</strong>
-              <p>When every Work Item is integrated, <span class="agent">Goal Review agent</span> audits the whole Project Goal on <code>main</code>.</p>
+              <p>When every Work Item is integrated, <span class="agent">Goal Review agent</span> audits the whole Project Goal on the integrated plan branch.</p>
               <p><span class="you">You</span> get a durable completion record — or defects reopen specific items.</p>
             </li>
           </ol>
@@ -387,7 +390,7 @@ sequenceDiagram
       O->>O: merge + Integrated Verification
     end
   end
-  O->>Q: Goal Review on main
+  O->>Q: Goal Review on plan branch
             </pre>
           </div>
         </section>
@@ -434,7 +437,7 @@ sequenceDiagram
               <div class="phase-num">5</div>
               <div>
                 <h3>Orchestrator → Merge + Goal Review</h3>
-                <p>Integration merges to <code>main</code> and reruns checks. Goal Review is a separate mandatory pass over the whole spec.</p>
+                <p>Integration merges to the plan integration branch and reruns checks. Goal Review is a separate mandatory pass over the whole spec. When the plan ships, merge that branch to <code>main</code> in one deliberate PR.</p>
                 <p class="who"><em>You</em> answer Input Requests when blocked · <strong>Supervisor</strong> runs overnight with progress events</p>
               </div>
             </div>
@@ -452,10 +455,10 @@ sequenceDiagram
             <li><strong>Claim:</strong> a ready context receives a lease, its own Git branch and worktree, a port (so parallel dev servers don't clash), and Run State.</li>
             <li><strong>Build and inspect:</strong> coding implements; independent QA exercises a real boundary.</li>
             <li><strong>Repair:</strong> failures produce evidence and a Repair Plan before a bounded retry.</li>
-            <li><strong>Integrate:</strong> passing work merges, then its checks run again on current <code>main</code>.</li>
+            <li><strong>Integrate:</strong> passing work merges into the plan integration branch, then its checks run again there.</li>
             <li><strong>Review the goal:</strong> an independent Goal Review verifies the complete specification.</li>
           </ol>
-          <p class="note">Multiple sessions may claim independent contexts. Closing a session does not erase work: the next generator resumes durable state.</p>
+          <p class="note">Multiple sessions may claim independent contexts. Closing a session does not erase work: the next generator resumes durable state. Large goals pin <code>.harness/integration-branch</code> (for example <code>plan/opensource-docker</code>); Work Item branches merge there, not to <code>main</code>, until the plan ships.</p>
           <p class="files">Terminology: see <a href="#language">Skills vs agents</a> and <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/CONTEXT.md">CONTEXT.md</a>.</p>
         </section>
 
@@ -483,7 +486,7 @@ sequenceDiagram
           <p>QA or integration defects produce a Defect Report (expected vs observed + evidence). Repair planning writes a bounded Repair Plan for the next coding Attempt. After 3 failed Attempts the context blocks for your guidance — it never auto-guesses.</p>
 
           <h3>7. Goal Review</h3>
-          <p>After all Work Items show <code>integration: true</code>, Goal Review exercises every Acceptance Check and primary user journeys on integrated <code>main</code>. Defects can reopen linked Work Items (up to 2 reopenings per item).</p>
+          <p>After all Work Items show <code>integration: true</code>, Goal Review exercises every Acceptance Check and primary user journeys on the integrated plan branch. Defects can reopen linked Work Items (up to 2 reopenings per item).</p>
 
           <div class="mermaid-wrap">
             <pre class="mermaid">
@@ -710,7 +713,7 @@ stateDiagram-v2
           <pre><code>/harness:generator</code></pre>
           <p>When generator asks for scope, choose <strong>1 task</strong> and select <code>WI-AC-001</code>. Verify-first mode exercises only that selected behavior before deciding whether code must change.</p>
           <div class="checks">
-            <article><span>A</span><div><strong>If the note survives reload</strong><p>Coding records the existing implementation as proved without editing it. Independent QA repeats the journey, integration verification repeats it on <code>main</code>, and the three queue flags become true.</p></div></article>
+            <article><span>A</span><div><strong>If the note survives reload</strong><p>Coding records the existing implementation as proved without editing it. Independent QA repeats the journey, integration verification repeats it on the plan integration branch, and the three queue flags become true.</p></div></article>
             <article><span>B</span><div><strong>If the note disappears</strong><p>QA records the expected note, the missing result, and evidence. Repair planning identifies the persistence failure; coding fixes that root cause, then QA and integrated verification rerun the same Acceptance Check.</p></div></article>
           </div>
           <p>The journal at <code>harness-progress/notes.md</code> explains the attempt. Machine-readable Run State and evidence remain under <code>.git/harness-runs/</code>. Other mapped Work Items stay untouched.</p>
