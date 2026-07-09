@@ -58,6 +58,8 @@ flowchart TD
   orchestrator --> routePlan[route-plan.mjs]
   orchestrator --> claimLease[claim-lease.mjs]
   harnessControl[harness-control.mjs] --> workerLifecycle[worker-lifecycle.mjs]
+  harnessControl --> supervisorTick[supervisor-tick.mjs]
+  harnessControl --> supervisorAdmission[supervisor-admission.mjs]
   harnessControl --> claimLease
 ```
 

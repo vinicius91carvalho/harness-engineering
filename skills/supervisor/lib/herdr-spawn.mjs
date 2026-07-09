@@ -8,11 +8,20 @@ function commandExists(cmd) {
   return spawnSync('sh', ['-c', `command -v ${cmd}`], { stdio: 'ignore' }).status === 0
 }
 
-/** Resolve worker display mode. Herdr panes are opt-in via --display herdr or HARNESS_DISPLAY=herdr. */
+/**
+ * Resolve worker display mode.
+ *
+ * Auto-selects herdr panes when running inside a herdr workspace
+ * (HERDR_ENV=1) and the herdr CLI is on PATH. `--display background` /
+ * HARNESS_DISPLAY=background always forces background; `--display herdr` /
+ * HARNESS_DISPLAY=herdr forces herdr when available, else falls back to
+ * background.
+ */
 export function resolveDisplayMode(options = {}) {
   const explicit = options.display || process.env.HARNESS_DISPLAY
   if (explicit === 'background') return 'background'
   if (explicit === 'herdr') return commandExists('herdr') ? 'herdr' : 'background'
+  if (process.env.HERDR_ENV === '1' && commandExists('herdr')) return 'herdr'
   return 'background'
 }
 
@@ -120,12 +129,16 @@ export function closeDanglingShellPanes(tabId, keepPaneIds = null) {
   }
 }
 
+/**
+ * Every new worker gets its own fresh pane — never reclaim a dangling shell,
+ * since that can hand two workers the same pane. Clear dangling shells first,
+ * then split off the last worker pane (or the tab's remaining root) so each
+ * worker keeps a unique, dedicated pane.
+ */
 function pickWorkerPane(tabId) {
+  closeDanglingShellPanes(tabId)
   const panes = listTabPanes(tabId)
-  for (const pane of panes) {
-    if (isDanglingShell(pane)) return pane.pane_id
-  }
-  const workers = panes.filter((pane) => pane.agent || pane.label)
+  const workers = panes.filter((pane) => !isDanglingShell(pane))
   const source = workers[workers.length - 1]?.pane_id || panes[0]?.pane_id
   if (!source) throw new Error(`no pane available in tab ${tabId}`)
   const splitOut = JSON.parse(herdr(['pane', 'split', source, '--direction', 'right', '--no-focus']))
@@ -154,13 +167,27 @@ export function paneExists(paneId) {
 
 const HARNESS_PANE_ENV = { HARNESS_DISPLAY: 'herdr', HARNESS_HERDR_PANE: '1' }
 
-/** Start a named harness worker in herdr — one pane per worker via pane run (never agent start split). */
-export function spawnAgent(name, commandArgv, { cwd, layoutLockDir } = {}) {
+/** Env injected into every harness worker pane (display flags + caller PATH). */
+export function harnessPaneEnv(extra = {}) {
+  const env = { ...HARNESS_PANE_ENV, ...extra }
+  // Forward PATH so stub hosts / mise shims from the supervisor process win
+  // over whatever login shell the fresh herdr pane would otherwise use.
+  if (process.env.PATH && env.PATH == null) env.PATH = process.env.PATH
+  return env
+}
+
+/**
+ * Start a named harness worker in herdr — one dedicated pane per worker via
+ * pane run (never agent start split). The first worker on a freshly created
+ * tab reuses that tab's root pane; every worker after that gets a freshly
+ * split pane, never a shared or reclaimed dangling shell.
+ */
+export function spawnAgent(name, commandArgv, { cwd, layoutLockDir, env: extraEnv } = {}) {
   return withHerdrLayoutLock(layoutLockDir, () => {
     const workspaceId = getFocusedWorkspaceId()
     const tab = resolveHarnessWorkerTab(workspaceId)
     const paneId = tab.created && tab.rootPaneId ? tab.rootPaneId : pickWorkerPane(tab.tabId)
-    const command = argvToCommand(commandArgv, { cwd, env: HARNESS_PANE_ENV })
+    const command = argvToCommand(commandArgv, { cwd, env: harnessPaneEnv(extraEnv) })
     const wrapped = `printf '%s\\n' 'harness: ${name} starting' >&2; ${command}`
     herdr(['pane', 'run', paneId, wrapped])
     closeDanglingShellPanes(tab.tabId, new Set([paneId]))

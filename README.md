@@ -34,7 +34,7 @@ curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineeri
 
 `harness-engineering` is a plugin marketplace plus a **spec → build → QA → Goal Review** workflow.
 The harness owns completion policy; [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://developers.openai.com/codex/), [OpenCode](https://opencode.ai/), [Cursor Agent](https://cursor.com/docs/cli/overview), and [Pi](https://pi.dev/) run it.
-Optional [herdr](https://herdr.dev/) shows workers in terminal panes; optional `.harness/roles.json` routes phases to ordered tool/model candidates.
+Optional [herdr](https://herdr.dev/) shows workers in terminal panes, auto-selected inside a herdr workspace; optional `.harness/roles.json` routes phases to ordered tool/model candidates.
 
 **Done means evidence:** independent QA, integration on the plan branch, and a final Goal Review — not an empty task list.
 
@@ -56,7 +56,7 @@ Planner uses grilling internally; activate it by asking “grill me.”
 Generator bundles `worktree-git-recovery` for narrow git-only fixes in a worktree.
 
 Shared generator libraries live under `skills/generator/lib/` (`claim-lease`, `integrate-checkpoint`, `worker-outcome`, `supervisor-tick`, `workflow-state`, `route-plan`, `worker-lifecycle`, and helpers such as `verdict`, `ready-work-items`, `project-keys`).
-The Attempt loop lives in `skills/generator/workflow/attempt-machine.mjs` (orchestrator delegates; supervisor does not own Attempt policy).
+The Attempt loop lives in `skills/generator/workflow/attempt-machine.mjs` (orchestrator delegates; supervisor does not own Attempt policy). `runAttemptLoop` takes narrow, named ports (`state`, `queue`, `agent`, `integrate`, `verifyFirst`, `constants`) rather than a flat context bag; the orchestrator wires host adapters into those ports and owns no Attempt/Defect Report/Repair Plan/Checkpoint policy itself.
 
 ```mermaid
 flowchart TD
@@ -287,10 +287,10 @@ Full symptom list: [site troubleshooting](https://vinicius91carvalho.github.io/h
 Role routing is not required to plan, generate, validate, integrate, or review work.
 
 Copy [`config/roles.example.json`](config/roles.example.json) to `.harness/roles.json` to route coding, validation, repair planning, and Goal Review through ordered tool/model candidates.
-The example is free-first (OpenRouter free / cheap open-weight), then hard-task fallbacks on Pi (`anthropic/claude-opus-4-8:xhigh`, `openai-codex/gpt-5.5:high`), Cursor Agent (`grok-4.5-xhigh`), and native Claude/Codex CLIs.
-Pi is a first-class harness alongside `claude`, `codex`, `opencode`, and `agent`.
+The example is open-source-first: OpenCode Go and NVIDIA NIM volume models first, then OpenRouter free Qwen Coder, Cursor Composer / Grok when work gets hard, and Claude Opus / GPT-5.5 only as late rescue for stuck bugs.
+Pi stays available as a transport for those expensive rescue models; it is not the everyday coding host.
 
-[herdr](https://herdr.dev/) is optional terminal visibility. Pass `--display herdr` when starting the supervisor inside a herdr workspace; otherwise workers run in the background.
+[herdr](https://herdr.dev/) is optional terminal visibility. It's auto-selected when the supervisor starts inside a herdr workspace (`HERDR_ENV=1`) with `herdr` installed; pass `--display background` to force background, or `--display herdr` to force herdr when available.
 
 → [Routing guide](https://vinicius91carvalho.github.io/harness-engineering/#routing) · [Herdr visibility](https://vinicius91carvalho.github.io/harness-engineering/#herdr)
 

@@ -805,59 +805,68 @@ bash "$GEN/claim.sh" list "$PROJECT"</code></pre>
           <p>Validation, integrated QA, and Goal Review first prefer a tool different from the actual coding tool. Configured order remains stable within the independent and same-tool groups. Every route and fallback reason is persisted.</p>
           <p>A model that fails from an infra error or a repeated QA rejection is demoted to the back of its role list for the rest of the run, so the run self-heals instead of retrying the same broken candidate, and a coder that declines a Work Item falls through to the next candidate. The optional <code>noCredits</code> array is a free-tier fallback tried only once paid options are exhausted by infra/credit errors. Repair retries are bounded by <code>HARNESS_REPAIR_BUDGET</code> (default <code>2</code>).</p>
           <p class="source"><strong>Full source:</strong> <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/config/roles.example.json">https://github.com/vinicius91carvalho/harness-engineering/blob/main/config/roles.example.json</a></p>
-          <p><strong>Why free and open-weight models lead:</strong> OpenRouter free tiers and cheap open-weight models run everyday coding and validation without rationing calls.
-            Hard tasks fall through to Pi (Claude Opus 4.8 xhigh / GPT-5.5 high via your Pi subscriptions) and Cursor Agent (Grok 4.5), then native Claude/Codex CLIs.
-            Pi is a first-class harness alongside <code>claude</code>, <code>codex</code>, <code>opencode</code>, and <code>agent</code>.
-            Delete free entries to prefer paid models only; add a <code>harness</code>/<code>model</code> pair to extend a role.</p>
+          <p><strong>Why open-source volume models lead:</strong> OpenCode Go (DeepSeek V4 Flash/Pro, Minimax M3, Qwen 3.7 Plus/Max) and NVIDIA NIM carry everyday coding and validation on high-credit pools.
+            OpenRouter free Qwen Coder is a thin free fallback (limits are low).
+            When work gets hard, Cursor Agent (Composer 2.5, then Grok 4.5 High) steps in.
+            Claude Opus / GPT-5.5 (via Pi or native CLIs) are late rescue only for stuck bugs — not the default.
+            Reorder or delete entries to match your licenses; add a <code>harness</code>/<code>model</code> pair to extend a role.</p>
           <pre><code>{
   "coding": [
-    { "harness": "opencode", "model": "openrouter/qwen/qwen3-coder:free" },
-    { "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-flash:free" },
     { "harness": "opencode", "model": "opencode-go/deepseek-v4-flash" },
-    { "harness": "opencode", "model": "openrouter/moonshotai/kimi-k2.7-code" },
-    { "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-pro" },
-    { "harness": "opencode", "model": "openrouter/qwen/qwen3.7-max" },
+    { "harness": "opencode", "model": "nvidia/deepseek-ai/deepseek-v4-flash" },
+    { "harness": "opencode", "model": "openrouter/qwen/qwen3-coder:free" },
+    { "harness": "opencode", "model": "opencode-go/minimax-m3" },
+    { "harness": "opencode", "model": "opencode-go/qwen3.7-plus" },
+    { "harness": "opencode", "model": "opencode-go/deepseek-v4-pro" },
+    { "harness": "opencode", "model": "opencode-go/qwen3.7-max" },
+    { "harness": "opencode", "model": "nvidia/deepseek-ai/deepseek-v4-pro" },
+    { "harness": "agent", "model": "composer-2.5" },
+    { "harness": "agent", "model": "grok-4.5-high" },
     { "harness": "pi", "model": "anthropic/claude-opus-4-8:xhigh" },
     { "harness": "pi", "model": "openai-codex/gpt-5.5:high" },
-    { "harness": "agent", "model": "grok-4.5-xhigh" },
     { "harness": "claude", "model": "claude-opus-4-8" },
     { "harness": "codex", "model": "gpt-5.5" }
   ],
   "validation": [
+    { "harness": "opencode", "model": "opencode-go/minimax-m3" },
+    { "harness": "opencode", "model": "opencode-go/qwen3.7-plus" },
+    { "harness": "opencode", "model": "opencode-go/deepseek-v4-flash" },
+    { "harness": "opencode", "model": "nvidia/deepseek-ai/deepseek-v4-flash" },
     { "harness": "opencode", "model": "openrouter/qwen/qwen3-coder:free" },
-    { "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-flash:free" },
-    { "harness": "opencode", "model": "openrouter/minimax/minimax-m3" },
-    { "harness": "opencode", "model": "openrouter/qwen/qwen3.7-max" },
-    { "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-pro" },
-    { "harness": "pi", "model": "openai-codex/gpt-5.5:high" },
-    { "harness": "pi", "model": "anthropic/claude-opus-4-8:xhigh" },
-    { "harness": "agent", "model": "grok-4.5-xhigh" },
+    { "harness": "opencode", "model": "opencode-go/qwen3.7-max" },
+    { "harness": "opencode", "model": "opencode-go/deepseek-v4-pro" },
+    { "harness": "agent", "model": "composer-2.5" },
+    { "harness": "agent", "model": "grok-4.5-high" },
     { "harness": "codex", "model": "gpt-5.5" },
     { "harness": "claude", "model": "claude-opus-4-8" }
   ],
   "repairPlanning": [
-    { "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-pro" },
-    { "harness": "opencode", "model": "openrouter/qwen/qwen3.7-max" },
-    { "harness": "opencode", "model": "openrouter/minimax/minimax-m3" },
+    { "harness": "opencode", "model": "opencode-go/deepseek-v4-pro" },
+    { "harness": "opencode", "model": "opencode-go/qwen3.7-max" },
+    { "harness": "opencode", "model": "opencode-go/minimax-m3" },
+    { "harness": "opencode", "model": "nvidia/deepseek-ai/deepseek-v4-pro" },
+    { "harness": "agent", "model": "grok-4.5-high" },
+    { "harness": "agent", "model": "composer-2.5" },
     { "harness": "pi", "model": "anthropic/claude-opus-4-8:xhigh" },
     { "harness": "pi", "model": "openai-codex/gpt-5.5:high" },
-    { "harness": "agent", "model": "grok-4.5-xhigh" },
     { "harness": "claude", "model": "claude-opus-4-8" },
     { "harness": "codex", "model": "gpt-5.5" }
   ],
   "goalReview": [
-    { "harness": "opencode", "model": "openrouter/qwen/qwen3.7-max" },
-    { "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-pro" },
-    { "harness": "pi", "model": "openai-codex/gpt-5.5:high" },
-    { "harness": "pi", "model": "anthropic/claude-opus-4-8:xhigh" },
-    { "harness": "agent", "model": "grok-4.5-xhigh" },
+    { "harness": "opencode", "model": "opencode-go/qwen3.7-max" },
+    { "harness": "opencode", "model": "opencode-go/deepseek-v4-pro" },
+    { "harness": "opencode", "model": "opencode-go/minimax-m3" },
+    { "harness": "opencode", "model": "nvidia/deepseek-ai/deepseek-v4-pro" },
+    { "harness": "agent", "model": "composer-2.5" },
+    { "harness": "agent", "model": "grok-4.5-high" },
     { "harness": "codex", "model": "gpt-5.5" },
     { "harness": "claude", "model": "claude-opus-4-8" }
   ],
   "noCredits": [
+    { "harness": "opencode", "model": "opencode-go/deepseek-v4-flash" },
+    { "harness": "opencode", "model": "nvidia/deepseek-ai/deepseek-v4-flash" },
     { "harness": "opencode", "model": "openrouter/qwen/qwen3-coder:free" },
-    { "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-flash:free" },
-    { "harness": "opencode", "model": "openrouter/free" },
+    { "harness": "agent", "model": "composer-2.5" },
     { "harness": "agent", "model": "grok-4.5-medium" }
   ]
 }</code></pre>
@@ -869,13 +878,16 @@ cp config/roles.example.json .harness/roles.json</code></pre>
         <section class="topic" id="herdr">
           <p class="step"><span style="color:#e5c07b">Optional</span> visibility</p>
           <h2>Watch workers in <a href="https://herdr.dev/">herdr</a></h2>
-          <p>Herdr is optional. The supervisor defaults to background workers. Pass <code>--display herdr</code> when you run inside a herdr workspace and want each admitted worker listed in the herdr agent sidebar. Workers land on dedicated <code>harness-workers</code> tabs (max 4 panes per tab; overflow opens <code>harness-workers-2</code>, and so on) so your supervisor pane stays readable.</p>
-          <pre><code># inside a herdr workspace for your project
+          <p>Herdr is optional and auto-detected: run inside a herdr workspace (<code>HERDR_ENV=1</code>) with the <code>herdr</code> CLI installed and the supervisor lists each admitted worker in the herdr agent sidebar automatically — no flag required. Force one mode explicitly with <code>--display background</code> or <code>--display herdr</code>. Every worker gets its own dedicated pane, never a shared or reused shell, on dedicated <code>harness-workers</code> tabs (max 4 panes per tab; overflow opens <code>harness-workers-2</code>, and so on) so your supervisor pane stays readable.</p>
+          <pre><code># inside a herdr workspace: auto-selects herdr, no flag needed
 CONTROL=skills/supervisor   # or your installed plugin path
-node "$CONTROL/scripts/harness-control.mjs" start --repo "$PROJECT" --host codex --display herdr
+node "$CONTROL/scripts/harness-control.mjs" start --repo "$PROJECT" --host codex
 
-# default: background workers (no herdr required)
-node "$CONTROL/scripts/harness-control.mjs" start --repo "$PROJECT" --host codex</code></pre>
+# force background workers, even inside a herdr workspace
+node "$CONTROL/scripts/harness-control.mjs" start --repo "$PROJECT" --host codex --display background
+
+# force herdr panes outside a herdr workspace's auto-detection
+node "$CONTROL/scripts/harness-control.mjs" start --repo "$PROJECT" --host codex --display herdr</code></pre>
           <p>Use <code>herdr agent list</code>, <code>herdr pane read</code>, and <code>herdr wait agent-status</code> to coordinate from the supervisor pane. Event relay (<code>events</code>, <code>ack</code>, <code>respond</code>) is unchanged for phone or plugin consumers.</p>
           <p>For remote access, use herdr's SSH and plugin transports — see the <a href="https://herdr.dev/docs/">herdr documentation</a>.</p>
         </section>

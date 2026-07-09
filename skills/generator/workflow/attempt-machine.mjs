@@ -1,45 +1,44 @@
 /** Attempt loop for Work Items — coding, QA, integration, repair planning. */
 
-export async function runAttemptLoop(ctx) {
-  const {
-    wanted,
-    options,
-    getState,
-    setState,
+export async function runAttemptLoop({
+  wanted,
+  options,
+  context,
+  constants: { MAX_ATTEMPTS, MAX_OPERATIONAL_FAILURES, reconcileScript },
+  fail,
+  command,
+  join,
+  state: {
+    get: getState,
+    set: setState,
+    write: writeState,
+    readJson,
     stateFile,
-    reconcileScript,
-    MAX_ATTEMPTS,
-    MAX_OPERATIONAL_FAILURES,
-    fail,
-    command,
-    readFeatures,
-    updateFeature,
     journal,
     commitPaths,
-    writeState,
-    verifyFirstCache,
-    isVerifyFirst,
-    buildPlan,
-    readRoles,
     block,
-    planRepair,
-    integrate,
-    runAgent,
-    featurePrompt,
-    stopApp,
-    join,
-    context,
     setHeartbeatTimer,
-    setItemPlan,
+    getHeartbeatTimer,
+  },
+  queue: { readFeatures, updateFeature },
+  agent: {
+    run: runAgent,
+    featurePrompt,
+    planRepair,
+    backoffIfRateLimited,
     lastCoder,
     bumpStrike,
-    backoffIfRateLimited,
-    appPid,
-  } = ctx
-
+    buildPlan,
+    readRoles,
+    setItemPlan,
+    getItemPlan,
+  },
+  integrate: { run: integrate, stopApp, appPid },
+  verifyFirst: { cache: verifyFirstCache, isVerifyFirst },
+}) {
   if (!wanted.length) fail('--features is required outside goal-review mode')
   command(process.execPath, [reconcileScript, options.workdir, '--check'], options.workdir)
-  const initialState = await ctx.readJson(stateFile, {})
+  const initialState = await readJson(stateFile, {})
   setState(initialState)
   let state = getState()
 
@@ -76,7 +75,7 @@ export async function runAttemptLoop(ctx) {
     let current = (await readFeatures()).list.find((item) => String(item.id) === String(original.id))
     if (current.integration === true) { results.push({ id: current.id, status: 'passed' }); continue }
     setItemPlan(buildPlan(await readRoles()))
-    const itemPlan = ctx.getItemPlan()
+    const itemPlan = getItemPlan()
     const resumingCurrent = String(state.currentFeatureId) === String(current.id)
     let attempt = resumingCurrent ? Number(state.attempt || current.retries + 1 || 1) : Number(current.retries || 0) + 1
     let repairPlan = resumingCurrent ? state.repairPlan : null
@@ -167,8 +166,7 @@ export async function runAttemptLoop(ctx) {
   }
 
   await stopApp(options.workdir)
-  const heartbeatTimer = ctx.getHeartbeatTimer()
-  clearInterval(heartbeatTimer)
+  clearInterval(getHeartbeatTimer())
   const stuck = results.filter((result) => result.status === 'blocked')
   await writeState({ status: stuck.length ? 'blocked' : 'complete', phase: stuck.length ? 'blocked' : 'complete', nextAction: stuck.length ? 'user-guidance' : 'release-claim', childPid: null })
   return { total: selected.length, passed: results.filter((result) => result.status === 'passed').length, stuck, results }

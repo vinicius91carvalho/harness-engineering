@@ -38,6 +38,7 @@ const { isWorkerStuck, stuckThresholdMs } = await importLib('stuck-worker.mjs')
 const { interpretWorkerOutcome } = await importLib('worker-outcome.mjs')
 const { planWorkerClosedActions } = await importLib('worker-lifecycle.mjs')
 const { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } = await importLib('supervisor-tick.mjs')
+const { planTickAdmission } = await importLib('supervisor-admission.mjs')
 const { pruneOrphanPendingInputs, isCrashBoundContext } = await importLib('supervisor-claims.mjs')
 const { selectClaim, resumeClaim, releaseClaim } = await importLib('claim-lease.mjs')
 const { integrationBranchName, integrationBranchRef } = await importLib('integration-branch.mjs')
@@ -511,11 +512,22 @@ class Supervisor {
   async inspectHerdrWorkers() {
     for (const [key, worker] of [...this.workers]) {
       if (worker.type !== 'herdr') continue
-      if (paneExists(worker.paneId)) continue
-      const tail = readPaneTail(worker.paneId)
       const runState = await readJson(runStateFile(key), {})
       const terminal = ['complete', 'blocked', 'failed'].includes(runState.status)
         || runState.nextAction === 'release-claim'
+      const gone = !paneExists(worker.paneId)
+      // Herdr panes often keep a live shell after the orchestrator exits, so
+      // "pane still exists" is not enough. Treat terminal Run State as done,
+      // close the pane for human monitoring cleanup, then finalize.
+      if (!gone && !terminal) continue
+      const tail = readPaneTail(worker.paneId)
+      if (!gone && terminal) {
+        if (worker.agentName) {
+          const state = runState.status === 'complete' ? 'done' : 'idle'
+          reportHarnessAgent(worker.paneId, worker.agentName, state, runState.status || 'finished')
+        }
+        closePane(worker.paneId)
+      }
       await this.trackClose(this.workerClosed(key, terminal ? 0 : 1, tail).catch((error) => this.crash(error)))
     }
   }
@@ -748,20 +760,39 @@ class Supervisor {
         await this.save()
       }
     }
-    if (shouldFinalizePendingGoal(this.state.retryQueue, this.pendingGoalResult)) {
-      await this.completeGoal(this.pendingGoalResult)
-      return
-    }
-    if (this.pendingGoalResult) return
-    if (await this.maybeGoalReview(snapshot, active, slots)) return
-    for (const item of recoverable) {
-      if (slots < 1) break
-      if (await this.resumeClaim(item.context)) slots--
-    }
-    for (; slots > 0; slots--) {
-      const claim = await this.claim()
-      if (!claim) break
-      await this.spawnWorker(claim)
+    const plan = planTickAdmission({
+      slots,
+      retryQueue: this.state.retryQueue,
+      recoverable,
+      pendingGoalResult: this.pendingGoalResult,
+      snapshot,
+      activeWorkers: active,
+      hasGoalReviewWorker: this.workers.has('goal-review'),
+    })
+    for (const action of plan) {
+      switch (action.type) {
+        case 'finalize_goal':
+          await this.completeGoal(action.result)
+          return
+        case 'wait_pending_goal':
+          return
+        case 'start_goal_review':
+          if (await this.maybeGoalReview(snapshot, active, slots)) return
+          break
+        case 'resume':
+          if (slots < 1) break
+          if (await this.resumeClaim(action.context)) slots--
+          break
+        case 'claim_new':
+          for (; slots > 0; slots--) {
+            const claim = await this.claim()
+            if (!claim) break
+            await this.spawnWorker(claim)
+          }
+          break
+        default:
+          break
+      }
     }
   }
 

@@ -14,6 +14,7 @@ import { pickClaimCandidate, mergeDo, restoreDirtyRuntimeLogs } from '../skills/
 import { MARKER_PATTERN, hasMergeMarkers } from '../skills/generator/lib/integrate-checkpoint.mjs'
 import { interpretWorkerOutcome } from '../skills/generator/lib/worker-outcome.mjs'
 import { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } from '../skills/generator/lib/supervisor-tick.mjs'
+import { planTickAdmission, goalReviewAdmissible } from '../skills/generator/lib/supervisor-admission.mjs'
 import { mkey, strikeOf, buildPlan, buildCandidates, lastCoder } from '../skills/generator/lib/route-plan.mjs'
 import { planWorkerClosedActions } from '../skills/generator/lib/worker-lifecycle.mjs'
 import { pruneOrphanPendingInputs, isCrashBoundContext, liveClaimContexts } from '../skills/generator/lib/supervisor-claims.mjs'
@@ -255,6 +256,77 @@ test('shouldFinalizePendingGoal waits for empty retry queue', () => {
   assert.equal(shouldFinalizePendingGoal({}, { goal: true }), true)
   assert.equal(shouldFinalizePendingGoal({ core: { guidance: 'x' } }, { goal: true }), false)
   assert.equal(shouldFinalizePendingGoal({}, null), false)
+})
+
+function baseSnapshot({ total = 1, integrated = 0 } = {}) {
+  return { queue: Array.from({ length: total }, (_, i) => ({ id: `WI-${i}` })), counts: { total, integrated } }
+}
+
+test('planTickAdmission finalizes a pending goal once the retry queue is empty', () => {
+  const plan = planTickAdmission({
+    slots: 1, retryQueue: {}, recoverable: [], pendingGoalResult: { goal: true, summary: 'done' },
+    snapshot: baseSnapshot(), activeWorkers: 0, hasGoalReviewWorker: false,
+  })
+  assert.deepEqual(plan, [{ type: 'finalize_goal', result: { goal: true, summary: 'done' } }])
+})
+
+test('planTickAdmission waits when a pending goal still has a non-empty retry queue', () => {
+  const plan = planTickAdmission({
+    slots: 1, retryQueue: { core: { guidance: 'x', attempts: 1 } }, recoverable: [], pendingGoalResult: { goal: true },
+    snapshot: baseSnapshot(), activeWorkers: 0, hasGoalReviewWorker: false,
+  })
+  assert.deepEqual(plan, [{ type: 'wait_pending_goal' }])
+})
+
+test('planTickAdmission starts Goal Review once the queue is fully integrated with a free slot', () => {
+  const plan = planTickAdmission({
+    slots: 1, retryQueue: {}, recoverable: [], pendingGoalResult: null,
+    snapshot: baseSnapshot({ total: 2, integrated: 2 }), activeWorkers: 0, hasGoalReviewWorker: false,
+  })
+  assert.deepEqual(plan, [{ type: 'start_goal_review' }])
+})
+
+test('planTickAdmission does not gate Goal Review behind an active worker or an existing goal-review worker', () => {
+  const integrated = baseSnapshot({ total: 1, integrated: 1 })
+  assert.deepEqual(
+    planTickAdmission({ slots: 1, retryQueue: {}, recoverable: [], pendingGoalResult: null, snapshot: integrated, activeWorkers: 1, hasGoalReviewWorker: false }),
+    [{ type: 'claim_new' }],
+  )
+  assert.deepEqual(
+    planTickAdmission({ slots: 1, retryQueue: {}, recoverable: [], pendingGoalResult: null, snapshot: integrated, activeWorkers: 0, hasGoalReviewWorker: true }),
+    [{ type: 'claim_new' }],
+  )
+  assert.deepEqual(
+    planTickAdmission({ slots: 0, retryQueue: {}, recoverable: [], pendingGoalResult: null, snapshot: integrated, activeWorkers: 0, hasGoalReviewWorker: false }),
+    [{ type: 'claim_new' }],
+  )
+})
+
+test('planTickAdmission resumes recoverable claims in order before claiming new work', () => {
+  const plan = planTickAdmission({
+    slots: 2, retryQueue: {}, recoverable: [{ context: 'alpha' }, { context: 'beta' }], pendingGoalResult: null,
+    snapshot: baseSnapshot({ total: 2, integrated: 0 }), activeWorkers: 0, hasGoalReviewWorker: false,
+  })
+  assert.deepEqual(plan, [
+    { type: 'resume', context: 'alpha' },
+    { type: 'resume', context: 'beta' },
+    { type: 'claim_new' },
+  ])
+})
+
+test('planTickAdmission always ends with claim_new when nothing else is recoverable', () => {
+  const plan = planTickAdmission({
+    slots: 3, retryQueue: {}, recoverable: [], pendingGoalResult: null,
+    snapshot: baseSnapshot({ total: 1, integrated: 0 }), activeWorkers: 0, hasGoalReviewWorker: false,
+  })
+  assert.deepEqual(plan, [{ type: 'claim_new' }])
+})
+
+test('goalReviewAdmissible requires an integrated queue, no active workers, a free slot, and no goal-review worker', () => {
+  const integrated = baseSnapshot({ total: 1, integrated: 1 })
+  assert.equal(goalReviewAdmissible({ snapshot: integrated, activeWorkers: 0, slots: 1, hasGoalReviewWorker: false }), true)
+  assert.equal(goalReviewAdmissible({ snapshot: baseSnapshot({ total: 1, integrated: 0 }), activeWorkers: 0, slots: 1, hasGoalReviewWorker: false }), false)
+  assert.equal(goalReviewAdmissible({ snapshot: { queue: [], counts: { total: 0, integrated: 0 } }, activeWorkers: 0, slots: 1, hasGoalReviewWorker: false }), false)
 })
 
 test('route-plan mkey and strikeOf', () => {
