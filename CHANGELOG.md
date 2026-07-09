@@ -11,6 +11,36 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [2.0.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v1.2.0...v2.0.0) (2026-07-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* Merges and Goal Review target a configurable integration
+branch (.harness/integration-branch or HARNESS_INTEGRATION_BRANCH) instead of
+main. Planner and setup require interactive HTML spec review before writing
+project_specs.xml. Herdr workers use one visible pane per context with
+orchestrator and agent output; merge-lock waits no longer flood panes with
+BUSY lines.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+
+### Features
+
+* herdr panes, spec review loop, and plan integration branch ([4e6aa3f](https://github.com/vinicius91carvalho/harness-engineering/commit/4e6aa3fa8628e9ec00b57536aed90a5ac076ad92))
+
+
+### Bug Fixes
+
+* align cursor plugin manifest version with other hosts ([90633f7](https://github.com/vinicius91carvalho/harness-engineering/commit/90633f7c663f85c3ac5f292015a91ed038b76ed2))
+* **ci:** drain exhausted retries when capacity is zero ([9d2d768](https://github.com/vinicius91carvalho/harness-engineering/commit/9d2d768a905de08ca24486f752a41e9a66c65e86))
+* **ci:** fast supervisor quota test path for macOS runners ([75173f3](https://github.com/vinicius91carvalho/harness-engineering/commit/75173f3a043474d8b3dcc7ac9072e4419173efaa))
+* **ci:** give macOS quota supervisor test more time without GNU timeout ([6512ca2](https://github.com/vinicius91carvalho/harness-engineering/commit/6512ca258a6b02960aa7b17e80790573113b8644))
+* **ci:** make supervisor quota test deterministic on macOS ([130de36](https://github.com/vinicius91carvalho/harness-engineering/commit/130de3698a5e8f97110aefbbbc9724d2d897a08a))
+* **ci:** poll quota_wait with jq -e and reset cloned supervisor state ([d5ccfb4](https://github.com/vinicius91carvalho/harness-engineering/commit/d5ccfb449bd6beafaf162feb97ecddda75d796c0))
+* **ci:** preserve complete status and harden namespaced supervisor check ([5455497](https://github.com/vinicius91carvalho/harness-engineering/commit/5455497005f6dde61d15319f7d2c08c2c4d6004d))
+* **supervisor:** make --once true exit after exactly one tick ([fa33a69](https://github.com/vinicius91carvalho/harness-engineering/commit/fa33a69f4ca4579d88e56d48d387d32ae6ca91ca))
+
 ## [1.2.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v1.1.1...v1.2.0) (2026-07-09)
 
 
