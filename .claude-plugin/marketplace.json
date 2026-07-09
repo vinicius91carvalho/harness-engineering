@@ -3,7 +3,6 @@
   "owner": { "name": "Vinicius Carvalho" },
   "plugins": [
     { "name": "harness", "source": "./" },
-    { "name": "ponytail", "source": { "source": "github", "repo": "DietrichGebert/ponytail" } },
-    { "name": "skill-creator", "source": "./" }
+    { "name": "ponytail", "source": { "source": "github", "repo": "DietrichGebert/ponytail" } }
   ]
 }
