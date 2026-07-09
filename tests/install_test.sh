@@ -173,20 +173,28 @@ pass 'secret-backed MCP servers are installed only through the prompted inventor
 mkdir -p "$TMP/remote" "$TMP/systmp"
 cp "$ROOT/install.sh" "$TMP/remote/install.sh"
 chmod +x "$TMP/remote/install.sh"
+export GIT_STUB_LOG="$TMP/git.log"
+: >"$GIT_STUB_LOG"
 cat >"$TMP/bin/git" <<EOF
 #!/bin/sh
+printf '%s\n' "git \$*" >>"\$GIT_STUB_LOG"
 if [ "\$1" = clone ]; then
-  dest=\$5
+  dest=
+  for arg in "\$@"; do dest="\$arg"; done
   mkdir -p "\$dest"
   cp -R "$ROOT/." "\$dest/"
+elif [ "\$1" = ls-remote ]; then
+  printf '0123456789abcdef\trefs/tags/v2.0.0\n'
 else
   echo "unsupported git invocation: \$*" >&2
   exit 1
 fi
 EOF
 chmod +x "$TMP/bin/git"
-TMPDIR="$TMP/systmp" "$TMP/remote/install.sh" --cli claude --yes </dev/null >"$TMP/out" 2>"$TMP/err" \
+TMPDIR="$TMP/systmp" VERSION=v2.0.0 "$TMP/remote/install.sh" --cli claude --yes </dev/null >"$TMP/out" 2>"$TMP/err" \
   || fail 'remote-style install should succeed'
+grep -q -- '--branch v2.0.0' "$GIT_STUB_LOG" || fail 'remote install must clone the pinned release tag'
+grep -q 'staging release v2.0.0' "$TMP/out" "$TMP/err" || fail 'remote install should announce the staged release tag'
 cmd=$(jq -r '.statusLine.command' "$HOME/.claude/settings.json")
 script_path=${cmd#bash }
 [ -f "$script_path" ] || fail 'statusline script must survive installer temp-dir cleanup'
@@ -194,6 +202,20 @@ cmp -s "$script_path" "$ROOT/scripts/statusline.sh" || fail 'persisted statuslin
 [ -z "$(find "$TMP/systmp" -mindepth 1 -maxdepth 1 -name 'harness-installer.*' 2>/dev/null)" ] \
   || fail 'installer temp clone should have been cleaned up'
 pass 'statusline persists after the installer cleans up its temp clone'
+
+"$ROOT/install.sh" --help >"$TMP/out" 2>&1 || fail '--help should succeed'
+grep -q -- '--version' "$TMP/out" || fail 'help should document --version'
+pass 'help documents --version'
+
+mkdir -p "$TMP/remote-dry" "$TMP/systmp2"
+cp "$ROOT/install.sh" "$TMP/remote-dry/install.sh"
+chmod +x "$TMP/remote-dry/install.sh"
+export GIT_STUB_LOG="$TMP/git-dry.log"
+: >"$GIT_STUB_LOG"
+TMPDIR="$TMP/systmp2" "$TMP/remote-dry/install.sh" --cli claude --yes --dry-run </dev/null >"$TMP/out" 2>"$TMP/err" \
+  || fail 'remote dry-run should succeed'
+grep -q 'DRY RUN — git clone --depth 1 --branch' "$TMP/out" || fail 'remote dry-run should show tagged clone'
+pass 'remote dry-run announces release-tag staging'
 
 # Regression: Codex's native status line is a config.toml upsert, not a
 # script. Cover a fresh file, an existing [tui] table with unrelated keys

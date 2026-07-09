@@ -4,14 +4,24 @@ The shell and PowerShell installers target Claude Code, Codex, and OpenCode;
 the shell installer (`install.sh`) also targets Pi. Both require Node.js 18 or
 newer and stop before making changes when it is missing or too old.
 
+Remote installs (for example `curl …/main/install.sh | sh`) fetch the installer
+script from `main`, then clone the **latest GitHub Release tag** into a
+temporary staging directory. Pin a specific release with `--version vX.Y.Z`
+(`install.sh`), `-Version vX.Y.Z` (`install.ps1`), or the environment variables
+`VERSION` / `HARNESS_INSTALL_REF`. A local checkout that contains
+`.claude-plugin/marketplace.json` next to the installer skips cloning and
+stages the working tree instead (dev mode).
+
 ```sh
 ./install.sh --cli claude --no
 ./install.sh --cli all --yes --dry-run
+./install.sh --version v2.0.0 --cli claude --no
 ```
 
 ```powershell
 .\install.ps1 -Cli codex -No
 .\install.ps1 -Cli all -Yes -DryRun
+.\install.ps1 -Version v2.0.0 -Cli codex -No
 ```
 
 `--cli`/`-Cli` selects hosts. `--yes`/`-Yes` selects every compatible checklist

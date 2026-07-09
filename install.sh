@@ -15,14 +15,17 @@ CLI_REQUEST=""
 SCOPE=""
 TEMP_REPO=""
 OWN_TEMP_REPO=""
+VERSION=${VERSION:-${HARNESS_INSTALL_REF:-}}
 
 usage() {
   cat <<'EOF'
 Usage: install.sh [--yes|--no] [--dry-run]
+                  [--version <tag>|--version=<tag>]
                   [--cli claude|codex|opencode|pi|agent|all]
                   [--scope user|project|local]
 
 --yes/--no choose checklist contents; --cli chooses target hosts.
+--version pins the GitHub release tag to stage (e.g. v2.0.0); default is latest.
 --scope is valid only when Claude Code is the sole target.
 EOF
 }
@@ -44,6 +47,8 @@ while [ "$#" -gt 0 ]; do
     --user) SCOPE=user ;;
     --project) SCOPE=project ;;
     --local) SCOPE=local ;;
+    --version=*) VERSION=${1#*=} ;;
+    --version) shift; [ "$#" -gt 0 ] || die '--version requires a value'; VERSION=$1 ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
@@ -236,14 +241,41 @@ run() {
   "$@"
 }
 
+resolve_install_ref() {
+  if [ -n "$VERSION" ]; then
+    printf '%s\n' "$VERSION"
+    return 0
+  fi
+  ref=$(git ls-remote --tags --refs "$REPO_URL" 2>/dev/null \
+    | awk -F/ '{print $NF}' \
+    | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+    | sort -V \
+    | tail -1) || true
+  [ -n "$ref" ] || return 1
+  printf '%s\n' "$ref"
+}
+
 ensure_repo() {
   [ -n "$TEMP_REPO" ] && return
   script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd || true)
   if [ -n "$script_dir" ] && [ -f "$script_dir/.claude-plugin/marketplace.json" ]; then TEMP_REPO=$script_dir; return; fi
-  [ -z "$DRY" ] || { TEMP_REPO='<staged harness repository>'; return; }
+  if [ -n "$DRY" ]; then
+    if [ -n "$VERSION" ]; then
+      ref=$VERSION
+    elif ref=$(resolve_install_ref 2>/dev/null); then
+      :
+    else
+      ref=latest-release-tag
+    fi
+    printf 'DRY RUN — git clone --depth 1 --branch %s %s <temp>\n' "$ref" "$REPO_URL"
+    TEMP_REPO='<staged harness repository>'
+    return
+  fi
+  REF=$(resolve_install_ref) || die 'could not resolve latest release tag'
   TEMP_REPO=$(mktemp -d "${TMPDIR:-/tmp}/harness-installer.XXXXXX")
   OWN_TEMP_REPO=$TEMP_REPO
-  git clone --depth 1 "$REPO_URL" "$TEMP_REPO" || die 'could not download the harness repository'
+  echo "install.sh: staging release $REF"
+  git clone --depth 1 --branch "$REF" "$REPO_URL" "$TEMP_REPO" || die 'could not download the harness repository'
 }
 
 install_claude_marketplace() {
@@ -583,6 +615,13 @@ install_portable_mcp() {
   *' status-line '*|*' shared-config '*|*' mcp-servers '*|*' context7 '*|*' playwright '*|*' codebase-memory-mcp '*)
     ensure_jq ;;
 esac
+
+if [ -n "$DRY" ]; then
+  script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd || true)
+  if [ -z "$script_dir" ] || [ ! -f "$script_dir/.claude-plugin/marketplace.json" ]; then
+    ensure_repo
+  fi
+fi
 
 for cli in $CLI; do
   case "$cli" in claude) install_claude_marketplace ;; codex) install_codex_marketplace ;; esac

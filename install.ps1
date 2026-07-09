@@ -4,6 +4,7 @@ param(
   [switch]$Yes,
   [switch]$No,
   [switch]$DryRun,
+  [string]$Version,
   [ValidateSet("claude", "codex", "opencode", "agent", "all")][string]$Cli,
   [ValidateSet("user", "project", "local")][string]$Scope = "user"
 )
@@ -125,15 +126,38 @@ function Invoke-Native([string]$Exe, [string[]]$Arguments) {
 }
 
 $script:StagedRepo = $null
+$script:InstallRef = $Version
+if (-not $script:InstallRef) { $script:InstallRef = $env:VERSION }
+if (-not $script:InstallRef) { $script:InstallRef = $env:HARNESS_INSTALL_REF }
+
+function Resolve-InstallRef {
+  if ($script:InstallRef) { return $script:InstallRef }
+  $tags = @()
+  $output = & git ls-remote --tags --refs "https://github.com/$MarketplaceRepo.git" 2>$null
+  foreach ($line in $output) {
+    if ($line -match 'refs/tags/(v\d+\.\d+\.\d+)$') { $tags += $Matches[1] }
+  }
+  if ($tags.Count -eq 0) { throw "could not resolve latest release tag" }
+  return ($tags | Sort-Object { [version]($_ -replace '^v', '') } | Select-Object -Last 1)
+}
+
 function Get-Repository {
   if ($script:StagedRepo) { return $script:StagedRepo }
   if ($PSScriptRoot -and (Test-Path (Join-Path $PSScriptRoot ".claude-plugin/marketplace.json"))) {
     $script:StagedRepo = $PSScriptRoot
     return $script:StagedRepo
   }
-  if ($DryRun) { return "<staged harness repository>" }
+  if ($DryRun) {
+    try { $ref = Resolve-InstallRef } catch {
+      $ref = if ($script:InstallRef) { $script:InstallRef } else { "latest-release-tag" }
+    }
+    Write-Host "DRY RUN - git clone --depth 1 --branch $ref https://github.com/$MarketplaceRepo.git <temp>"
+    return "<staged harness repository>"
+  }
+  $ref = Resolve-InstallRef
+  Write-Host "install.ps1: staging release $ref"
   $script:StagedRepo = Join-Path ([IO.Path]::GetTempPath()) ("harness-installer-" + [guid]::NewGuid())
-  Invoke-Native git @("clone", "--depth", "1", "https://github.com/$MarketplaceRepo.git", $script:StagedRepo)
+  Invoke-Native git @("clone", "--depth", "1", "--branch", $ref, "https://github.com/$MarketplaceRepo.git", $script:StagedRepo)
   return $script:StagedRepo
 }
 
@@ -498,6 +522,11 @@ foreach ($target in $Targets) {
       if ($LASTEXITCODE -ne 0) { Invoke-Native codex @("plugin", "marketplace", "add", $MarketplaceRepo) }
     }
   }
+}
+
+if ($DryRun) {
+  $localCheckout = $PSScriptRoot -and (Test-Path (Join-Path $PSScriptRoot ".claude-plugin/marketplace.json"))
+  if (-not $localCheckout) { [void](Get-Repository) }
 }
 
 foreach ($item in $Selected) {
