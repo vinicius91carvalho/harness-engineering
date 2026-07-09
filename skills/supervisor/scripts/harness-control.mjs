@@ -286,13 +286,23 @@ class Supervisor {
     await acquireSupervisorLock(this.leaseToken, process.pid, 'running', this.config.supervisorLeaseSeconds)
     const control = await readJson(controlFile, {})
     const paused = previous.status === 'paused' && control.status !== 'running'
+    const goalPending = Object.values(previous.pendingInputs || {}).some((item) => item.status === 'pending' && item.scope === 'goal')
+    let status = goalPending ? 'needs_input' : paused ? 'paused' : 'running'
+    // Keep an already-complete Goal Review as complete when the integration head is unchanged.
+    // Otherwise a one-tick --once run demotes complete→running and can leave status non-complete.
+    if (!goalPending && !paused && previous.status === 'complete') {
+      const goalStateName = projectPrefix ? `${projectId}--goal-review.json` : 'goal-review.json'
+      const goalState = await readJson(join(commonGit, 'harness-runs', goalStateName), {})
+      const head = git(['rev-parse', integrationBranchName(repo)], true).stdout.trim()
+      const clean = git(['status', '--porcelain'], true).stdout.trim() === ''
+      if (goalState.status === 'complete' && goalState.reviewedHead === head && clean) status = 'complete'
+    }
     this.state = {
       ...previous,
       runId: previous.runId || randomUUID(),
       repo,
       config: this.config,
-      status: Object.values(previous.pendingInputs || {}).some((item) => item.status === 'pending' && item.scope === 'goal')
-        ? 'needs_input' : paused ? 'paused' : 'running',
+      status,
       pendingInputs: previous.pendingInputs || {},
       retryQueue: previous.retryQueue || {},
       startedAt: previous.startedAt || new Date().toISOString(),

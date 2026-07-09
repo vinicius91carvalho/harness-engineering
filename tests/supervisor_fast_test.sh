@@ -149,10 +149,15 @@ cp "$TMP/repo/.git/harness-control/state.json" "$TMP/namespaced/.git/harness-con
 cp "$TMP/repo/.git/harness-control/events.jsonl" "$TMP/namespaced/.git/harness-control/"
 cp "$TMP/repo/.git/harness-runs/goal-review.json" "$TMP/namespaced/.git/harness-runs/"
 PATH="$SUPERVISOR_PATH" "$NODE" \
-  "$TMP/installed/skills/harness-supervisor/scripts/harness-control.mjs" run \
-  --repo "$TMP/namespaced" --host claude --once true --poll-ms 50 --quota-workers 1 \
-  --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100
-jq -e '.status == "complete"' "$TMP/namespaced/.git/harness-control/state.json" >/dev/null
+  "$TMP/installed/skills/harness-supervisor/scripts/harness-control.mjs" start \
+  --repo "$TMP/namespaced" --host claude \
+  | jq -e '.started == false and .status == "complete"' >/dev/null \
+  || {
+    echo 'not ok - namespaced supervisor failed to resolve generator sibling / complete state' >&2
+    "$NODE" "$TMP/installed/skills/harness-supervisor/scripts/harness-control.mjs" status --repo "$TMP/namespaced" >&2 || true
+    cat "$TMP/namespaced/.git/harness-control/state.json" >&2 || true
+    exit 1
+  }
 echo 'ok - OpenCode namespaced supervisor resolves its generator sibling'
 
 git clone -q "$TMP/repo" "$TMP/background"
