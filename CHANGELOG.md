@@ -11,6 +11,72 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [1.2.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v1.1.1...v1.2.0) (2026-07-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* remove Omnigent, add herdr worker panes and native role routing
+
+### Features
+
+* **claim-lease:** deepen claim coordination into ESM module with thin claim.sh wrapper ([9ce6bd3](https://github.com/vinicius91carvalho/harness-engineering/commit/9ce6bd3f047d0169c4f8ddafb3cbeb327294fe44))
+* **generator:** extract attempt workflow modules and redesign docs site ([b57e606](https://github.com/vinicius91carvalho/harness-engineering/commit/b57e6063e355e0e08e8a1e5fa73f441d55fcf84a))
+* **generator:** extract integrate, worker-outcome, and supervisor tick libs ([2029bd4](https://github.com/vinicius91carvalho/harness-engineering/commit/2029bd4180c39569682cf04d6d8540f8ef4a2ff7))
+* **install:** make Pi an installable harness alongside Claude/Codex/OpenCode ([e86f2f6](https://github.com/vinicius91carvalho/harness-engineering/commit/e86f2f6ba02f48cd59eaa65ebc633c6d4d895048))
+* **omnigent:** add plan-feature.sh so feature-layering is a simple relay message ([92bb81c](https://github.com/vinicius91carvalho/harness-engineering/commit/92bb81c77cc327146a805f6e32bdab3ffa458a80))
+* **omnigent:** fold reconcile.mjs into plan-feature.sh's own job ([f33f839](https://github.com/vinicius91carvalho/harness-engineering/commit/f33f83912ff32bf4a1b4fd085fb5c918953d71c2))
+* **skills:** add worktree-git-recovery reference skill ([6da049d](https://github.com/vinicius91carvalho/harness-engineering/commit/6da049df15ed3989ce3525fcd5fe2447f17be82b))
+* add Cursor Agent as a first-class harness host ([11b6d7d](https://github.com/vinicius91carvalho/harness-engineering/commit/11b6d7d88980cb72081bb8811b52fb79f82f2374))
+* add skill-creator plugin from anthropics/skills, fix MCP secret prompt visibility ([9f466a9](https://github.com/vinicius91carvalho/harness-engineering/commit/9f466a92c97e5b145b4032f165ab5ec80fd7a07d))
+* install skill-creator on all 4 tools (claude codex opencode pi) ([c23c41b](https://github.com/vinicius91carvalho/harness-engineering/commit/c23c41bd3c0f44e2440b487c912f9b041a86a210))
+* remove Omnigent, add herdr worker panes and native role routing ([51f7d8d](https://github.com/vinicius91carvalho/harness-engineering/commit/51f7d8d1b7ca25f45dea6984b2ed5a1995ab67d4))
+
+
+### Bug Fixes
+
+* **agents:** forbid gitignoring harness-progress/ in the initializer ([0a1a727](https://github.com/vinicius91carvalho/harness-engineering/commit/0a1a72797fa071f37c2677dd312443baa424c4cf))
+* **ci:** allow 30s for detached supervisor on slower macOS runners ([04476fc](https://github.com/vinicius91carvalho/harness-engineering/commit/04476fcdefb369c3ad720959cfe26a1bc36f86fa))
+* **ci:** allow 60s for circuit-breaker supervisor test on macOS ([bf87306](https://github.com/vinicius91carvalho/harness-engineering/commit/bf873069008cb2d1323d6b2f6cbeed6c50b3d7a3))
+* **ci:** make supervisor tests portable on macOS runners ([0c101ed](https://github.com/vinicius91carvalho/harness-engineering/commit/0c101ed5d0eb662eb790b730e8563092d38a7b19))
+* **ci:** portable timeout for Omnigent scripts on macOS ([b38ffd5](https://github.com/vinicius91carvalho/harness-engineering/commit/b38ffd5938cf2e2f6763f4a62b3b74b6433e4dba))
+* **ci:** use bash sleep/kill fallback instead of perl alarm on macOS ([f4b25b1](https://github.com/vinicius91carvalho/harness-engineering/commit/f4b25b16413721b6b4ed6802bba6bfbe03573182))
+* **generator:** back off after a rate-limited coding/QA attempt instead of instantly retrying ([6037d4b](https://github.com/vinicius91carvalho/harness-engineering/commit/6037d4b96d2cafcd28627b94513b784129f290d2))
+* **generator:** detect and undo a merge commit that still has conflict markers ([4605f46](https://github.com/vinicius91carvalho/harness-engineering/commit/4605f4699fa95ecf1b038ec5a4cc45fbf7bd64d2))
+* **generator:** don't let syncing a worktree with main crash the worker ([9259d7b](https://github.com/vinicius91carvalho/harness-engineering/commit/9259d7b9f2c47f93ea7dd3ba1ea345c05bf26bb4))
+* **generator:** extend the shared-root guardrail to INTEGRATION_QA too ([3a7346c](https://github.com/vinicius91carvalho/harness-engineering/commit/3a7346c3d555a7df800ed1cc72dcb87cbf8d77bd))
+* **generator:** forbid destructive git commands in the autonomous MERGE agent ([3dce61c](https://github.com/vinicius91carvalho/harness-engineering/commit/3dce61c34d05df417b3fb132bd74e7d06c60f09b))
+* **generator:** honor a 429's retry_after_seconds hint, add jitter to the backoff ([49e807d](https://github.com/vinicius91carvalho/harness-engineering/commit/49e807d89146aad08246e75a626242523f92901b))
+* **generator:** make the merge-lock wait budget configurable, bump default to 30m ([38d71f3](https://github.com/vinicius91carvalho/harness-engineering/commit/38d71f3be5015bf28e70d0de6137ab87579d9ab9))
+* **generator:** move pi adapter off OpenRouter's saturated free tier to NVIDIA NIM ([a328915](https://github.com/vinicius91carvalho/harness-engineering/commit/a328915a93362fcfd43d13260b85f7473dde41b4))
+* **generator:** recover from a state lock left by a killed process ([1772625](https://github.com/vinicius91carvalho/harness-engineering/commit/1772625141360543d970b36add5b529292eafe31))
+* **generator:** repair broken custom-provider model reference, move pi/opencode to OpenCode Go ([f67b3ff](https://github.com/vinicius91carvalho/harness-engineering/commit/f67b3ffc61944b585d4f77cb0cc61e6d50f8f5fb))
+* **generator:** restore dirty tracked runtime logs before the integration merge ([3f2eac4](https://github.com/vinicius91carvalho/harness-engineering/commit/3f2eac4635f0cc933f6e96f3706e7ce2c9d920f8))
+* **generator:** switch pi adapter to a free OpenRouter model ([754df43](https://github.com/vinicius91carvalho/harness-engineering/commit/754df43e57438e639140c9d867e8169cc4aa9b64))
+* **generator:** warn MERGE/INTEGRATION_QA agents against parallel git commands ([0f7949c](https://github.com/vinicius91carvalho/harness-engineering/commit/0f7949c3a7a0d41c87070466f39d265cf3dd5e5c))
+* **marketplace:** remove skill-creator from Claude plugin catalog ([9268835](https://github.com/vinicius91carvalho/harness-engineering/commit/9268835da08f8f9a718079214f39bb0cfad311e5))
+* **omnigent:** bootstrap READY requires feature_list.json, not just the spec; bump timeout to 30m ([bc889b9](https://github.com/vinicius91carvalho/harness-engineering/commit/bc889b946ff9954ef04b0919d2f4abd5e569ceeb))
+* **omnigent:** bootstrap scans the target repo, not the relay's cwd; bump summary cadence to 20m ([678dccb](https://github.com/vinicius91carvalho/harness-engineering/commit/678dccb7efd2cf97880d4596789c6259012723d3))
+* **omnigent:** don't fold a byte-truncated UTF-8 log tail into relaunch prompts ([dc61199](https://github.com/vinicius91carvalho/harness-engineering/commit/dc61199e02e7794b3c997ee7a08bb4a681936856))
+* **omnigent:** make supervisor bundle a strict relay and bundle the orchestrator ([7b06d0e](https://github.com/vinicius91carvalho/harness-engineering/commit/7b06d0e1faf144177b63d5eaaac633b830989635))
+* **omnigent:** narrow bootstrap-setup.sh's no-sub-agent rule to siblings only ([5db2d98](https://github.com/vinicius91carvalho/harness-engineering/commit/5db2d985ab4a88ac8514f5cbfa9550e9097880eb))
+* **omnigent:** point plan-feature.sh at the installed reconcile.mjs, not a filesystem search ([851185b](https://github.com/vinicius91carvalho/harness-engineering/commit/851185bc70ef57cd21930036d14a5d64fb6d1c39))
+* **omnigent:** scope bootstrap-setup.sh's prompt to one subproject only ([b122313](https://github.com/vinicius91carvalho/harness-engineering/commit/b1223135a0800a825ba1cf850045dc159f19e537))
+* **omnigent:** stop the relay from self-inspecting the repo at bootstrap ([5d592eb](https://github.com/vinicius91carvalho/harness-engineering/commit/5d592ebea640ffadb44b256a8fb45f45c7a86fac))
+* **supervisor:** bound auto-recovery attempts for a context that crashes before any result ([c50dda2](https://github.com/vinicius91carvalho/harness-engineering/commit/c50dda283bc86b2fc70163b9150ec7f790fa2777))
+* **supervisor:** GC orphaned pending Input Requests each tick ([0adfce2](https://github.com/vinicius91carvalho/harness-engineering/commit/0adfce2960686631386707e14a002004a8879279))
+* **supervisor:** scope generator-claims.json reads to this subproject only ([eabd4e3](https://github.com/vinicius91carvalho/harness-engineering/commit/eabd4e325363076fac1722b0b1b9607eed2a5190))
+* remove skill-creator from marketplace, make OpenCode-only ([b06455c](https://github.com/vinicius91carvalho/harness-engineering/commit/b06455c90ca8666495f487bb497ce618a03dd0de))
+* **supervisor:** make herdr pane spawning opt-in via --display herdr ([7998750](https://github.com/vinicius91carvalho/harness-engineering/commit/799875096c7344f3df23b6b84fa2d319ab0e854a))
+* **supervisor:** surface a worker crash's real log line, not just its exit code ([80cbfb7](https://github.com/vinicius91carvalho/harness-engineering/commit/80cbfb75fd079c83304030c9e3d92786d6c0f481))
+* speed up macOS CI by avoiding detached supervisor leaks ([03d7f71](https://github.com/vinicius91carvalho/harness-engineering/commit/03d7f71765d4b508014cf2bc82881c7350508f41))
+* stabilize orchestrator interrupt test on CI ([71e9daf](https://github.com/vinicius91carvalho/harness-engineering/commit/71e9daf49f88e55a98bdcbaa486080cd069c4d6a))
+
+
+### Performance Improvements
+
+* **supervisor:** calibrate default per-worker memory to 1GB ([429a4ef](https://github.com/vinicius91carvalho/harness-engineering/commit/429a4ef3a65630e72159f1b5a6f6f505b94c4c23))
+
 ### [1.1.1](https://github.com/vinicius91carvalho/harness-engineering/compare/v1.1.0...v1.1.1) (2026-07-03)
 
 
