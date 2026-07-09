@@ -61,11 +61,7 @@ if "$NODE" "$CONTROL" respond --repo "$TMP/invalid" --event "$REQUEST" --action 
   echo 'not ok - conflicting duplicate Input Request response accepted' >&2; exit 1
 fi
 test -f "$TMP/invalid/.git/harness-control/responses/$REQUEST.json"
-PATH="$SUPERVISOR_PATH" "$NODE" "$CONTROL" start --repo "$TMP/invalid" --host claude | jq -e '.started == true' >/dev/null
-for _ in $(seq 1 30); do
-  [ "$("$NODE" "$CONTROL" status --repo "$TMP/invalid" | jq -r 'select(.status == "paused" and .supervisorPid == null) | "ready"')" = ready ] && break
-  sleep 0.1
-done
+PATH="$SUPERVISOR_PATH" supervisor_common_run_once --repo "$TMP/invalid" --host claude --poll-ms 50 --max-load-ratio 100
 "$NODE" "$CONTROL" status --repo "$TMP/invalid" | jq -e '.status == "paused" and .supervisorPid == null' >/dev/null
 "$NODE" "$CONTROL" start --repo "$TMP/invalid" --host claude | jq -e '.started == false and .status == "paused"' >/dev/null
 echo 'ok - invalid planning emits a durable goal Input Request and consumes its idempotent response after restart'
@@ -142,7 +138,7 @@ git -C "$TMP/background" config user.email test@example.invalid
 supervisor_common_write_feature_queue "$TMP/background/feature_list.json" false
 git -C "$TMP/background" add feature_list.json && git -C "$TMP/background" commit -qm reset
 PATH="$SUPERVISOR_PATH" HERDR_ENV=1 supervisor_common_run_once \
-  --repo "$TMP/background" --host claude --once true --poll-ms 50 --display background \
+  --repo "$TMP/background" --host claude --poll-ms 50 --display background \
   --quota-workers 1 --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100
 jq -e '.status == "complete"' "$TMP/background/.git/harness-control/state.json" >/dev/null
 echo 'ok - herdr is optional: default workers stay background even when HERDR_ENV=1'

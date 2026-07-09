@@ -54,6 +54,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      HARNESS_RATE_LIMIT_BACKOFF_MS: 100
+      HARNESS_RATE_LIMIT_JITTER_MS: 0
     steps:
       - uses: actions/checkout@v4
       - run: bash tests/install_test.sh

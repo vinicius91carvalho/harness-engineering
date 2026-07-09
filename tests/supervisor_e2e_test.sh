@@ -9,7 +9,7 @@ mkdir -p "$TMP/repo"
 supervisor_common_init_git_repo "$TMP/repo" false
 
 supervisor_common_run_once \
-  --repo "$TMP/repo" --host claude --once true --poll-ms 100 \
+  --repo "$TMP/repo" --host claude --poll-ms 50 \
   --max-workers 2 --quota-workers 1 --cpu-per-worker 0.25 \
   --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100
 
