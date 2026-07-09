@@ -14,8 +14,9 @@ must pass through its Resource Governor.
 Let `REPO` be the selected harness project directory (which may be below the Git
 top-level), `CONTROL` this skill directory, and
 `WORKER_HOST` one authenticated CLI installed on the machine: `claude`, `codex`,
-`opencode`, or `agent`. An external control surface is not a `WORKER_HOST`; Omnigent role
-routing is selected by project-local `.harness/roles.json` instead.
+`opencode`, or `agent`. Role routing is selected by project-local `.harness/roles.json`.
+When running inside herdr (`HERDR_ENV=1`), workers spawn in sibling panes automatically;
+use `--display background` to keep background processes instead.
 
 At a monorepo root, resolve one project through `.harness/projects.json` before
 starting. Each project has its own specification, queue, supervisor state, and
@@ -82,11 +83,11 @@ only from observed available resources and a known concurrent provider quota.
 ## Relay notifications
 
 Create one durable consumer name per delivery channel, such as
-`omnigent-mobile`. Poll at least once per minute through the Supervisor's native
+`herdr-notify` or `phone`. Poll at least once per minute through the Supervisor's native
 heartbeat/cron mechanism:
 
 ```bash
-node "$CONTROL/scripts/harness-control.mjs" events --repo "$REPO" --consumer omnigent-mobile
+node "$CONTROL/scripts/harness-control.mjs" events --repo "$REPO" --consumer herdr-notify
 ```
 
 For each returned event:
@@ -103,7 +104,7 @@ processed ID. Never acknowledge before delivery:
 
 ```bash
 node "$CONTROL/scripts/harness-control.mjs" ack --repo "$REPO" \
-  --consumer omnigent-mobile --event "$EVENT_ID"
+  --consumer herdr-notify --event "$EVENT_ID"
 ```
 
 This provides at-least-once relay across agent and UI restarts. If delivery
@@ -142,3 +143,16 @@ node "$CONTROL/scripts/harness-control.mjs" stop   --repo "$REPO"
 Never infer completion from an empty queue or agent prose. Completion requires a
 persisted `run_completed` event produced by mandatory Goal Review on integrated
 `main`.
+
+## Herdr workflow
+
+When `HERDR_ENV=1`, start the supervisor inside a herdr workspace for the project.
+Each admitted worker opens in a sibling pane labeled `worker-<context>`.
+
+```bash
+node "$CONTROL/scripts/harness-control.mjs" start --repo "$REPO" --host "$WORKER_HOST"
+```
+
+Use `herdr pane list`, `herdr pane read`, and `herdr wait agent-status` from the
+supervisor pane to observe workers. Force background workers with `--display background`.
+Remote access uses herdr's SSH and plugin transports.

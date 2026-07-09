@@ -23,13 +23,13 @@ Type these in your **coding tool's chat** (Claude Code, Codex, OpenCode, or Curs
 **Existing repo, no new feature yet?** Run `/harness:setup` (no arguments) instead of planner.
 **Long unattended run?** Use `/harness:supervisor` after planning.
 
-→ **[Complete guide](https://vinicius91carvalho.github.io/harness-engineering/)** — diagrams, worked examples, Omnigent, troubleshooting.
+→ **[Complete guide](https://vinicius91carvalho.github.io/harness-engineering/)** — diagrams, worked examples, role routing, herdr, troubleshooting.
 
 ## About
 
 `harness-engineering` is a plugin marketplace plus a **spec → build → QA → Goal Review** workflow.
 The harness owns completion policy; [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://developers.openai.com/codex/), [OpenCode](https://opencode.ai/), and [Cursor Agent](https://cursor.com/docs/cli/overview) run it.
-[Omnigent](https://omnigent.ai/) is optional — a control surface and model router, not a replacement scheduler.
+Optional [herdr](https://herdr.dev/) shows workers in terminal panes; optional `.harness/roles.json` routes phases to ordered tool/model candidates.
 
 **Done means evidence:** independent QA, integration on `main`, and a final Goal Review — not an empty task list.
 
@@ -119,7 +119,7 @@ Requires Git, Bash, **[Node.js 18 or newer](https://nodejs.org/)**, `jq`, and on
 curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh
 ```
 
-Arrow-key checklist: keep `harness` checked; add Omnigent, MCP, or extras if you want them.
+Arrow-key checklist: keep `harness` checked; add MCP or extras if you want them.
 Windows: [`install.ps1`](install.ps1). Details: [installer docs](docs/installer/README.md).
 
 ## Start a project
@@ -215,19 +215,26 @@ bash "$GEN/claim.sh" list "$PROJECT"
 
 Full symptom list: [site troubleshooting](https://vinicius91carvalho.github.io/harness-engineering/#troubleshoot).
 
-## Optional: Omnigent
+## Optional: role routing and herdr
 
-Omnigent is not required to plan, generate, validate, integrate, or review work.
+Role routing is not required to plan, generate, validate, integrate, or review work.
 
-When installed, Omnigent adds a control surface, supervisor relay, and optional routing via [`.harness/roles.json`](https://github.com/vinicius91carvalho/harness-engineering/blob/main/omnigent/harness-engineering/roles.example.json).
+Copy [`config/roles.example.json`](config/roles.example.json) to `.harness/roles.json` to route coding, validation, repair planning, and Goal Review through ordered tool/model candidates.
 
-→ [Omnigent guide](https://vinicius91carvalho.github.io/harness-engineering/#omnigent) · [Routing](https://vinicius91carvalho.github.io/harness-engineering/#routing) · [Mobile / Tailscale](https://vinicius91carvalho.github.io/harness-engineering/#mobile)
+→ [Routing guide](https://vinicius91carvalho.github.io/harness-engineering/#routing) · [Herdr visibility](https://vinicius91carvalho.github.io/harness-engineering/#herdr)
+
+To remove a prior Omnigent install from this machine:
+
+```sh
+rm -rf ~/.omnigent
+uv tool uninstall omnigent 2>/dev/null || true
+```
 
 ## Documentation
 
 | Guide | Contents |
 | --- | --- |
-| [Complete guide](https://vinicius91carvalho.github.io/harness-engineering/) | Full workflow, examples, Omnigent, Tailscale |
+| [Complete guide](https://vinicius91carvalho.github.io/harness-engineering/) | Full workflow, examples, role routing, herdr |
 | [CONTEXT.md](CONTEXT.md) | Ubiquitous language + bounded contexts |
 | [Plugins](docs/plugins.md) | Optional integrations |
 | [Installer](docs/installer/README.md) | Flags and dry runs |

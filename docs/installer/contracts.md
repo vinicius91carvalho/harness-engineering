@@ -20,10 +20,6 @@ The implementation follows the official host contracts:
   plural directories below `~/.config/opencode`. Local MCP servers use the
   [native `mcp` shape](https://opencode.ai/docs/mcp-servers): `type: "local"` and
   an array-valued `command`.
-- [Omnigent installation](https://github.com/omnigent-ai/omnigent#quick-start):
-  POSIX uses the official bootstrap; native Windows uses the documented `uv tool
-  install --python 3.12 omnigent` command. Its directory agent format provides
-  `config.yaml`, `agents/`, and `skills/`.
 
 Maintained decisions:
 
@@ -40,7 +36,8 @@ Maintained decisions:
   host-by-host with auto-indexing enabled. It replaces the removed Claude-only LSP
   plugins. Context7 and Playwright use their upstream host-neutral MCP servers.
 - Existing model choices win unless a project opts into model candidates through
-  `.harness/roles.json`; the installed example is editable and never a global pin.
+  `.harness/roles.json`; `config/roles.example.json` is the editable template and
+  never a global pin.
 - JSON configuration writes retain a pre-normalization backup and replace files
   atomically while preserving unrelated keys.
 - The status-line extra copies its script/config into a persistent per-user

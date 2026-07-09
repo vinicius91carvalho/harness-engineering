@@ -80,10 +80,8 @@
           <p class="nav-group-title">Advanced</p>
           <nav>
             <a href="#advanced">Overview</a>
-            <a href="#omnigent">Omnigent</a>
             <a href="#routing">Tool routing</a>
-            <a href="#run-omnigent">Run via Omnigent</a>
-            <a href="#mobile">Phone access</a>
+            <a href="#herdr">Herdr visibility</a>
             <a href="#help">More docs</a>
           </nav>
         </div>
@@ -123,8 +121,7 @@
           <div class="card-grid">
             <article><strong>Harness</strong><span>Specification, scheduler, QA loop, integration policy, durable state, and Goal Review.</span></article>
             <article><strong><a href="https://code.claude.com/docs/en/overview">Claude Code</a> / <a href="https://developers.openai.com/codex/">Codex</a> / <a href="https://opencode.ai/">OpenCode</a> / <a href="https://cursor.com/docs/cli/overview">Cursor Agent</a> / Pi</strong><span>Hosts that plan, code, test, and review through the same workflow.</span></article>
-            <article><strong><a href="https://omnigent.ai/">Omnigent</a></strong><span>Optional control surface and tool/model router — not another scheduler.</span></article>
-            <article><strong><a href="https://tailscale.com/">Tailscale</a></strong><span>Optional private transport for reaching Omnigent from another device.</span></article>
+            <article><strong><a href="https://herdr.dev/">herdr</a></strong><span>Optional terminal multiplexer for visible worker panes and remote access.</span></article>
           </div>
 
           <h3>Bounded contexts</h3>
@@ -145,14 +142,18 @@ flowchart TB
     HC[harness-control.mjs]
   end
   subgraph RT["Optional routing"]
-    OMNI[Omnigent + roles.json]
+    ROLES[roles.json]
+  end
+  subgraph VIS["Optional visibility"]
+    HERDR[herdr panes]
   end
   INS --> PIPE
   HC --> ORCH
   ORCH --> ATT
   ORCH --> CLAIM
   HC --> CLAIM
-  OMNI -.-> ORCH
+  ROLES -.-> ORCH
+  HC -.-> HERDR
             </pre>
           </div>
 
@@ -224,7 +225,7 @@ flowchart LR
 bash --version
 node --version
 claude --version  # or: codex --version / opencode --version / pi --version</code></pre>
-          <p class="files"><strong>Optional:</strong> <a href="https://omnigent.ai/">Omnigent</a> for control and routing; <a href="https://tailscale.com/">Tailscale</a> for private phone access. The installer adds <code>jq</code> when needed.</p>
+          <p class="files"><strong>Optional:</strong> project-local <code>.harness/roles.json</code> for tool/model routing; <a href="https://herdr.dev/">herdr</a> for visible worker panes and remote access. The installer adds <code>jq</code> when needed.</p>
         </section>
 
         <section class="topic" id="install">
@@ -502,7 +503,7 @@ stateDiagram-v2
               <tr><td><code>.git/harness-runs/</code></td><td>Run State, routes, evidence per context.</td><td>Orchestrator</td></tr>
               <tr><td><code>.git/generator-claims.json</code></td><td>Live Claim Leases for all contexts.</td><td>claim-lease.mjs</td></tr>
               <tr><td><code>.git/harness-control/</code></td><td>Supervisor state, pending input, ordered events.</td><td>harness-control.mjs</td></tr>
-              <tr><td><code>.harness/roles.json</code></td><td>Optional Omnigent tool/model routing.</td><td>You (optional)</td></tr>
+              <tr><td><code>.harness/roles.json</code></td><td>Optional per-role tool/model routing.</td><td>You (optional)</td></tr>
               <tr><td><code>.harness/projects.json</code></td><td>Optional monorepo project registry.</td><td>Setup</td></tr>
             </tbody>
           </table>
@@ -743,7 +744,7 @@ node "$CONTROL" pause    --repo "$PROJECT"
 node "$CONTROL" resume   --repo "$PROJECT"
 node "$CONTROL" stop     --repo "$PROJECT"
 node "$CONTROL" events   --repo "$PROJECT" --consumer manual-check</code></pre>
-          <p>If work blocks, answer the exact Input Request through Omnigent or the supervisor's explicit response/resume path. Branches, worktrees, evidence, and Repair Plans remain available.</p>
+          <p>If work blocks, answer the exact Input Request through the supervisor's <code>respond</code> path or any durable event consumer. Branches, worktrees, evidence, and Repair Plans remain available.</p>
           <div class="checks">
             <article><span>1</span><div><strong>Supervisor finished</strong><p><code>status: complete</code> and <code>supervisorPid: null</code>.</p></div></article>
             <article><span>2</span><div><strong>Queue integrated</strong><p>Every item has <code>implementation</code>, <code>qa</code>, and <code>integration</code> set to true.</p></div></article>
@@ -776,22 +777,8 @@ bash "$GEN/claim.sh" list "$PROJECT"</code></pre>
 
         <section class="topic" id="advanced">
           <p class="step">Advanced</p>
-          <h2>Optional: Omnigent control and routing</h2>
-          <p>Nothing below is required to plan, generate, validate, integrate, or review work — the harness runs completely without Omnigent. The following sections cover its control surface, tool/model routing, and private phone access.</p>
-        </section>
-
-        <section class="topic" id="omnigent">
-          <p class="step">Optional tool</p>
-          <h2>What <a href="https://omnigent.ai/">Omnigent</a> adds</h2>
-          <p>The harness runs directly through Claude Code, Codex, OpenCode, or Pi without Omnigent. When selected in the installer, Omnigent can:</p>
-          <ul>
-            <li>provide a local web/mobile control surface;</li>
-            <li>start and observe the detached supervisor;</li>
-            <li><strong>route coding, validation, repair planning, and Goal Review to ordered tool/model candidates;</strong></li>
-            <li>relay durable Input Requests.</li>
-          </ul>
-          <p>It does not own claims, retries, merges, QA policy, or Goal Review.</p>
-          <p>A project-local <code>.harness/roles.json</code> enables routing. Removing it returns to direct tool execution. The schema's existing <code>harness</code> key selects a Claude Code, Codex, OpenCode, or Pi adapter for each ordered candidate; the complete workflow remains the harness.</p>
+          <h2>Optional routing and visibility</h2>
+          <p>Nothing below is required to plan, generate, validate, integrate, or review work. The harness runs completely with a single host CLI. The following sections cover per-role tool/model routing and optional herdr visibility for long runs.</p>
         </section>
 
         <section class="topic" id="routing">
@@ -800,7 +787,7 @@ bash "$GEN/claim.sh" list "$PROJECT"</code></pre>
           <p>Each array runs from highest to lowest priority. The engine advances only after a rate limit, authentication failure, unavailable model, launch failure, or timeout. A successful QA response that finds a product defect enters the Repair Plan loop instead of trying another model.</p>
           <p>Validation, integrated QA, and Goal Review first prefer a tool different from the actual coding tool. Configured order remains stable within the independent and same-tool groups. Every route and fallback reason is persisted.</p>
           <p>A model that fails from an infra error or a repeated QA rejection is demoted to the back of its role list for the rest of the run, so the run self-heals instead of retrying the same broken candidate, and a coder that declines a Work Item falls through to the next candidate. The optional <code>noCredits</code> array is a free-tier fallback tried only once paid options are exhausted by infra/credit errors. Repair retries are bounded by <code>HARNESS_REPAIR_BUDGET</code> (default <code>2</code>).</p>
-          <p class="source"><strong>Full source:</strong> <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/omnigent/harness-engineering/roles.example.json">https://github.com/vinicius91carvalho/harness-engineering/blob/main/omnigent/harness-engineering/roles.example.json</a></p>
+          <p class="source"><strong>Full source:</strong> <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/config/roles.example.json">https://github.com/vinicius91carvalho/harness-engineering/blob/main/config/roles.example.json</a></p>
           <p><strong>Why open-source models lead:</strong> DeepSeek, Kimi, GLM, and Qwen are cheap enough to run every coding, validation, and repair-planning attempt without rationing calls. The tradeoff is inconsistent quality on hard tasks, so Claude and Codex sit at the back of each list as a fallback: a failing open-weight candidate is demoted and the run falls through to a proprietary model rather than retrying the same one. Delete the open-weight entries to use only proprietary models; add an entry with its <code>harness</code>/<code>model</code> pair to add another open-weight one.</p>
           <pre><code>{
   "coding": [
@@ -843,63 +830,29 @@ bash "$GEN/claim.sh" list "$PROJECT"</code></pre>
   ]
 }</code></pre>
           <pre><code>mkdir -p .harness
-cp ~/.omnigent/agents/harness-engineering/roles.example.json .harness/roles.json</code></pre>
-          <p class="files">Copy this file only when using Omnigent. Configure or remove every listed provider/model before execution.</p>
+cp config/roles.example.json .harness/roles.json</code></pre>
+          <p class="files">Copy from the repository's <code>config/roles.example.json</code> (or your plugin install path). Configure or remove every listed provider/model before execution. Without this file, the orchestrator uses the active host CLI directly.</p>
         </section>
 
-        <section class="topic" id="run-omnigent">
-          <p class="step"><span style="color:#e5c07b">Optional</span> execution</p>
-          <h2>Start or resume through Omnigent</h2>
-          <pre><code>cd /path/to/git-root
-omni run ~/.omnigent/agents/harness-engineering --harness codex</code></pre>
-          <pre><code>Act as the Supervisor for /absolute/path/to/project.
-Start or resume the harness. Use the project role file.
-Continue until input is needed or a persisted run_completed event exists.</code></pre>
-          <p>Start from the Git root and name the exact project directory, especially in a monorepo.</p>
-          <p class="warning"><strong><span style="color:#e5c07b">Limitation:</span></strong> the agent bundle only loads under a <strong>headless</strong> harness such as <code>codex</code>, <code>claude</code>, or <code>pi</code>. <code>--harness opencode</code> launches the interactive OpenCode TUI and ignores the AGENT spec, so Omnigent rejects the combination (<code>omni run &lt;agent&gt; --harness opencode</code> errors). OpenCode still runs as a <strong>worker route</strong> per <code>.harness/roles.json</code> — the supervisor spawns <code>opencode run</code> per phase — it just can't be the Supervisor. To use OpenCode as the host, run <code>opencode</code> directly and invoke the <a href="#start">harness skills</a> (attached, no Omnigent relay). Tracked upstream at <a href="https://github.com/omnigent-ai/omnigent/issues/1816">omnigent-ai/omnigent#1816</a>.</p>
-        </section>
+        <section class="topic" id="herdr">
+          <p class="step"><span style="color:#e5c07b">Optional</span> visibility</p>
+          <h2>Watch workers in <a href="https://herdr.dev/">herdr</a></h2>
+          <p>When the supervisor runs inside herdr (<code>HERDR_ENV=1</code>), each admitted worker opens in a sibling pane automatically. You see coding, QA, and Goal Review agents in the herdr sidebar without tailing log files.</p>
+          <pre><code># inside a herdr workspace for your project
+CONTROL=skills/supervisor   # or your installed plugin path
+node "$CONTROL/scripts/harness-control.mjs" start --repo "$PROJECT" --host codex
 
-        <section class="topic" id="mobile">
-          <p class="step"><span style="color:#e5c07b">Optional</span> private phone access</p>
-          <h2>Reach Omnigent from a phone with <a href="https://tailscale.com/">Tailscale</a></h2>
-          <p>You do not need Tailscale to watch a run. Local observation uses the <a href="#operate">control script</a> directly: <code>status</code>, <code>events</code>, <code>pause</code>, <code>resume</code>, <code>stop</code>. The steps below add a web/mobile control surface only — for reaching the project machine from a phone over a private tailnet. If you only work from the same machine, skip this section.</p>
-
-          <h3>Full setup: supervisor, web UI, and phone</h3>
-          <p>Run these from the project machine. <code>omni run</code> starts the Supervisor <em>and</em> the embedded Omnigent web UI together — there is no separate <code>omni server start</code> or <code>omni host</code> to run. (A standalone <code>omni server start</code> only collides: it prints <em>"Background server already running"</em> and leaves the old one up.)</p>
-          <pre><code># 1. Install Tailscale on the project machine AND your phone, sign both
-#    into the same tailnet (https://login.tailscale.com/admin/machines).
-
-# 2. Find the project machine's Tailscale hostname:
-tailscale status | grep "$(hostname)"
-#    The first column is YOUR-MACHINE, e.g. "mybox". Tailscale maps it to
-#    "mybox.ts.net" (or your tailnet's custom domain if you set one).
-
-# 3. Stop any Omnigent daemon that is already running WITHOUT the tailnet
-#    env vars (omni run reuses a running daemon and will NOT pick up new
-#    env vars on its own line):
-omnigent stop
-
-# 4. Start the Supervisor + embedded web UI, scoped to the tailnet.
-#    The env vars must be on THIS command so the fresh daemon inherits them:
-OMNIGENT_WS_ALLOWED_ORIGINS=https://YOUR-MACHINE.ts.net \
-OMNIGENT_ACCOUNTS_BASE_URL=https://YOUR-MACHINE.ts.net \
-  omni run ~/.omnigent/agents/harness-engineering --harness codex
-
-# 5. In a second terminal, expose the daemon's port to the tailnet over HTTPS:
-sudo tailscale serve --bg http://localhost:6767</code></pre>
-          <p>Then open <code>https://YOUR-MACHINE.ts.net</code> from the phone. The Supervisor and its web UI both run in step 4 (the daemon owns the runner in-process, so no <code>omni host</code>); step 5 just proxies the phone's HTTPS to the daemon's local port. <code>tailscale serve</code> must target <code>localhost:6767</code> — the native daemon's port — <em>not</em> 8000 (that's the Docker-Compose container port from Omnigent's Tailscale guide, which doesn't apply to <code>omni run</code>). The <code>--bg</code> flag runs the proxy persistently in the background; HTTPS is the default frontend, so the phone reaches <code>https://YOUR-MACHINE.ts.net</code>. (Tailscale 1.52+ uses the single-URL form above; older three-argument syntax is obsolete.)</p>
-
-          <h3>What is <code>YOUR-MACHINE</code>?</h3>
-          <p>It is the <strong>Tailscale Magic DNS hostname of the project machine</strong>, <em>not</em> <code>127.0.0.1</code> or <code>localhost</code>. Tailscale assigns every device on your tailnet a name like <code>mybox</code>, reachable as <code>mybox.ts.net</code> (or your tailnet's custom domain). Find it with <code>tailscale status</code> or in the <a href="https://login.tailscale.com/admin/machines">Tailscale admin console</a>. The phone can't reach the machine's loopback (<code>127.0.0.1</code>), so the phone-side URL must be the tailnet name; only the <code>tailscale serve</code> backend uses <code>localhost:6767</code> because that proxy runs on the project machine itself.</p>
-
-          <p class="warning"><strong><span style="color:#e5c07b">Limitation:</span></strong> step 4 accepts a <strong>headless</strong> harness such as <code>codex</code>, <code>claude</code>, or <code>pi</code>. <code>--harness opencode</code> launches the OpenCode TUI and ignores the agent bundle, so it can't drive the Supervisor from the phone. To run the supervisor while you watch it on mobile, pick a headless harness; OpenCode remains available as a worker route via <code>.harness/roles.json</code>. Use <code>tailscale serve</code>, not Funnel, for tailnet-only access. The project machine must remain awake.</p>
+# optional: force background workers instead of panes
+node "$CONTROL/scripts/harness-control.mjs" start --repo "$PROJECT" --host codex --display background</code></pre>
+          <p>Use <code>herdr pane list</code>, <code>herdr pane read</code>, and <code>herdr wait agent-status</code> to coordinate from the supervisor pane. Event relay (<code>events</code>, <code>ack</code>, <code>respond</code>) is unchanged for phone or plugin consumers.</p>
+          <p>For remote access, use herdr's SSH and plugin transports — see the <a href="https://herdr.dev/docs/">herdr documentation</a>.</p>
         </section>
 
         <section class="topic" id="maintenance">
           <p class="step">Maintenance</p>
           <h2>Keep the workflow current and recoverable</h2>
           <ul>
-            <li><strong>Update:</strong> rerun the installer to refresh plugins and the optional Omnigent bundle.</li>
+            <li><strong>Update:</strong> rerun the installer to refresh plugins.</li>
             <li><strong>Inspect:</strong> use status/events plus <code>harness-progress/</code>, <code>.git/harness-runs/</code>, and <code>.git/harness-control/</code>.</li>
             <li><strong>Pause safely:</strong> use supervisor operations so it and child processes stay consistent.</li>
             <li><strong>Back up configuration:</strong> run <code>/harness:update-project</code>; credentials, caches, and sessions are excluded.</li>

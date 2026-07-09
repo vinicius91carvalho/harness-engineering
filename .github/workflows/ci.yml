@@ -9,7 +9,7 @@ jobs:
 
       - name: JSON valid
         run: |
-          jq empty .claude-plugin/*.json .codex-plugin/*.json .cursor-plugin/*.json .agents/plugins/marketplace.json config/*.json opencode.json omnigent/harness-engineering/roles.example.json
+          jq empty .claude-plugin/*.json .codex-plugin/*.json .cursor-plugin/*.json .agents/plugins/marketplace.json config/*.json opencode.json
 
       - name: Catalog and asset contracts
         run: |
@@ -22,7 +22,8 @@ jobs:
       - name: Shell syntax
         run: |
           sh -n install.sh
-          bash -n scripts/statusline.sh scripts/sync-config.sh omnigent/harness-engineering/scripts/bootstrap-setup.sh omnigent/harness-engineering/scripts/plan-feature.sh omnigent/harness-engineering/scripts/portable-timeout.sh
+          bash -n scripts/statusline.sh scripts/sync-config.sh
+          bash -n tests/supervisor_common.sh tests/supervisor_fast_test.sh tests/supervisor_e2e_test.sh tests/supervisor_test.sh
 
       - name: Selftests
         run: |
@@ -30,10 +31,8 @@ jobs:
           bash tests/orchestrator_test.sh
           bash tests/supervisor_test.sh
           bash tests/site_test.sh
-          bash tests/omnigent_test.sh
-          bash tests/bootstrap_setup_test.sh
-          bash tests/plan_feature_test.sh
           bash tests/reconcile_test.sh
+          node tests/herdr_spawn_test.mjs
           bash tests/setup_inventory_test.sh
           bash tests/claim_test.sh
           bash tests/lib_test.sh
@@ -59,11 +58,11 @@ jobs:
       - uses: actions/checkout@v4
       - run: bash tests/install_test.sh
       - run: bash tests/orchestrator_test.sh
-      - run: bash tests/supervisor_test.sh
+      - run: bash tests/supervisor_fast_test.sh
+      - if: matrix.os == 'ubuntu-latest'
+        run: bash tests/supervisor_e2e_test.sh
       - run: bash tests/site_test.sh
-      - run: bash tests/omnigent_test.sh
-      - run: bash tests/bootstrap_setup_test.sh
-      - run: bash tests/plan_feature_test.sh
+      - run: node tests/herdr_spawn_test.mjs
       - run: bash tests/reconcile_test.sh
       - run: bash tests/setup_inventory_test.sh
       - run: bash tests/claim_test.sh

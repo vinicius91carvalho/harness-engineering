@@ -7,8 +7,7 @@ CLAUDE_MARKETPLACE="harness-engineering"
 CODEX_MARKETPLACE="harness-engineering"
 REPO_URL="https://github.com/$MARKETPLACE_REPO.git"
 MEMORY_INSTALLER="https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh"
-OMNIGENT_INSTALLER="https://raw.githubusercontent.com/omnigent-ai/omnigent/main/scripts/install_oss.sh"
-OPTIONAL="omnigent ponytail skill-creator codebase-memory-mcp context7 playwright status-line shared-config mcp-servers"
+OPTIONAL="ponytail skill-creator codebase-memory-mcp context7 playwright status-line shared-config mcp-servers"
 
 ASSUME=""
 DRY=""
@@ -203,7 +202,7 @@ if [ -n "$SCOPE" ] && [ "$CLI" != claude ]; then die '--scope is only valid when
 plugin_clis() {
   case "$1" in
     harness) echo 'claude codex opencode pi agent' ;;
-    omnigent|ponytail) echo 'claude codex opencode agent' ;;
+    ponytail) echo 'claude codex opencode agent' ;;
     skill-creator) echo 'claude codex opencode pi agent' ;;
     codebase-memory-mcp|context7|playwright) echo 'claude codex opencode agent' ;;
     mcp-servers) echo 'claude codex opencode agent' ;;
@@ -245,37 +244,6 @@ ensure_repo() {
   TEMP_REPO=$(mktemp -d "${TMPDIR:-/tmp}/harness-installer.XXXXXX")
   OWN_TEMP_REPO=$TEMP_REPO
   git clone --depth 1 "$REPO_URL" "$TEMP_REPO" || die 'could not download the harness repository'
-}
-
-install_omnigent() {
-  if [ -n "$DRY" ]; then
-    echo "DRY RUN — install Omnigent with the official runtime installer"
-    echo "DRY RUN — install agent bundle at $HOME/.omnigent/agents/harness-engineering"
-    echo "DRY RUN — bundle harness-control.mjs and generator scripts into the agent bundle"
-    return
-  fi
-  if ! command -v omni >/dev/null 2>&1 && ! command -v omnigent >/dev/null 2>&1; then
-    command -v curl >/dev/null 2>&1 || die 'curl is required to install Omnigent'
-    installer=$(mktemp "${TMPDIR:-/tmp}/omnigent-install.XXXXXX")
-    curl -fsSL "$OMNIGENT_INSTALLER" -o "$installer" || die 'Omnigent installer download failed'
-    sh "$installer" || { rm -f "$installer"; die 'Omnigent runtime installation failed'; }
-    rm -f "$installer"
-  fi
-  ensure_repo
-  source=$TEMP_REPO/omnigent/harness-engineering
-  [ -f "$source/config.yaml" ] || die 'bundled Omnigent agent is missing'
-  dest=$HOME/.omnigent/agents/harness-engineering
-  rm -rf "$dest"; mkdir -p "$dest"; cp -R "$source"/. "$dest"/
-  # Bundle the orchestrator so the supervisor agent can call it from a known path.
-  # harness-control.mjs resolves the generator via $script/../../harness-generator,
-  # so the generator must live one level above the bundle dir.
-  mkdir -p "$dest/scripts"
-  cp "$TEMP_REPO/skills/supervisor/scripts/harness-control.mjs" "$dest/scripts/"
-  parent="$HOME/.omnigent/agents"
-  mkdir -p "$parent/harness-generator"
-  cp "$TEMP_REPO/skills/generator/orchestrator.mjs" "$TEMP_REPO/skills/generator/reconcile.mjs" "$parent/harness-generator/"
-  cp "$TEMP_REPO/skills/generator/claim.sh" "$TEMP_REPO/skills/generator/claim.ps1" "$parent/harness-generator/"
-  chmod +x "$dest/scripts/harness-control.mjs" "$parent/harness-generator/orchestrator.mjs" "$parent/harness-generator/reconcile.mjs" "$parent/harness-generator/claim.sh" "$parent/harness-generator/claim.ps1"
 }
 
 install_claude_marketplace() {
@@ -622,7 +590,6 @@ done
 
 for item in $SELECTED; do
   case "$item" in
-    omnigent) install_omnigent ;;
     skill-creator) install_skill_creator ;;
     codebase-memory-mcp) install_memory ;;
     context7|playwright) install_portable_mcp "$item" ;;

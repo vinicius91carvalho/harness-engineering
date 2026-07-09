@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-import { readFile, rename, writeFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import { resolve } from 'node:path'
+import { atomicJson } from './lib/fs-json.mjs'
 
 function fail(message) {
   process.stderr.write(`reconcile: ${message}\n`)
@@ -42,9 +43,7 @@ async function readQueue() {
   } catch (error) {
     const fallback = mainQueueFallback()
     if (!fallback) throw error
-    const temporary = `${queueFile}.tmp.${process.pid}`
-    await writeFile(temporary, `${JSON.stringify(fallback, null, 2)}\n`)
-    await rename(temporary, queueFile)
+    await atomicJson(queueFile, fallback)
     return fallback
   }
 }
@@ -147,9 +146,7 @@ for (const item of queue) {
 }
 
 if (!checkOnly && (missing.length || filled.length)) {
-  const temporary = `${queueFile}.tmp.${process.pid}`
-  await writeFile(temporary, `${JSON.stringify(queue, null, 2)}\n`)
-  await rename(temporary, queueFile)
+  await atomicJson(queueFile, queue)
 }
 
 process.stdout.write(`${JSON.stringify({ acceptanceChecks: checks.length, addedWorkItems: missing.length, addedIds: missing.map((check) => check.id), filledDependsOn: filled })}\n`)

@@ -13,10 +13,9 @@ $MarketplaceRepo = "vinicius91carvalho/harness-engineering"
 $ClaudeMarketplace = "harness-engineering"
 $CodexMarketplace = "harness-engineering"
 $MemoryInstaller = "https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.ps1"
-$Optional = @("omnigent", "ponytail", "skill-creator", "codebase-memory-mcp", "context7", "playwright", "status-line", "shared-config", "mcp-servers")
+$Optional = @("ponytail", "skill-creator", "codebase-memory-mcp", "context7", "playwright", "status-line", "shared-config", "mcp-servers")
 $PluginClis = @{
   harness = @("claude", "codex", "opencode", "agent")
-  omnigent = @("claude", "codex", "opencode", "agent")
   ponytail = @("claude", "codex", "opencode", "agent")
   "skill-creator" = @("claude", "codex", "opencode", "agent")
   "codebase-memory-mcp" = @("claude", "codex", "opencode", "agent")
@@ -145,38 +144,6 @@ function Remove-OpenCodePluginFiles([string]$Name) {
     if (-not (Test-Path $dirPath)) { continue }
     Get-ChildItem "$dirPath/$Name-*" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
   }
-}
-
-function Install-Omnigent {
-  if ($DryRun) {
-    Write-Host "DRY RUN - install Omnigent with the official uv runtime installer"
-    Write-Host "DRY RUN - install agent bundle at $HOME/.omnigent/agents/harness-engineering"
-    Write-Host "DRY RUN - bundle harness-control.mjs and generator scripts into the agent bundle"
-    return
-  }
-  if (-not (Get-Command omni -ErrorAction SilentlyContinue) -and -not (Get-Command omnigent -ErrorAction SilentlyContinue)) {
-    if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { throw "uv is required for the official Omnigent Windows installation" }
-    Invoke-Native uv @("tool", "install", "--python", "3.12", "omnigent")
-  }
-  $source = Join-Path (Get-Repository) "omnigent/harness-engineering"
-  if (-not (Test-Path (Join-Path $source "config.yaml"))) { throw "Bundled Omnigent agent is missing" }
-  $destination = Join-Path $HOME ".omnigent/agents/harness-engineering"
-  Remove-Item $destination -Recurse -Force -ErrorAction SilentlyContinue
-  New-Item -ItemType Directory -Force $destination | Out-Null
-  Copy-Item (Join-Path $source "*") $destination -Recurse -Force
-  # Bundle the orchestrator so the supervisor agent can call it from a known path.
-  # harness-control.mjs resolves the generator via $script/../../harness-generator,
-  # so the generator must live one level above the bundle dir.
-  $repo = Get-Repository
-  $scriptsDir = New-Item -ItemType Directory -Force (Join-Path $destination "scripts")
-  $parentGenerator = New-Item -ItemType Directory -Force (Join-Path (Split-Path $destination -Parent) "harness-generator")
-  Copy-Item (Join-Path $repo "skills/supervisor/scripts/harness-control.mjs") $scriptsDir -Force
-  Copy-Item @(
-    (Join-Path $repo "skills/generator/orchestrator.mjs"),
-    (Join-Path $repo "skills/generator/reconcile.mjs"),
-    (Join-Path $repo "skills/generator/claim.sh"),
-    (Join-Path $repo "skills/generator/claim.ps1")
-  ) $parentGenerator -Force
 }
 
 function Install-AgentPlugin([string]$Name) {
@@ -534,7 +501,6 @@ foreach ($target in $Targets) {
 }
 
 foreach ($item in $Selected) {
-  if ($item -eq "omnigent") { Install-Omnigent; continue }
   if ($item -eq "skill-creator") { Install-SkillCreator; continue }
   if ($item -eq "codebase-memory-mcp") { Install-Memory; continue }
   if ($item -eq "context7" -or $item -eq "playwright") { Install-PortableMcp $item; continue }

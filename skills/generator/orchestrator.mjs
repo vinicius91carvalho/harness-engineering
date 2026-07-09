@@ -3,7 +3,7 @@ import { appendFile, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs
 import { realpathSync } from 'node:fs'
 import { spawn, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { homedir, hostname } from 'node:os'
+import { hostname } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readJson, atomicJson } from './lib/fs-json.mjs'
@@ -11,7 +11,7 @@ import { parseObject, VERDICT_HINT, isProviderQuotaLimited, fallbackReason } fro
 import { writeWorkerResult } from './lib/worker-result.mjs'
 import { cleanupBrowserOrphans } from './lib/browser-cleanup.mjs'
 import { integrateCheckpoint } from './lib/integrate-checkpoint.mjs'
-import { hostCommands, roleNames } from './adapters/hosts.mjs'
+import { buildHostCommand, hostCommands, roleNames } from './adapters/hosts.mjs'
 import { featurePrompt as buildFeaturePrompt } from './prompts/feature.mjs'
 import { createWorkflowState } from './lib/workflow-state.mjs'
 import { buildPlan, buildCandidates, lastCoder, mkey, bumpStrike } from './lib/route-plan.mjs'
@@ -247,15 +247,15 @@ async function runAgent(kind, prompt, id, attempt, cwd = options.workdir) {
       ? (candidate.harness === (codedBy || roles?.coding[0].harness) ? 'same-harness-fallback' : 'independent-harness')
       : 'not-applicable'
     const route = {
-      adapter: direct ? 'direct' : 'omnigent', kind, id: String(id), harness: candidate.harness,
+      adapter: direct ? 'direct' : 'roles', kind, id: String(id), harness: candidate.harness,
       model: candidate.model || null, fallbackReason: failures.at(-1)?.reason || (!direct && independence === 'same-harness-fallback' ? 'no-different-harness-available' : null),
       independence,
     }
     const [program, args] = direct
       ? hostCommands[candidate.harness](referencedPrompt)
-      : [process.env.HARNESS_OMNIGENT_BIN || 'omni', ['run', join(process.env.HARNESS_OMNIGENT_BUNDLE || join(homedir(), '.omnigent', 'agents', 'harness-engineering'), 'agents', candidate.harness), '--no-session', ...(candidate.model ? ['--model', candidate.model] : []), '--prompt', referencedPrompt]]
+      : buildHostCommand(candidate.harness, referencedPrompt, candidate.model)
     await writeState({ agentRoute: route, childPid: null })
-    const result = await spawnAgent(program, args, direct ? cwd : gitTopLevel(cwd))
+    const result = await spawnAgent(program, args, cwd)
     const reason = !direct && !result.ok ? fallbackReason(result) : null
     if (reason) bumpStrikeScoped('infra', `infra|${mkey(candidate.harness, candidate.model)}`, 1)
     if (!direct && !result.ok && candidates.indexOf(candidate) < candidates.length - 1) {

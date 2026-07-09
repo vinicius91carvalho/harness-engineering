@@ -103,14 +103,14 @@ Attempts, concise Journal entries, per-Work-Item merge checkpoints, and Integrat
 Verification. It verifies queue state rather than trusting prose. Diagnostic output
 is stored as separate Evidence Artifacts under the shared Git directory.
 
-### Optional Omnigent role routing
+### Optional role routing
 
-When `.harness/roles.json` exists, the same engine runs each role through the
-installed Omnigent worker template. `coding`, `validation`, `repairPlanning`, and
+When `.harness/roles.json` exists, the same engine runs each role through direct
+host CLI adapters with ordered candidates. `coding`, `validation`, `repairPlanning`, and
 `goalReview` are non-empty ordered candidate arrays; each entry is a harness name
 or `{ "harness": "opencode", "model": "provider/model" }`. Harnesses are
 `claude`, `codex`, `opencode`, `pi`, or `agent`; model is optional. Without this file, `--host`
-keeps the existing direct CLI behavior.
+keeps the existing direct CLI behavior. Copy [`config/roles.example.json`](../../config/roles.example.json) as a starting point.
 
 Validation candidates using a harness different from the actual coding harness
 run first. A 429, unavailable model, authentication error, or launch failure tries

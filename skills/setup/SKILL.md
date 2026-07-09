@@ -106,3 +106,7 @@ feature. If they ask to audit existing behavior, offer `/generator` from the
 project directory and let them select one task, a set, or all. At the Git root,
 print the registry as a routing table with project ID, path, and the command
 directory.
+
+7. Optionally offer role routing: if `$PROJECT/.harness/roles.json` does not exist,
+   ask whether to copy `config/roles.example.json` from the repository (or plugin install)
+   to `$PROJECT/.harness/roles.json` and edit provider/model entries before running goals.

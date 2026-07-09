@@ -30,20 +30,13 @@ Run these only on disposable user profiles after authenticating each real CLI:
    has an MCP entry, and “Index this project” exposes its tools.
 4. Run `--yes --dry-run`; compare the profile tree and config hashes before/after.
 5. Install Context7 and Playwright for each host and verify both appear in its MCP list.
-6. Install Omnigent and run the bundled agent through an authenticated host; this
-   validates the upstream directory-agent parser in addition to local structural
-   checks:
-
-   ```sh
-   omni run ~/.omnigent/agents/harness-engineering --harness codex --no-session \
-     -p "Reply exactly READY without editing files."
-   ```
-
-   Confirm the command exits successfully and prints `READY`.
-
+6. Copy `config/roles.example.json` to `.harness/roles.json` in a disposable repo
+   and run the orchestrator with role routing; confirm route history records the
+   selected harness/model pairs.
 7. For the full check, use a disposable Git repository with one Acceptance
    Check. Route coding to OpenCode and validation, repair planning, and Goal
-   Review to Codex. Start Omnigent as the Supervisor. The check passes only
-   when all three queue flags are `true`, Goal Review is complete, and the
-   control event stream contains `run_completed`. The exact commands are in the
-   [README guide](../../README.md#optional-omnigent-control-and-routing).
+   Review to Codex via `.harness/roles.json`. Start the supervisor with
+   `harness-control.mjs`. The check passes only when all three queue flags are
+   `true`, Goal Review is complete, and the control event stream contains
+   `run_completed`. The exact commands are in the
+   [README guide](../../README.md#optional-role-routing-and-herdr).

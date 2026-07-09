@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, chmodSync } from 'node:fs'
 import { readFile, writeFile as writeFileAsync, appendFile as appendFileAsync, mkdir as mkdirAsync } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -15,6 +15,7 @@ import { interpretWorkerOutcome } from '../skills/generator/lib/worker-outcome.m
 import { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } from '../skills/generator/lib/supervisor-tick.mjs'
 import { mkey, strikeOf, buildPlan, buildCandidates, lastCoder } from '../skills/generator/lib/route-plan.mjs'
 import { planWorkerClosedActions } from '../skills/generator/lib/worker-lifecycle.mjs'
+import { pruneOrphanPendingInputs, isCrashBoundContext, liveClaimContexts } from '../skills/generator/lib/supervisor-claims.mjs'
 import { createWorkflowState } from '../skills/generator/lib/workflow-state.mjs'
 import { readJson, atomicJson } from '../skills/generator/lib/fs-json.mjs'
 
@@ -312,4 +313,50 @@ test('createWorkflowState journal and readFeatures', async () => {
   assert.equal(list[0].id, 'WI-1')
   const journalFile = await wf.journal(tmp, 'Test entry', { Outcome: 'ok' })
   assert.ok(journalFile.endsWith('core.md'))
+})
+
+test('atomicJson reformats feature_list.json with the target repo\'s own installed formatter', async () => {
+  // Stand in for a target repo (e.g. one with Biome configured) that would fail its own
+  // `<formatter> check .` Acceptance Check if feature_list.json weren't in its house style.
+  const tmp = mkdtempSync(join(tmpdir(), 'fs-json-fmt-'))
+  const binDir = join(tmp, 'node_modules', '.bin')
+  mkdirSync(binDir, { recursive: true })
+  const fakeBiome = join(binDir, 'biome')
+  writeFileSync(fakeBiome, '#!/usr/bin/env bash\necho \'["reformatted-by-fake-biome"]\' > "${@: -1}"\n')
+  chmodSync(fakeBiome, 0o755)
+
+  await atomicJson(join(tmp, 'feature_list.json'), [{ id: 'WI-1' }])
+  assert.equal(readFileSync(join(tmp, 'feature_list.json'), 'utf8'), '["reformatted-by-fake-biome"]\n')
+
+  // Other JSON files (Run State, defect records, ...) never trigger the reformat -
+  // only feature_list.json is committed into the target repo's linted tree.
+  await atomicJson(join(tmp, 'state.json'), { a: 1 })
+  assert.equal(readFileSync(join(tmp, 'state.json'), 'utf8'), '{\n  "a": 1\n}\n')
+})
+
+test('atomicJson leaves feature_list.json untouched when the target repo has no formatter installed', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'fs-json-noformat-'))
+  await atomicJson(join(tmp, 'feature_list.json'), [{ id: 'WI-1' }])
+  assert.deepEqual(JSON.parse(readFileSync(join(tmp, 'feature_list.json'), 'utf8')), [{ id: 'WI-1' }])
+})
+
+test('pruneOrphanPendingInputs drops stale context events only', () => {
+  const pending = {
+    100: { scope: 'context', context: 'ghost-orphan' },
+    101: { scope: 'context', context: 'realblock' },
+    102: { scope: 'goal', context: null },
+  }
+  const claims = { realblock: { context: 'realblock', status: 'blocked' } }
+  const { pendingInputs, pruned } = pruneOrphanPendingInputs(pending, { claims, retryQueue: {}, workerContexts: [] })
+  assert.equal(pruned, 1)
+  assert.equal(pendingInputs[100], undefined)
+  assert.ok(pendingInputs[101])
+  assert.ok(pendingInputs[102])
+})
+
+test('liveClaimContexts and crash bound skip', () => {
+  const claims = { a: { context: 'alpha' }, b: { context: 'beta' } }
+  assert.deepEqual([...liveClaimContexts(claims)].sort(), ['alpha', 'beta'])
+  assert.equal(isCrashBoundContext('flaky', { flaky: 5 }), true)
+  assert.equal(isCrashBoundContext('flaky', { flaky: 4 }), false)
 })

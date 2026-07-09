@@ -3,14 +3,22 @@ set -euo pipefail
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 HTML="$ROOT/site/index.html"
 README="$ROOT/README.md"
-ROLES="$ROOT/omnigent/harness-engineering/roles.example.json"
-ROLES_URL='https://github.com/vinicius91carvalho/harness-engineering/blob/main/omnigent/harness-engineering/roles.example.json'
+ROLES="$ROOT/config/roles.example.json"
+ROLES_URL='https://github.com/vinicius91carvalho/harness-engineering/blob/main/config/roles.example.json'
 
 test -s "$HTML"
 test -s "$ROOT/site/styles.css"
 test -s "$ROOT/.github/workflows/pages.yml"
+test -s "$ROLES"
 
-for id in why architecture language journey delegate workflow phases prerequisites install commands start worked-example add-feature files spec-format queue-format runtime-state monorepo operate troubleshoot advanced omnigent routing run-omnigent mobile maintenance help; do
+jq -e '
+  ([.coding,.validation,.repairPlanning,.goalReview,.noCredits] | all(length > 0)) and
+  ([.coding[],.validation[],.repairPlanning[],.goalReview[],.noCredits[]] |
+    all((if type == "string" then . else .harness end) as $h |
+      ["claude","codex","opencode","pi","agent"] | index($h)))
+' "$ROLES" >/dev/null
+
+for id in why architecture language journey delegate workflow phases prerequisites install commands start worked-example add-feature files spec-format queue-format runtime-state monorepo operate troubleshoot advanced routing herdr maintenance help; do
   grep -q "id=\"$id\"" "$HTML"
 done
 while IFS= read -r id; do
@@ -44,52 +52,43 @@ grep -Fq 'Add reversible note archiving' "$HTML"
 grep -Fq '* `implementation` means coding completed.' "$README"
 grep -Fq '* `qa` means isolated QA passed.' "$README"
 grep -Fq '* `integration` means the behavior passed after merging.' "$README"
-grep -Fq '<strong>route coding, validation, repair planning, and Goal Review to ordered tool/model candidates;</strong>' "$HTML"
-grep -Fq 'https://omnigent.ai/' "$README" "$HTML"
-grep -Fq 'https://tailscale.com/' "$README" "$HTML"
+grep -Fq 'https://herdr.dev/' "$README" "$HTML"
 grep -Fq 'https://developers.openai.com/codex/' "$README" "$HTML"
 grep -Fq 'Grilling is a planner capability' "$ROOT/skills/planner/SKILL.md"
 grep -Fq 'Do not tell them to validate every mapped' "$ROOT/skills/setup/SKILL.md"
 grep -Fq 'not required to plan' "$README"
-grep -Fq 'without Omnigent' "$HTML"
-for str in 'ignores the AGENT spec' '--harness opencode' 'worker route' 'omnigent-ai/omnigent/issues/1816' 'Tailscale Magic DNS hostname' '127.0.0.1' 'localhost:6767' 'omnigent stop' 'owns the runner in-process'; do
-  grep -Fq -- "$str" "$HTML"
-done
-grep -Fq 'Background server already running' "$HTML"
-# The obsolete, incorrect port must NOT appear in the mobile flow:
-! grep -Fq 'localhost:8000' "$HTML"
+grep -Fq 'HERDR_ENV=1' "$HTML"
+grep -Fq -- '--display background' "$HTML"
+! grep -Fq 'https://omnigent.ai/' "$README" "$HTML"
+! grep -Fq 'omnigent' "$HTML"
 
-# README no longer embeds the routing JSON inline (short pointer + link instead);
-# the site keeps the full, verified-against-source block.
 diff -u <(jq -S . "$ROLES") <(
-  sed -n '/id="routing"/,/id="run-omnigent"/p' "$HTML" |
+  sed -n '/id="routing"/,/id="herdr"/p' "$HTML" |
     sed -n '/<pre><code>{/,/}<\/code><\/pre>/p' |
     sed '1s/.*<pre><code>//; $s/<\/code><\/pre>.*//' |
     jq -S .
 )
 
-# README points into the full guide's advanced sections instead of duplicating them:
-for anchor in omnigent routing mobile monorepo; do
+for anchor in routing herdr monorepo; do
   grep -Fq "vinicius91carvalho.github.io/harness-engineering/#$anchor" "$README"
 done
 
-for file in "$README" "$HTML"; do
+for file in "$HTML"; do
   grep -Fq "$ROLES_URL" "$file"
   grep -Fq '.harness/projects.json' "$file"
   grep -Fq 'run_completed' "$file"
   grep -Fq 'implementation and .qa and .integration' "$file"
 done
+grep -Fq 'config/roles.example.json' "$README"
+grep -Fq '.harness/projects.json' "$README"
+grep -Fq 'run_completed' "$README"
+grep -Fq 'implementation and .qa and .integration' "$README"
 
-# The "one front door" decision table and the symptom->action troubleshoot table
-# must use matching wording between README and the site.
 for str in 'A long unattended run with monitoring/pause/resume' 'To independently re-audit an already-integrated main' 'An existing working app, just adopting the harness (no new goal)' '(existing-codebase mode)' 'still draining its retry queue (up to 5 attempts per context)' 'HARNESS_LEASE_TIMEOUT_SECONDS'; do
   grep -Fq -- "$str" "$README"
   grep -Fq -- "$str" "$HTML"
 done
 
-grep -q 'sudo tailscale serve --bg http://localhost:6767' "$HTML"
-# The obsolete pre-1.52 syntax must NOT appear:
-! grep -Fq 'serve https / http://' "$HTML"
 ! grep -Eq 'Hermes|Telegram' "$HTML"
 
-echo 'ok - README is a short quick-start pointing into the complete site, which documents the full workflow and optional Omnigent routing'
+echo 'ok - README is a short quick-start pointing into the complete site, which documents the full workflow, role routing, and optional herdr visibility'

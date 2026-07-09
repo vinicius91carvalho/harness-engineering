@@ -80,8 +80,6 @@ after=$(find "$HOME" -mindepth 1 -print | sort)
 [ "$before" = "$after" ] || fail 'dry-run wrote into HOME'
 [ ! -s "$HARNESS_TEST_LOG" ] || fail 'dry-run executed a host command'
 grep -q 'codebase-memory-mcp' "$TMP/out" || fail 'dry-run should describe memory integration'
-grep -q 'official runtime installer' "$TMP/out" || fail 'dry-run should describe Omnigent runtime installation'
-grep -q '.omnigent/agents/harness-engineering' "$TMP/out" || fail 'dry-run should describe the Omnigent bundle destination'
 grep -q 'configure context7 MCP for:claude codex opencode pi agent' "$TMP/out" || fail 'Context7 should target every host'
 grep -q 'configure playwright MCP for:claude codex opencode pi agent' "$TMP/out" || fail 'Playwright should target every host'
 grep -q 'MCP inventory for:claude codex opencode pi agent' "$TMP/out" || fail 'MCP inventory should target every selected host'
@@ -137,15 +135,14 @@ if grep -Eq '^(claude|codex|opencode) ' "$HARNESS_TEST_LOG"; then fail 'unselect
 pass 'Pi installs the harness repository as a pi package'
 
 : >"$HARNESS_TEST_LOG"
-"$ROOT/install.sh" --cli claude --yes </dev/null >"$TMP/out" 2>"$TMP/err"
-test -f "$HOME/.omnigent/agents/harness-engineering/config.yaml" || fail 'Omnigent bundle config missing'
-test -f "$HOME/.omnigent/agents/harness-engineering/agents/opencode/config.yaml" || fail 'Omnigent OpenCode worker missing'
-test -f "$HOME/.omnigent/agents/harness-engineering/roles.example.json" || fail 'Omnigent role example missing'
-first=$(find "$HOME/.omnigent/agents/harness-engineering" -type f -exec shasum -a 256 {} \; | sort | shasum -a 256)
-"$ROOT/install.sh" --cli claude --yes </dev/null >"$TMP/out" 2>"$TMP/err"
-second=$(find "$HOME/.omnigent/agents/harness-engineering" -type f -exec shasum -a 256 {} \; | sort | shasum -a 256)
-[ "$first" = "$second" ] || fail 'repeated Omnigent bundle install is not idempotent'
-pass 'Omnigent bundle installation is complete and idempotent'
+test -f "$ROOT/config/roles.example.json" || fail 'roles.example.json missing from config/'
+jq -e '
+  ([.coding,.validation,.repairPlanning,.goalReview,.noCredits] | all(length > 0)) and
+  ([.coding[],.validation[],.repairPlanning[],.goalReview[],.noCredits[]] |
+    all((if type == "string" then . else .harness end) as $h |
+      ["claude","codex","opencode","pi","agent"] | index($h)))
+' "$ROOT/config/roles.example.json" >/dev/null || fail 'roles.example.json schema invalid'
+pass 'config/roles.example.json is present and valid'
 
 if [ -n "$SYSTEM_NODE" ]; then
   printf '%s\n' '{ // comment' '  "url": "https://example.test/a//b",' '  "items": [1, 2,], /* block */' '}' \

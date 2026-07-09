@@ -18,6 +18,7 @@ for (let i = 0; i < rawArgs.length; i += 2) {
 if (!commandName) fatal('usage: harness-control.mjs {start|run|status|capacity|events|ack|respond|quota|pause|resume|stop} --repo <path> ...')
 
 const scriptFile = fileURLToPath(import.meta.url)
+const supervisorLib = resolve(dirname(scriptFile), '..', 'lib')
 const bundledGenerator = resolve(dirname(scriptFile), '..', '..', 'generator')
 const namespacedGenerator = resolve(dirname(scriptFile), '..', '..', 'harness-generator')
 const defaultGenerator = existsSync(bundledGenerator) ? bundledGenerator : namespacedGenerator
@@ -37,7 +38,10 @@ const { isWorkerStuck, stuckThresholdMs } = await importLib('stuck-worker.mjs')
 const { interpretWorkerOutcome } = await importLib('worker-outcome.mjs')
 const { planWorkerClosedActions } = await importLib('worker-lifecycle.mjs')
 const { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } = await importLib('supervisor-tick.mjs')
+const { pruneOrphanPendingInputs, isCrashBoundContext } = await importLib('supervisor-claims.mjs')
 const { selectClaim, resumeClaim, releaseClaim } = await importLib('claim-lease.mjs')
+const { resolveDisplayMode, spawnInPane, closePane, isPaneDone, readPaneTail, getPaneAgentStatus, shellQuote } =
+  await import(pathToFileURL(join(supervisorLib, 'herdr-spawn.mjs')).href)
 const orchestrator = join(generatorDir, 'orchestrator.mjs')
 const reconciler = join(generatorDir, 'reconcile.mjs')
 
@@ -158,6 +162,7 @@ function workerHost() {
 function baseConfig() {
   return {
     host: workerHost(),
+    display: resolveDisplayMode(options),
     maxWorkers: Math.max(1, Math.floor(number('max-workers', 4))),
     quotaWorkers: Math.max(0, Math.floor(number('quota-workers', 2))),
     cpuPerWorker: Math.max(0.25, number('cpu-per-worker', 2)),
@@ -227,7 +232,10 @@ class Supervisor {
       heartbeat: new Date().toISOString(),
       heartbeatEpoch: Math.floor(Date.now() / 1000),
       workers: Object.fromEntries([...this.workers].map(([key, worker]) => [key, {
-        pid: worker.child.pid, context: worker.context, featureIds: worker.featureIds,
+        pid: worker.child?.pid || null,
+        paneId: worker.paneId || null,
+        display: worker.type || 'background',
+        context: worker.context, featureIds: worker.featureIds,
         worktree: worker.worktree, port: worker.port, logFile: worker.logFile, startedAt: worker.startedAt,
       }])),
     }
@@ -308,15 +316,12 @@ class Supervisor {
   // never pruned and inspectClaims still re-raises it below; goal-scoped events
   // (real human decisions) are never pruned.
   pruneOrphanPending(claims) {
-    const live = new Set(Object.values(claims).map((claim) => claim.context).filter(Boolean))
-    let pruned = 0
-    for (const [id, request] of Object.entries(this.state.pendingInputs || {})) {
-      const context = request.context
-      if (request.scope !== 'context' || !context) continue
-      if (live.has(context) || this.state.retryQueue?.[context] || this.workers.has(context)) continue
-      delete this.state.pendingInputs[id]
-      pruned++
-    }
+    const { pendingInputs, pruned } = pruneOrphanPendingInputs(this.state.pendingInputs, {
+      claims,
+      retryQueue: this.state.retryQueue,
+      workerContexts: this.workers,
+    })
+    this.state.pendingInputs = pendingInputs
     return pruned
   }
 
@@ -337,7 +342,7 @@ class Supervisor {
       // never succeed. Mirror retryQueue's 5-attempt bound: once workerClosed's crashCounts for
       // this context hits it, stop auto-resuming and leave the last-raised input_required as the
       // terminal signal, same as an exhausted retryQueue entry.
-      if ((this.state.crashCounts?.[context] || 0) >= 5) continue
+      if (isCrashBoundContext(context, this.state.crashCounts)) continue
       if (claim.status === 'blocked' || runState.status === 'blocked') {
         await this.input('context', runState.lastResult || 'Work Item blocked', { nextAction: runState.nextAction, attempt: runState.attempt, evidence: runState.evidence }, context)
       } else if (runState.ownerHost && runState.ownerHost !== hostname()) {
@@ -373,14 +378,25 @@ class Supervisor {
     const args = [orchestrator, '--host', this.config.host, '--repo', repo, '--workdir', claim.worktree,
       '--context', claim.context, '--port', String(claim.port), '--features', claim.featureIds.join(',')]
     if (guidance) args.push('--guidance', guidance)
+    const logFile = join(logDir, `${key.replace(/[^a-zA-Z0-9_-]/g, '_')}-${Date.now()}.log`)
+    if (this.config.display === 'herdr') {
+      const command = [process.execPath, ...args].map(shellQuote).join(' ')
+      const { paneId } = spawnInPane(command, `worker-${key}`)
+      this.workers.set(key, {
+        type: 'herdr', paneId, logFile, context: claim.context, featureIds: claim.featureIds,
+        worktree: claim.worktree, port: claim.port, startedAt: new Date().toISOString(),
+      })
+      await this.emit('worker_started', { context: claim.context, featureIds: claim.featureIds, paneId, display: 'herdr' })
+      await this.save()
+      return
+    }
     const child = spawn(process.execPath, args, { cwd: claim.worktree, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] })
-    const logFile = join(logDir, `${key.replace(/[^a-zA-Z0-9_-]/g, '_')}-${Date.now()}-${child.pid}.log`)
     const log = createWriteStream(logFile, { flags: 'w' })
     let tail = ''
     const collect = (chunk) => { const text = String(chunk); log.write(text); tail = `${tail}${text}`.slice(-64_000) }
     child.stdout.on('data', collect); child.stderr.on('data', collect)
     child.on('error', (error) => collect(`${error.stack || error.message}\n`))
-    this.workers.set(key, { child, log, logFile, context: claim.context, featureIds: claim.featureIds, worktree: claim.worktree, port: claim.port, startedAt: new Date().toISOString() })
+    this.workers.set(key, { type: 'background', child, log, logFile, context: claim.context, featureIds: claim.featureIds, worktree: claim.worktree, port: claim.port, startedAt: new Date().toISOString() })
     await this.emit('worker_started', { context: claim.context, featureIds: claim.featureIds, pid: child.pid })
     await this.save()
     child.on('close', (code) => this.trackClose(this.workerClosed(key, code, tail).catch((error) => this.crash(error))))
@@ -395,10 +411,20 @@ class Supervisor {
   async inspectStuckWorkers() {
     for (const [key, worker] of [...this.workers]) {
       const runState = await readJson(runStateFile(key), {})
-      if (!(await isWorkerStuck({ logFile: worker.logFile, runState, thresholdMs: this.config.stuckTimeoutMs }))) continue
+      if (worker.type === 'herdr') {
+        const status = getPaneAgentStatus(worker.paneId)
+        const stuck = status === 'blocked' || status === 'unknown' ||
+          await isWorkerStuck({ logFile: worker.logFile, runState, thresholdMs: this.config.stuckTimeoutMs })
+        if (!stuck) continue
+      } else {
+        if (!(await isWorkerStuck({ logFile: worker.logFile, runState, thresholdMs: this.config.stuckTimeoutMs }))) continue
+      }
       await this.emit('worker_stuck', { context: key, logFile: worker.logFile, phase: runState.phase }, true)
-      try { worker.child.kill('SIGTERM') } catch {}
-      setTimeout(() => { try { worker.child.kill('SIGKILL') } catch {} }, 5000)
+      if (worker.type === 'herdr') closePane(worker.paneId)
+      else try { worker.child.kill('SIGTERM') } catch {}
+      if (worker.type !== 'herdr') {
+        setTimeout(() => { try { worker.child.kill('SIGKILL') } catch {} }, 5000)
+      }
       this.state.retryQueue ||= {}
       this.state.retryQueue[key] = {
         guidance: 'Supervisor detected a stuck worker with no recent log or heartbeat activity; resume after confirming the worktree is healthy',
@@ -408,10 +434,24 @@ class Supervisor {
     }
   }
 
+  async inspectHerdrWorkers() {
+    for (const [key, worker] of [...this.workers]) {
+      if (worker.type !== 'herdr') continue
+      const runState = await readJson(runStateFile(key), {})
+      const terminal = ['complete', 'blocked', 'failed'].includes(runState.status)
+        || runState.nextAction === 'release-claim'
+      if (!terminal && !isPaneDone(worker.paneId)) continue
+      const tail = readPaneTail(worker.paneId)
+      await this.trackClose(this.workerClosed(key, terminal ? 0 : 1, tail).catch((error) => this.crash(error)))
+    }
+  }
+
   async workerClosed(key, code, capturedTail) {
     const worker = this.workers.get(key)
     if (!worker) return
-    await new Promise((done) => { worker.log.once('finish', done); worker.log.end() })
+    if (worker.log) {
+      await new Promise((done) => { worker.log.once('finish', done); worker.log.end() })
+    }
     let tail = capturedTail
     try { tail = (await readFile(worker.logFile, 'utf8')).slice(-64_000) || tail } catch {}
     const persisted = await readWorkerResult(runStateFile(key))
@@ -534,16 +574,25 @@ class Supervisor {
     if (!snapshot.queue.length || snapshot.counts.integrated !== snapshot.counts.total || active > 0 || available < 1 || this.workers.has('goal-review')) return false
     const worktree = await mainCheckout()
     const claim = { context: 'goal-review', worktree, port: 5170, featureIds: [] }
-    const child = spawn(process.execPath, [orchestrator, '--host', this.config.host, '--repo', repo, '--workdir', worktree,
-      '--mode', 'goal-review', '--context', 'goal-review', '--port', '5170'],
+    const args = [orchestrator, '--host', this.config.host, '--repo', repo, '--workdir', worktree,
+      '--mode', 'goal-review', '--context', 'goal-review', '--port', '5170']
+    const logFile = join(logDir, `goal-review-${Date.now()}.log`)
+    if (this.config.display === 'herdr') {
+      const command = [process.execPath, ...args].map(shellQuote).join(' ')
+      const { paneId } = spawnInPane(command, 'worker-goal-review')
+      this.workers.set('goal-review', { type: 'herdr', paneId, logFile, ...claim, startedAt: new Date().toISOString() })
+      await this.emit('goal_review_started', { paneId, display: 'herdr' })
+      await this.save()
+      return true
+    }
+    const child = spawn(process.execPath, args,
       { cwd: worktree, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] })
-    const logFile = join(logDir, `goal-review-${Date.now()}-${child.pid}.log`)
     const log = createWriteStream(logFile, { flags: 'w' })
     let tail = ''
     const collect = (chunk) => { const text = String(chunk); log.write(text); tail = `${tail}${text}`.slice(-64_000) }
     child.stdout.on('data', collect); child.stderr.on('data', collect)
     child.on('error', (error) => collect(`${error.stack || error.message}\n`))
-    this.workers.set('goal-review', { child, log, logFile, ...claim, startedAt: new Date().toISOString() })
+    this.workers.set('goal-review', { type: 'background', child, log, logFile, ...claim, startedAt: new Date().toISOString() })
     child.on('close', (code) => this.trackClose(this.workerClosed('goal-review', code, tail).catch((error) => this.crash(error))))
     await this.emit('goal_review_started')
     await this.save()
@@ -570,6 +619,7 @@ class Supervisor {
     }
     await this.processResponses()
     if (this.stopping || this.state.status === 'stopped' || this.state.status === 'complete') return
+    await this.inspectHerdrWorkers()
     await this.inspectStuckWorkers()
     const { external, recoverable } = await this.inspectClaims()
     const active = this.workers.size + external
@@ -648,7 +698,10 @@ class Supervisor {
 
   async stop(signal) {
     this.stopping = true
-    for (const worker of this.workers.values()) worker.child.kill('SIGTERM')
+    for (const worker of this.workers.values()) {
+      if (worker.type === 'herdr') closePane(worker.paneId)
+      else try { worker.child.kill('SIGTERM') } catch {}
+    }
     await this.emit('supervisor_stopped', { signal }, true)
     const control = await readJson(controlFile, {})
     await this.save({ status: control.status === 'stopped' ? 'stopped' : 'interrupted', lastSignal: signal })

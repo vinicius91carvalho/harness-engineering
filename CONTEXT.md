@@ -11,8 +11,8 @@ Only the **workflow pipeline** is required to deliver software; the others are o
 | --- | --- | --- |
 | **Plugin marketplace** | `install.sh`, manifests, host configuration | Installer checklist |
 | **Workflow pipeline** | `project_specs.xml`, `feature_list.json`, `orchestrator.mjs`, `workflow/attempt-machine.mjs`, `lib/claim-lease.mjs` (CLI: `claim.sh` / `claim.ps1`), Goal Review policy | Skills below + files in your repo |
-| **Supervisor control** | `harness-control.mjs`, Resource Governor, Control Events, Input Requests | `/harness:supervisor` or Omnigent relay |
-| **Optional routing** | Omnigent bundle, `.harness/roles.json`, MCP servers | Installer + `roles.json` |
+| **Supervisor control** | `harness-control.mjs`, Resource Governor, Control Events, Input Requests | `/harness:supervisor` |
+| **Optional routing** | `.harness/roles.json`, MCP servers | `config/roles.example.json` |
 
 **Skills** (under `skills/`) are what **you** type in chat — planner, setup, generator, supervisor, evaluator.
 They prepare specs, start runs, or relay progress.

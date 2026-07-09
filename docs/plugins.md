@@ -13,7 +13,6 @@ Everything below is a row in the installer's checklist. Toggle whatever you want
 | `context7` | claude, opencode, codex | MCP server | [upstash/context7](https://github.com/upstash/context7) | Up-to-date, version-specific library docs through the host-neutral MCP endpoint. |
 | `playwright` | claude, opencode, codex | MCP server | [microsoft/playwright-mcp](https://github.com/microsoft/playwright-mcp) | Browser automation and E2E testing through Microsoft's MCP server. |
 
-`omnigent` also appears in the checklist as an optional control surface, not a
-marketplace plugin. It installs the official runtime and this repository's agent
-bundle under `~/.omnigent/agents/harness-engineering`. See the
-[complete Omnigent guide](../README.md#optional-omnigent-control-and-routing).
+Optional role routing uses `config/roles.example.json` copied to `.harness/roles.json`.
+Optional worker visibility uses [herdr](https://herdr.dev/) when the supervisor runs with `HERDR_ENV=1`.
+See the [routing and herdr guide](../README.md#optional-role-routing-and-herdr).
