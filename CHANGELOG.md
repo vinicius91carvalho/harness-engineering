@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### [2.3.1](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.3.0...v2.3.1) (2026-07-09)
+
+
+### Bug Fixes
+
+* **supervisor:** do not auto-retry coding exhaustion ([4da3ae4](https://github.com/vinicius91carvalho/harness-engineering/commit/4da3ae4010f7dbe0a500ef0df205fe36b9b6d4aa))
+
 ## [2.3.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.2.0...v2.3.0) (2026-07-09)
 
 
