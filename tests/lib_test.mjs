@@ -424,3 +424,19 @@ test('liveClaimContexts and crash bound skip', () => {
   assert.equal(isCrashBoundContext('flaky', { flaky: 5 }), true)
   assert.equal(isCrashBoundContext('flaky', { flaky: 4 }), false)
 })
+
+test('buildHostCommand passes model to pi and agent', async () => {
+  const { buildHostCommand } = await import('../skills/generator/adapters/hosts.mjs')
+  assert.deepEqual(
+    buildHostCommand('pi', 'do work', 'anthropic/claude-opus-4-8:xhigh'),
+    ['pi', ['--model', 'anthropic/claude-opus-4-8:xhigh', '-p', 'do work']],
+  )
+  assert.deepEqual(
+    buildHostCommand('agent', 'do work', 'grok-4.5-xhigh'),
+    ['agent', ['-p', '--force', '--trust', '--model', 'grok-4.5-xhigh', 'do work']],
+  )
+  assert.deepEqual(
+    buildHostCommand('agent', 'do work'),
+    ['agent', ['-p', '--force', '--trust', 'do work']],
+  )
+})

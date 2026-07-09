@@ -327,9 +327,26 @@ install_opencode_plugin() {
 }
 
 install_pi_extension() {
-  command -v pi >/dev/null 2>&1 || die 'pi is required to install the harness Pi package'
-  if [ -n "$DRY" ]; then run pi install "https://github.com/$MARKETPLACE_REPO"; return; fi
-  pi install "https://github.com/$MARKETPLACE_REPO" >/dev/null || die 'pi install of harness failed'
+  # Install harness skills at the user skill root (~/.agents/skills) so they win
+  # over package-cloned copies under ~/.pi/agent/git/... and avoid Pi skill collisions.
+  command -v pi >/dev/null 2>&1 || die 'pi is required to install harness skills for Pi'
+  if [ -n "$DRY" ]; then
+    echo "DRY RUN — copy harness skills into $HOME/.agents/skills"
+    echo "DRY RUN — pi remove https://github.com/$MARKETPLACE_REPO (ignore if absent)"
+    return
+  fi
+  ensure_repo
+  dest_root=$HOME/.agents/skills
+  mkdir -p "$dest_root"
+  for path in "$TEMP_REPO"/skills/*; do
+    [ -d "$path" ] || continue
+    name=$(basename "$path")
+    mkdir -p "$dest_root/$name"
+    cp -R "$path"/. "$dest_root/$name"/
+  done
+  # Drop a prior package install of this repo if present; user-level skills replace it.
+  pi remove "https://github.com/$MARKETPLACE_REPO" >/dev/null 2>&1 || true
+  pi remove "git:github.com/$MARKETPLACE_REPO" >/dev/null 2>&1 || true
 }
 
 install_agent_plugin() {

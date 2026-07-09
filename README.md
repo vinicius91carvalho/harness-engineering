@@ -287,6 +287,8 @@ Full symptom list: [site troubleshooting](https://vinicius91carvalho.github.io/h
 Role routing is not required to plan, generate, validate, integrate, or review work.
 
 Copy [`config/roles.example.json`](config/roles.example.json) to `.harness/roles.json` to route coding, validation, repair planning, and Goal Review through ordered tool/model candidates.
+The example is free-first (OpenRouter free / cheap open-weight), then hard-task fallbacks on Pi (`anthropic/claude-opus-4-8:xhigh`, `openai-codex/gpt-5.5:high`), Cursor Agent (`grok-4.5-xhigh`), and native Claude/Codex CLIs.
+Pi is a first-class harness alongside `claude`, `codex`, `opencode`, and `agent`.
 
 [herdr](https://herdr.dev/) is optional terminal visibility. Pass `--display herdr` when starting the supervisor inside a herdr workspace; otherwise workers run in the background.
 

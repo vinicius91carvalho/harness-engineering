@@ -116,8 +116,10 @@ When `.harness/roles.json` exists, the same engine runs each role through direct
 host CLI adapters with ordered candidates. `coding`, `validation`, `repairPlanning`, and
 `goalReview` are non-empty ordered candidate arrays; each entry is a harness name
 or `{ "harness": "opencode", "model": "provider/model" }`. Harnesses are
-`claude`, `codex`, `opencode`, `pi`, or `agent`; model is optional. Without this file, `--host`
-keeps the existing direct CLI behavior. Copy [`config/roles.example.json`](../../config/roles.example.json) as a starting point.
+`claude`, `codex`, `opencode`, `pi`, or `agent`; model is optional (Pi accepts
+`provider/id:thinking`, Cursor Agent accepts its `--model` ids such as
+`grok-4.5-xhigh`). Without this file, `--host` keeps the existing direct CLI
+behavior. Copy [`config/roles.example.json`](../../config/roles.example.json) as a starting point.
 
 Validation candidates using a harness different from the actual coding harness
 run first. A 429, unavailable model, authentication error, or launch failure tries

@@ -129,10 +129,13 @@ pass 'Cursor Agent assets are local-plugin installed and idempotent'
 
 : >"$HARNESS_TEST_LOG"
 "$ROOT/install.sh" --cli pi --no </dev/null >"$TMP/out"
-grep -q '^pi install https://github.com/vinicius91carvalho/harness-engineering$' "$HARNESS_TEST_LOG" \
-  || fail 'Pi package install command is missing'
+test -f "$HOME/.agents/skills/planner/SKILL.md" || fail 'Pi user-level planner skill missing'
+test -f "$HOME/.agents/skills/generator/SKILL.md" || fail 'Pi user-level generator skill missing'
+test -f "$HOME/.agents/skills/grilling/SKILL.md" || fail 'Pi user-level grilling skill missing'
+grep -Eq '^pi remove ' "$HARNESS_TEST_LOG" || fail 'Pi install should remove a prior package clone'
+if grep -Eq '^pi install ' "$HARNESS_TEST_LOG"; then fail 'Pi must not package-install into ~/.pi/agent/git'; fi
 if grep -Eq '^(claude|codex|opencode) ' "$HARNESS_TEST_LOG"; then fail 'unselected host was invoked'; fi
-pass 'Pi installs the harness repository as a pi package'
+pass 'Pi installs harness skills at the user skill root'
 
 : >"$HARNESS_TEST_LOG"
 test -f "$ROOT/config/roles.example.json" || fail 'roles.example.json missing from config/'

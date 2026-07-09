@@ -29,7 +29,9 @@ export function buildHostCommand(harness, prompt, model) {
     case 'pi':
       return ['pi', [...(model ? ['--model', model] : []), '-p', prompt]]
     case 'agent':
-      return hostCommands.agent(prompt)
+      return model
+        ? ['agent', ['-p', '--force', '--trust', '--model', model, prompt]]
+        : hostCommands.agent(prompt)
     default:
       throw new Error(`unknown harness: ${harness}`)
   }

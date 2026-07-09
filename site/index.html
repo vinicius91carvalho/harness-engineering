@@ -805,45 +805,60 @@ bash "$GEN/claim.sh" list "$PROJECT"</code></pre>
           <p>Validation, integrated QA, and Goal Review first prefer a tool different from the actual coding tool. Configured order remains stable within the independent and same-tool groups. Every route and fallback reason is persisted.</p>
           <p>A model that fails from an infra error or a repeated QA rejection is demoted to the back of its role list for the rest of the run, so the run self-heals instead of retrying the same broken candidate, and a coder that declines a Work Item falls through to the next candidate. The optional <code>noCredits</code> array is a free-tier fallback tried only once paid options are exhausted by infra/credit errors. Repair retries are bounded by <code>HARNESS_REPAIR_BUDGET</code> (default <code>2</code>).</p>
           <p class="source"><strong>Full source:</strong> <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/config/roles.example.json">https://github.com/vinicius91carvalho/harness-engineering/blob/main/config/roles.example.json</a></p>
-          <p><strong>Why open-source models lead:</strong> DeepSeek, Kimi, GLM, and Qwen are cheap enough to run every coding, validation, and repair-planning attempt without rationing calls. The tradeoff is inconsistent quality on hard tasks, so Claude and Codex sit at the back of each list as a fallback: a failing open-weight candidate is demoted and the run falls through to a proprietary model rather than retrying the same one. Delete the open-weight entries to use only proprietary models; add an entry with its <code>harness</code>/<code>model</code> pair to add another open-weight one.</p>
+          <p><strong>Why free and open-weight models lead:</strong> OpenRouter free tiers and cheap open-weight models run everyday coding and validation without rationing calls.
+            Hard tasks fall through to Pi (Claude Opus 4.8 xhigh / GPT-5.5 high via your Pi subscriptions) and Cursor Agent (Grok 4.5), then native Claude/Codex CLIs.
+            Pi is a first-class harness alongside <code>claude</code>, <code>codex</code>, <code>opencode</code>, and <code>agent</code>.
+            Delete free entries to prefer paid models only; add a <code>harness</code>/<code>model</code> pair to extend a role.</p>
           <pre><code>{
   "coding": [
+    { "harness": "opencode", "model": "openrouter/qwen/qwen3-coder:free" },
+    { "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-flash:free" },
     { "harness": "opencode", "model": "opencode-go/deepseek-v4-flash" },
     { "harness": "opencode", "model": "openrouter/moonshotai/kimi-k2.7-code" },
     { "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-pro" },
     { "harness": "opencode", "model": "openrouter/qwen/qwen3.7-max" },
-    { "harness": "pi", "model": "openrouter/z-ai/glm-5.2" },
-    { "harness": "claude", "model": "claude-opus-4-7" },
+    { "harness": "pi", "model": "anthropic/claude-opus-4-8:xhigh" },
+    { "harness": "pi", "model": "openai-codex/gpt-5.5:high" },
+    { "harness": "agent", "model": "grok-4.5-xhigh" },
+    { "harness": "claude", "model": "claude-opus-4-8" },
     { "harness": "codex", "model": "gpt-5.5" }
   ],
   "validation": [
+    { "harness": "opencode", "model": "openrouter/qwen/qwen3-coder:free" },
+    { "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-flash:free" },
     { "harness": "opencode", "model": "openrouter/minimax/minimax-m3" },
     { "harness": "opencode", "model": "openrouter/qwen/qwen3.7-max" },
     { "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-pro" },
-    { "harness": "pi", "model": "openrouter/z-ai/glm-5.2" },
+    { "harness": "pi", "model": "openai-codex/gpt-5.5:high" },
+    { "harness": "pi", "model": "anthropic/claude-opus-4-8:xhigh" },
+    { "harness": "agent", "model": "grok-4.5-xhigh" },
     { "harness": "codex", "model": "gpt-5.5" },
-    { "harness": "claude", "model": "claude-opus-4-7" }
+    { "harness": "claude", "model": "claude-opus-4-8" }
   ],
   "repairPlanning": [
     { "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-pro" },
     { "harness": "opencode", "model": "openrouter/qwen/qwen3.7-max" },
     { "harness": "opencode", "model": "openrouter/minimax/minimax-m3" },
-    { "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-pro" },
-    { "harness": "pi", "model": "openrouter/z-ai/glm-5.2" },
-    { "harness": "claude", "model": "claude-opus-4-7" },
+    { "harness": "pi", "model": "anthropic/claude-opus-4-8:xhigh" },
+    { "harness": "pi", "model": "openai-codex/gpt-5.5:high" },
+    { "harness": "agent", "model": "grok-4.5-xhigh" },
+    { "harness": "claude", "model": "claude-opus-4-8" },
     { "harness": "codex", "model": "gpt-5.5" }
   ],
   "goalReview": [
-    { "harness": "opencode", "model": "openrouter/minimax/minimax-m3" },
     { "harness": "opencode", "model": "openrouter/qwen/qwen3.7-max" },
-    { "harness": "pi", "model": "openrouter/z-ai/glm-5.2" },
+    { "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-pro" },
+    { "harness": "pi", "model": "openai-codex/gpt-5.5:high" },
+    { "harness": "pi", "model": "anthropic/claude-opus-4-8:xhigh" },
+    { "harness": "agent", "model": "grok-4.5-xhigh" },
     { "harness": "codex", "model": "gpt-5.5" },
-    { "harness": "claude", "model": "claude-opus-4-7" }
+    { "harness": "claude", "model": "claude-opus-4-8" }
   ],
   "noCredits": [
     { "harness": "opencode", "model": "openrouter/qwen/qwen3-coder:free" },
     { "harness": "opencode", "model": "openrouter/deepseek/deepseek-v4-flash:free" },
-    { "harness": "opencode", "model": "openrouter/free" }
+    { "harness": "opencode", "model": "openrouter/free" },
+    { "harness": "agent", "model": "grok-4.5-medium" }
   ]
 }</code></pre>
           <pre><code>mkdir -p .harness

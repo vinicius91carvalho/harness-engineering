@@ -46,11 +46,11 @@ Dry-run is a strict zero-write mode: it does not clone, download, invoke host
 CLIs, normalize configuration, install dependencies, or run post-install actions.
 
 Claude and Codex use their marketplace/plugin CLIs. OpenCode receives namespaced
-skills, agents, and commands under `~/.config/opencode`. Pi installs the
-repository itself as a pi package (`pi install`); pi auto-discovers the root
-`skills/` directory with no manifest needed, so no files are copied or
-renamed. A piped PowerShell run stages the repository before it needs assets,
-because `$PSScriptRoot` is empty.
+skills, agents, and commands under `~/.config/opencode`. Pi copies harness skills
+into the user skill root (`~/.agents/skills/`) and removes any prior package
+clone of this repo under `~/.pi/agent/git/...`, so user-level skills win over
+package skills and avoid Pi skill-name collisions. A piped PowerShell run stages
+the repository before it needs assets, because `$PSScriptRoot` is empty.
 
 `codebase-memory-mcp`, Context7, and Playwright are optional MCP integrations on
 all hosts. The memory server's upstream installer runs with `--skip-config`, its
