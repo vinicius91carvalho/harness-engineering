@@ -255,6 +255,8 @@ class Supervisor {
   }
 
   async initialize() {
+    await mkdir(root, { recursive: true })
+    if (!existsSync(eventFile)) await writeFile(eventFile, '')
     await mkdir(responseDir, { recursive: true })
     await mkdir(logDir, { recursive: true })
     const previous = await readJson(stateFile, {})

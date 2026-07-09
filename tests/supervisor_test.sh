@@ -3,6 +3,18 @@ set -euo pipefail
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/harness-control-test.XXXXXX")
 trap '[ "${KEEP_TMP:-0}" = 1 ] || rm -rf "$TMP"' EXIT
+
+run_timeout() {
+  local secs=$1; shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$secs" "$@"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    gtimeout "$secs" "$@"
+  else
+    perl -e 'alarm shift @ARGV; exec @ARGV or die $!' "$secs" "$@"
+  fi
+}
+
 mkdir -p "$TMP/bin" "$TMP/repo" "$TMP/invalid"
 
 git -C "$TMP/repo" init -b main -q
@@ -164,7 +176,7 @@ jq 'map(.implementation=false | .qa=false | .integration=false)' \
   "$TMP/quota-limit/feature_list.json" >"$TMP/quota-limit/feature_list.json.tmp"
 mv "$TMP/quota-limit/feature_list.json.tmp" "$TMP/quota-limit/feature_list.json"
 git -C "$TMP/quota-limit" add feature_list.json && git -C "$TMP/quota-limit" commit -qm reset
-PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" HARNESS_TEST_USAGE_LIMIT=1 HARNESS_RATE_LIMIT_BACKOFF_MS=100 HARNESS_RATE_LIMIT_JITTER_MS=0 timeout 8 "$NODE" "$CONTROL" run \
+PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" HARNESS_TEST_USAGE_LIMIT=1 HARNESS_RATE_LIMIT_BACKOFF_MS=100 HARNESS_RATE_LIMIT_JITTER_MS=0 run_timeout 8 "$NODE" "$CONTROL" run \
   --repo "$TMP/quota-limit" --host claude --poll-ms 250 --quota-cooldown-seconds 60 \
   --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100 >/dev/null 2>&1 || true
 jq -s -e 'any(.[]; .kind == "quota_wait") and all(.[]; .kind != "input_required")' \
@@ -267,7 +279,7 @@ printf '%s\n' '{"status":"resuming","ownerPid":999999999,"childPid":null}' \
 printf '%s\n' '{"status":"resuming","ownerPid":999999999,"childPid":null}' \
   >"$TMP/circuit/.git/harness-runs/boom.json"
 printf '%s\n' '{"crashCounts":{"flaky":5}}' >"$TMP/circuit/.git/harness-control/state.json"
-if ! PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" timeout 20 "$NODE" "$CONTROL" run \
+if ! PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" run_timeout 20 "$NODE" "$CONTROL" run \
   --repo "$TMP/circuit" --host claude --poll-ms 250 \
   --max-workers 2 --quota-workers 2 --cpu-per-worker 0.25 \
   --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100; then
