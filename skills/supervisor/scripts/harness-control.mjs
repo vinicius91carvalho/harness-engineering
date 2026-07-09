@@ -876,6 +876,10 @@ class Supervisor {
     if ((['paused', 'stopped'].includes(control.status) || mayResume) && control.status !== this.state.status) {
       await this.save({ status: control.status })
     }
+    // Prune before auto-retry so orphaned context Input Requests (no live claim,
+    // retry queue entry, or worker) are not written into retryQueue and kept alive.
+    const claimsForPrune = await ownClaims()
+    if (this.pruneOrphanPending(claimsForPrune)) await this.save()
     await this.autoRespondPendingInputs()
     await this.processResponses()
     if (this.stopping || this.state.status === 'stopped' || this.state.status === 'complete') return
