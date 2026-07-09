@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Specification review — __PROJECT_NAME__</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0a0e14;
+      --panel: #151b23;
+      --line: #30363d;
+      --text: #c9d1d9;
+      --muted: #8b949e;
+      --white: #f0f6fc;
+      --blue: #58a6ff;
+      --green: #3fb950;
+      --amber: #e5c07b;
+      --purple: #a371f7;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+    }
+    .wrap { max-width: 960px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+    h1 { color: var(--white); font-size: 1.6rem; margin: 0 0 .35rem; }
+    .meta { color: var(--muted); margin-bottom: 1.25rem; font-size: .92rem; }
+    .instructions {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 1rem 1.1rem;
+      margin-bottom: 1.5rem;
+    }
+    .instructions ol { margin: .5rem 0 0 1.1rem; padding: 0; }
+    .instructions code { color: var(--blue); font-size: .88rem; }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .6rem;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+    .btn {
+      border: 1px solid var(--line);
+      background: #1f6feb;
+      color: var(--white);
+      border-radius: 6px;
+      padding: .5rem .9rem;
+      font-size: .88rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn.secondary { background: var(--panel); color: var(--text); }
+    .btn:hover { filter: brightness(1.08); }
+    .summary { color: var(--muted); font-size: .9rem; }
+    .cards { display: grid; gap: .85rem; }
+    .card {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .card.confirmed { border-color: #238636; }
+    .card.has-comment { border-color: #9e6a03; }
+    .card-head {
+      display: flex;
+      gap: .75rem;
+      align-items: flex-start;
+      padding: .9rem 1rem;
+      cursor: pointer;
+    }
+    .card-head:hover { background: #1c2430; }
+    .card-body {
+      display: none;
+      padding: 0 1rem 1rem;
+      border-top: 1px solid var(--line);
+    }
+    .card.open .card-body { display: block; }
+    .kind {
+      font-size: .68rem;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      font-weight: 700;
+      padding: .2rem .45rem;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .kind.acceptance_check { color: var(--green); border-color: #238636; }
+    .kind.feature_area { color: var(--purple); border-color: #6e40c9; }
+    .kind.section { color: var(--blue); border-color: #388bfd; }
+    .title { color: var(--white); font-weight: 650; flex: 1; }
+    .summary-line { color: var(--muted); font-size: .9rem; margin-top: .15rem; }
+    .detail {
+      white-space: pre-wrap;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: .82rem;
+      background: #0d1117;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: .75rem;
+      margin: .75rem 0;
+      max-height: 320px;
+      overflow: auto;
+    }
+    label { display: block; font-size: .85rem; color: var(--muted); margin-bottom: .35rem; }
+    textarea {
+      width: 100%;
+      min-height: 72px;
+      resize: vertical;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      background: #0d1117;
+      color: var(--text);
+      padding: .55rem .65rem;
+      font: inherit;
+    }
+    textarea:focus { outline: 2px solid #388bfd; outline-offset: 1px; }
+    .confirm-row {
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+      margin-top: .65rem;
+      color: var(--white);
+      font-size: .9rem;
+    }
+    .path-box {
+      margin-top: .75rem;
+      font-size: .82rem;
+      color: var(--muted);
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Specification review</h1>
+    <p class="meta"><strong>__PROJECT_NAME__</strong> · revision __REVISION__</p>
+    <div class="instructions">
+      <strong>Review every item before <code>project_specs.xml</code> is written.</strong>
+      <ol>
+        <li>Click a card to read the full specification detail.</li>
+        <li>Add a comment on any item that needs changes, or check <em>Confirmed</em> when it is correct.</li>
+        <li>Click <strong>Export feedback</strong>, then save the file to:</li>
+      </ol>
+      <p class="path-box"><code id="feedback-path">__FEEDBACK_PATH__</code></p>
+      <p class="path-box">Return to the planner session. It will apply comments, regenerate this page, and repeat until every item is confirmed.</p>
+    </div>
+    <div class="toolbar">
+      <button class="btn" type="button" onclick="exportFeedback()">Export feedback</button>
+      <button class="btn secondary" type="button" onclick="confirmAll()">Confirm all</button>
+      <span class="summary" id="summary"></span>
+    </div>
+    <div class="cards" id="cards"></div>
+  </div>
+  <script>
+    const REVISION = __REVISION__;
+    const ITEMS = __ITEMS_DATA__;
+    const INITIAL_FEEDBACK = __INITIAL_FEEDBACK__;
+    const FEEDBACK_PATH = '__FEEDBACK_PATH__';
+    const storageKey = `harness-spec-review:${FEEDBACK_PATH}:${REVISION}`;
+
+    let feedbackById = {};
+    for (const row of INITIAL_FEEDBACK) feedbackById[row.id] = { ...row };
+    try {
+      const saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
+      if (saved && saved.revision === REVISION && Array.isArray(saved.items)) {
+        for (const row of saved.items) feedbackById[row.id] = { ...row };
+      }
+    } catch {}
+
+    function rowFor(id) {
+      if (!feedbackById[id]) feedbackById[id] = { id, confirmed: false, comment: '' };
+      return feedbackById[id];
+    }
+
+    function escapeHtml(text) {
+      return String(text)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;');
+    }
+
+    function render() {
+      const root = document.getElementById('cards');
+      root.innerHTML = '';
+      for (const item of ITEMS) {
+        const row = rowFor(item.id);
+        const comment = String(row.comment || '').trim();
+        const card = document.createElement('article');
+        card.className = 'card' + (row.confirmed ? ' confirmed' : '') + (comment && !row.confirmed ? ' has-comment' : '');
+        const head = document.createElement('div');
+        head.className = 'card-head';
+        head.addEventListener('click', () => card.classList.toggle('open'));
+        head.innerHTML = `
+          <span class="kind ${escapeHtml(item.kind || 'section')}">${escapeHtml(item.kind || 'section')}</span>
+          <div style="flex:1">
+            <div class="title">${escapeHtml(item.title || item.id)}</div>
+            ${item.summary ? `<div class="summary-line">${escapeHtml(item.summary)}</div>` : ''}
+          </div>
+          <span class="kind">${row.confirmed ? 'confirmed' : comment ? 'comment' : 'pending'}</span>`;
+        const body = document.createElement('div');
+        body.className = 'card-body';
+        const detail = document.createElement('div');
+        detail.className = 'detail';
+        detail.textContent = item.body || item.summary || '';
+        body.appendChild(detail);
+        if (item.meta && Object.keys(item.meta).length) {
+          const meta = document.createElement('div');
+          meta.className = 'detail';
+          meta.textContent = JSON.stringify(item.meta, null, 2);
+          body.appendChild(meta);
+        }
+        const label = document.createElement('label');
+        label.textContent = 'Comment (planner will revise this item)';
+        const textarea = document.createElement('textarea');
+        textarea.value = row.comment || '';
+        textarea.addEventListener('input', () => updateComment(item.id, textarea.value));
+        const confirmLabel = document.createElement('label');
+        confirmLabel.className = 'confirm-row';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = Boolean(row.confirmed);
+        checkbox.addEventListener('change', () => updateConfirmed(item.id, checkbox.checked));
+        confirmLabel.appendChild(checkbox);
+        confirmLabel.appendChild(document.createTextNode(' Confirmed — this item is correct'));
+        body.appendChild(label);
+        body.appendChild(textarea);
+        body.appendChild(confirmLabel);
+        card.appendChild(head);
+        card.appendChild(body);
+        root.appendChild(card);
+      }
+      updateSummary();
+      persist();
+    }
+
+    function updateComment(id, value) {
+      const row = rowFor(id);
+      row.comment = value;
+      if (value.trim()) row.confirmed = false;
+      render();
+    }
+
+    function updateConfirmed(id, value) {
+      const row = rowFor(id);
+      row.confirmed = value;
+      if (value) row.comment = '';
+      render();
+    }
+
+    function confirmAll() {
+      for (const item of ITEMS) {
+        const row = rowFor(item.id);
+        row.confirmed = true;
+        row.comment = '';
+      }
+      render();
+    }
+
+    function updateSummary() {
+      const confirmed = ITEMS.filter((item) => rowFor(item.id).confirmed).length;
+      const comments = ITEMS.filter((item) => String(rowFor(item.id).comment || '').trim()).length;
+      document.getElementById('summary').textContent =
+        `${confirmed}/${ITEMS.length} confirmed` + (comments ? ` · ${comments} with comments` : '');
+    }
+
+    function persist() {
+      const payload = {
+        revision: REVISION,
+        exported_at: new Date().toISOString(),
+        items: ITEMS.map((item) => {
+          const row = rowFor(item.id);
+          return { id: item.id, confirmed: Boolean(row.confirmed), comment: String(row.comment || '') };
+        }),
+      };
+      localStorage.setItem(storageKey, JSON.stringify(payload));
+      return payload;
+    }
+
+    function exportFeedback() {
+      const payload = persist();
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'spec-review-feedback.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      alert(`Save the downloaded file to:\n\n${FEEDBACK_PATH}\n\nThen return to the planner session.`);
+    }
+
+    render();
+  </script>
+</body>
+</html>

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+unset HARNESS_INTEGRATION_BRANCH
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 TMP=${TMPDIR:-/tmp}/harness-orchestrator-test.$$
 ORCHESTRATOR_PID=""

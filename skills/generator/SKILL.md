@@ -9,7 +9,13 @@ allowed-tools: Bash, Agent, AskUserQuestion, Read
 You orchestrate the Project Goal through one host-neutral state machine. Parallel
 sessions claim different contexts; each Work Item follows:
 
-`coding → isolated QA → Checkpoint → merge latest main → Integrated Verification`
+`coding → isolated QA → Checkpoint → merge latest integration branch → Integrated Verification`
+
+Each Project Goal uses one **plan integration branch** (for example `plan/my-feature`).
+Isolated Work Items use `gen/<project>-<context>` branches that merge only into that
+plan branch — never into `main`/`master` while the plan is in flight. Pin the branch
+in `.harness/integration-branch` at the Git root (one line) or set
+`HARNESS_INTEGRATION_BRANCH` for a single run.
 
 A QA defect follows:
 
@@ -27,16 +33,17 @@ combine project queues.
 
 ## 1. Scaffold and reconcile the completion contract
 
-If `main:feature_list.json` is absent, first acquire
+If the integration branch has no `feature_list.json` yet, first acquire
 `mkdir "${PROJECT%/}.harness-init.lock"` and run the initializer exactly once in the
-`main` checkout. Reference `project_specs.xml` explicitly in the initializer task
+integration-branch checkout (see `.harness/integration-branch`, default `main`).
+Reference `project_specs.xml` explicitly in the initializer task
 so it can create and verify every spec-required file and directory without relying
 on inherited chat context. In a non-empty codebase, it must derive harness setup
 from existing files and preserve application code, configuration, documentation,
 tests, and Git history. Another session that cannot acquire it waits and rechecks instead
 of starting a second initializer. Remove the directory only after initialization
 completes; a lock left by a crashed initializer requires explicit user-confirmed
-takeover. Then, in the checkout of `main`:
+takeover. Then, in the checkout of the integration branch:
 
 ```bash
 node "$GEN/reconcile.mjs" "$PROJECT"
@@ -150,11 +157,11 @@ just audited.
 ## 5. Mandatory Goal Review
 
 When no Work Items remain and every queue entry has `integration:true`, run Goal
-Review on integrated `main`; the state machine holds the merge lock throughout:
+Review on the integrated plan branch (`.harness/integration-branch`); the state machine holds the merge lock throughout:
 
 ```bash
 node "$GEN/orchestrator.mjs" --host "$HOST" --repo "$PROJECT" \
-  --workdir "$MAIN_CHECKOUT" --mode goal-review --context goal-review \
+  --workdir "$INTEGRATION_CHECKOUT" --mode goal-review --context goal-review \
   --port 5170 --claim-script "$GEN/claim.sh"
 ```
 

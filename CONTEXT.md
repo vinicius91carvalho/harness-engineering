@@ -76,7 +76,7 @@ An executable unit derived from one or more Acceptance Checks and tracked in `fe
 _Avoid_: Acceptance Check, Project Goal
 
 **Completion Contract**:
-The Project Goal is complete only when every Acceptance Check passes against integrated `main` and a final system-level verification passes.
+The Project Goal is complete only when every Acceptance Check passes against the integrated plan branch and a final system-level verification passes.
 _Avoid_: All flags are true
 
 **Defect Report**:
@@ -116,16 +116,22 @@ Atomic acquisition of an abandoned Claim Lease followed by continuation from the
 _Avoid_: Restart, rerun
 
 **Checkpoint**:
-A Work Item whose isolated QA has passed and whose committed changes are ready for integration with the latest `main`.
+A Work Item whose isolated QA has passed and whose committed changes are ready for integration with the latest plan integration branch.
 _Avoid_: Context completion, QA pass
 
 **Integrated Verification**:
-Black-box execution of a Checkpoint's mapped Acceptance Checks after its changes are combined with the latest `main`.
+Black-box execution of a Checkpoint's mapped Acceptance Checks after its changes are combined with the latest integration branch (never `main` while a plan is in flight).
 _Avoid_: Branch QA, merge check
 
 **Goal Review**:
-The mandatory independent, system-level verification of the Project Goal on integrated `main` after the work queue is empty.
+The mandatory independent, system-level verification of the Project Goal on the integrated plan branch after the work queue is empty.
 _Avoid_: Evaluator sweep, final QA, queue completion
+
+**Plan integration branch**:
+The long-lived Git branch that owns a Project Goal's integrated queue and merges (for example `plan/opensource-docker`).
+Side Work Items branch from it as `gen/*` and merge back into it only.
+Pin it in `.harness/integration-branch` at the repo root.
+_Avoid_: main, master, feature branch
 
 **Dependency Graph**:
 The acyclic relationships between Acceptance Checks that determine when their Work Items are eligible to run.

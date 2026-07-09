@@ -7,6 +7,7 @@ supervisor_common_root() {
 }
 
 supervisor_common_init() {
+  unset HARNESS_INTEGRATION_BRANCH
   ROOT=$(supervisor_common_root)
   TMP=$(mktemp -d "${TMPDIR:-/tmp}/harness-control-test.XXXXXX")
   trap '[ "${KEEP_TMP:-0}" = 1 ] || rm -rf "$TMP"' EXIT

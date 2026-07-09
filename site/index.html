@@ -120,11 +120,22 @@
           <p>Only the <strong>workflow pipeline</strong> is required. Everything else is optional packaging or control.</p>
           <div class="card-grid">
             <article><strong>Harness</strong><span>Specification, scheduler, QA loop, integration policy, durable state, and Goal Review.</span></article>
-            <article><strong><a href="https://code.claude.com/docs/en/overview">Claude Code</a> / <a href="https://developers.openai.com/codex/">Codex</a> / <a href="https://opencode.ai/">OpenCode</a> / <a href="https://cursor.com/docs/cli/overview">Cursor Agent</a> / Pi</strong><span>Hosts that plan, code, test, and review through the same workflow.</span></article>
+            <article><strong><a href="https://code.claude.com/docs/en/overview">Claude Code</a> / <a href="https://developers.openai.com/codex/">Codex</a> / <a href="https://opencode.ai/">OpenCode</a> / <a href="https://cursor.com/docs/cli/overview">Cursor Agent</a> / <a href="https://pi.dev/">Pi</a></strong><span>Hosts that plan, code, test, and review through the same workflow.</span></article>
             <article><strong><a href="https://herdr.dev/">herdr</a></strong><span>Optional terminal multiplexer for visible worker panes and remote access.</span></article>
           </div>
 
-          <h3>Bounded contexts</h3>
+          <h3>Context map</h3>
+          <p>Four contexts matter.
+          Only the <strong>workflow pipeline</strong> is required to deliver software; the others are optional packaging or control surfaces.</p>
+          <table>
+            <thead><tr><th>Context</th><th>What lives here</th><th>You interact through</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Plugin marketplace</strong></td><td><code>install.sh</code>, manifests, host configuration</td><td>Installer checklist</td></tr>
+              <tr><td><strong>Workflow pipeline</strong></td><td><code>project_specs.xml</code>, <code>feature_list.json</code>, <code>orchestrator.mjs</code>, <code>claim-lease.mjs</code></td><td>Skills + files in your repo</td></tr>
+              <tr><td><strong>Supervisor control</strong></td><td><code>harness-control.mjs</code>, Resource Governor, Control Events</td><td><code>/harness:supervisor</code></td></tr>
+              <tr><td><strong>Optional routing</strong></td><td><code>.harness/roles.json</code>, MCP servers</td><td><code>config/roles.example.json</code></td></tr>
+            </tbody>
+          </table>
           <div class="mermaid-wrap">
             <pre class="mermaid">
 flowchart TB
@@ -182,7 +193,10 @@ flowchart LR
   OR -.-> I
             </pre>
           </div>
-          <p class="note">The orchestrator has no LLM. It sequences phases, owns retries, and spawns agents. The supervisor admits parallel workers and relays progress — it does not own Attempt policy.</p>
+          <p class="note">The orchestrator has no LLM.
+          It sequences phases, owns retries, and spawns agents.
+          Its state machine was inspired by the <a href="https://www.anthropic.com/engineering/harness-design-long-running-apps">harness patterns Anthropic documents for long-running agents</a> and by the Dynamic Workflows pattern in Claude Code — deterministic control with LLM workers at phase boundaries.
+          The supervisor admits parallel workers and relays progress — it does not own Attempt policy.</p>
         </section>
 
         <section class="topic" id="language">
@@ -220,7 +234,7 @@ flowchart LR
         <section class="topic" id="prerequisites">
           <p class="step">Before installation</p>
           <h2>Install the runtime and one coding tool</h2>
-          <p>The repository machine needs <a href="https://git-scm.com/">Git</a>, <a href="https://www.gnu.org/software/bash/">Bash</a>, <strong><a href="https://nodejs.org/">Node.js 18 or newer</a></strong>, and one authenticated tool: <a href="https://code.claude.com/docs/en/overview">Claude Code</a>, <a href="https://developers.openai.com/codex/">Codex</a>, <a href="https://opencode.ai/">OpenCode</a>, or Pi. Node.js runs setup inventory, reconciliation, orchestration, and supervisor commands.</p>
+          <p>The repository machine needs <a href="https://git-scm.com/">Git</a>, <a href="https://www.gnu.org/software/bash/">Bash</a>, <strong><a href="https://nodejs.org/">Node.js 18 or newer</a></strong>, and one authenticated tool: <a href="https://code.claude.com/docs/en/overview">Claude Code</a>, <a href="https://developers.openai.com/codex/">Codex</a>, <a href="https://opencode.ai/">OpenCode</a>, <a href="https://cursor.com/docs/cli/overview">Cursor Agent</a>, or <a href="https://pi.dev/">Pi</a>. Node.js runs setup inventory, reconciliation, orchestration, and supervisor commands.</p>
           <pre><code>git --version
 bash --version
 node --version
@@ -240,9 +254,9 @@ claude --version  # or: codex --version / opencode --version / pi --version</cod
         <section class="topic compact-table" id="commands">
           <p class="step">Step 2</p>
           <h2>Use the command name for your tool</h2>
-          <p>Claude Code and Codex use the plugin's colon form. OpenCode and Cursor Agent use hyphenated names. Pi registers each skill's own name as a <code>/skill:</code> command.</p>
+          <p>Claude Code and Codex use the plugin's colon form. OpenCode and Cursor Agent use hyphenated names. <a href="https://pi.dev/">Pi</a> registers each skill's own name as a <code>/skill:</code> command.</p>
           <table>
-            <thead><tr><th>Task</th><th>Claude Code / Codex</th><th>OpenCode</th><th>Cursor Agent</th><th>Pi</th></tr></thead>
+            <thead><tr><th>Task</th><th>Claude Code / Codex</th><th>OpenCode</th><th>Cursor Agent</th><th><a href="https://pi.dev/">Pi</a></th></tr></thead>
             <tbody>
               <tr><td>Set up existing code</td><td><code>/harness:setup</code></td><td><code>/harness-setup</code></td><td><code>/harness-setup</code></td><td><code>/skill:setup</code></td></tr>
               <tr><td>Plan a new goal</td><td><code>/harness:planner</code></td><td><code>/harness-planner</code></td><td><code>/harness-planner</code></td><td><code>/skill:planner</code></td></tr>
@@ -267,7 +281,7 @@ claude --version  # or: codex --version / opencode --version / pi --version</cod
               <tr><td>An existing working app, just adopting the harness (no new goal)</td><td><code>/harness:setup</code> (no args)</td></tr>
               <tr><td>A reviewed <code>project_specs.xml</code>, ready to build/resume</td><td><code>/harness:generator</code></td></tr>
               <tr><td>A long unattended run with monitoring/pause/resume</td><td><code>/harness:supervisor</code></td></tr>
-              <tr><td>To independently re-audit an already-integrated main</td><td><code>/harness:evaluator</code></td></tr>
+              <tr><td>To independently re-audit an already-integrated integration branch</td><td><code>/harness:evaluator</code></td></tr>
             </tbody>
           </table>
           <p>Type each <code>/harness:...</code> command below into your coding tool's chat session, not a terminal.</p>
@@ -289,7 +303,7 @@ claude --version  # or: codex --version / opencode --version / pi --version</cod
             </article>
           </div>
           <p>Setup inventories technologies, reports code/docs contradictions, creates the execution queue, and stops before implementation. An optional audit uses verify-first mode for only the selected work, so passing checks are recorded without a rewrite.</p>
-          <p class="files"><strong>OpenCode / Cursor:</strong> substitute <code>/harness-planner</code>, <code>/harness-setup</code>, or <code>/harness-generator</code> using the command table above. <strong>Pi:</strong> substitute <code>/skill:planner</code>, <code>/skill:setup</code>, or <code>/skill:generator</code>.</p>
+          <p class="files"><strong>OpenCode / Cursor:</strong> substitute <code>/harness-planner</code>, <code>/harness-setup</code>, or <code>/harness-generator</code> using the command table above. <strong><a href="https://pi.dev/">Pi</a>:</strong> substitute <code>/skill:planner</code>, <code>/skill:setup</code>, or <code>/skill:generator</code>.</p>
         </section>
 
         <!-- NEW: full journey -->
@@ -837,14 +851,14 @@ cp config/roles.example.json .harness/roles.json</code></pre>
         <section class="topic" id="herdr">
           <p class="step"><span style="color:#e5c07b">Optional</span> visibility</p>
           <h2>Watch workers in <a href="https://herdr.dev/">herdr</a></h2>
-          <p>Herdr is optional. The supervisor defaults to background workers. Pass <code>--display herdr</code> when you run inside a herdr workspace and want each admitted worker in a sibling pane. You see coding, QA, and Goal Review agents in the herdr sidebar without tailing log files.</p>
+          <p>Herdr is optional. The supervisor defaults to background workers. Pass <code>--display herdr</code> when you run inside a herdr workspace and want each admitted worker listed in the herdr agent sidebar. Workers land on dedicated <code>harness-workers</code> tabs (max 4 panes per tab; overflow opens <code>harness-workers-2</code>, and so on) so your supervisor pane stays readable.</p>
           <pre><code># inside a herdr workspace for your project
 CONTROL=skills/supervisor   # or your installed plugin path
 node "$CONTROL/scripts/harness-control.mjs" start --repo "$PROJECT" --host codex --display herdr
 
 # default: background workers (no herdr required)
 node "$CONTROL/scripts/harness-control.mjs" start --repo "$PROJECT" --host codex</code></pre>
-          <p>Use <code>herdr pane list</code>, <code>herdr pane read</code>, and <code>herdr wait agent-status</code> to coordinate from the supervisor pane. Event relay (<code>events</code>, <code>ack</code>, <code>respond</code>) is unchanged for phone or plugin consumers.</p>
+          <p>Use <code>herdr agent list</code>, <code>herdr pane read</code>, and <code>herdr wait agent-status</code> to coordinate from the supervisor pane. Event relay (<code>events</code>, <code>ack</code>, <code>respond</code>) is unchanged for phone or plugin consumers.</p>
           <p>For remote access, use herdr's SSH and plugin transports — see the <a href="https://herdr.dev/docs/">herdr documentation</a>.</p>
         </section>
 

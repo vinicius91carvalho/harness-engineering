@@ -52,6 +52,9 @@ grep -Fq 'Add reversible note archiving' "$HTML"
 grep -Fq '* `implementation` means coding completed.' "$README"
 grep -Fq '* `qa` means isolated QA passed.' "$README"
 grep -Fq '* `integration` means the behavior passed after merging.' "$README"
+grep -Fq 'https://pi.dev/' "$README" "$HTML"
+grep -Fq 'Context map' "$HTML"
+grep -Fq 'harness-design-long-running-apps' "$HTML"
 grep -Fq 'https://herdr.dev/' "$README" "$HTML"
 grep -Fq 'https://developers.openai.com/codex/' "$README" "$HTML"
 grep -Fq 'Grilling is a planner capability' "$ROOT/skills/planner/SKILL.md"
@@ -84,7 +87,7 @@ grep -Fq '.harness/projects.json' "$README"
 grep -Fq 'run_completed' "$README"
 grep -Fq 'implementation and .qa and .integration' "$README"
 
-for str in 'A long unattended run with monitoring/pause/resume' 'To independently re-audit an already-integrated main' 'An existing working app, just adopting the harness (no new goal)' '(existing-codebase mode)' 'still draining its retry queue (up to 5 attempts per context)' 'HARNESS_LEASE_TIMEOUT_SECONDS'; do
+for str in 'A long unattended run with monitoring/pause/resume' 'To independently re-audit an already-integrated integration branch' 'An existing working app, just adopting the harness (no new goal)' '(existing-codebase mode)' 'still draining its retry queue (up to 5 attempts per context)' 'HARNESS_LEASE_TIMEOUT_SECONDS'; do
   grep -Fq -- "$str" "$README"
   grep -Fq -- "$str" "$HTML"
 done

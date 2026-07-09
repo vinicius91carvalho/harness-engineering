@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { atomicJson } from './lib/fs-json.mjs'
+import { integrationBranchName } from './lib/integration-branch.mjs'
 
 function fail(message) {
   process.stderr.write(`reconcile: ${message}\n`)
@@ -30,9 +31,10 @@ function gitOutput(args) {
   return result.status === 0 ? result.stdout.trim() : ''
 }
 
-function mainQueueFallback() {
+function integrationQueueFallback() {
   const prefix = gitOutput(['rev-parse', '--show-prefix'])
-  const source = gitOutput(['show', `main:${prefix}feature_list.json`])
+  const branch = integrationBranchName(repo)
+  const source = gitOutput(['show', `${branch}:${prefix}feature_list.json`])
   if (!source) return null
   try { return JSON.parse(source) } catch { return null }
 }
@@ -41,7 +43,7 @@ async function readQueue() {
   try {
     return JSON.parse(await readFile(queueFile, 'utf8'))
   } catch (error) {
-    const fallback = mainQueueFallback()
+    const fallback = integrationQueueFallback()
     if (!fallback) throw error
     await atomicJson(queueFile, fallback)
     return fallback

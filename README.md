@@ -11,7 +11,7 @@
 
 ## Quickstart
 
-Type these in your **coding tool's chat** (Claude Code, Codex, OpenCode, or Cursor Agent), not in a terminal.
+Type these in your **coding tool's chat** ([Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://developers.openai.com/codex/), [OpenCode](https://opencode.ai/), [Cursor Agent](https://cursor.com/docs/cli/overview), or [Pi](https://pi.dev/)), not in a terminal.
 
 | Step | What you type | What happens |
 | --- | --- | --- |
@@ -28,10 +28,10 @@ Type these in your **coding tool's chat** (Claude Code, Codex, OpenCode, or Curs
 ## About
 
 `harness-engineering` is a plugin marketplace plus a **spec → build → QA → Goal Review** workflow.
-The harness owns completion policy; [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://developers.openai.com/codex/), [OpenCode](https://opencode.ai/), and [Cursor Agent](https://cursor.com/docs/cli/overview) run it.
+The harness owns completion policy; [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://developers.openai.com/codex/), [OpenCode](https://opencode.ai/), [Cursor Agent](https://cursor.com/docs/cli/overview), and [Pi](https://pi.dev/) run it.
 Optional [herdr](https://herdr.dev/) shows workers in terminal panes; optional `.harness/roles.json` routes phases to ordered tool/model candidates.
 
-**Done means evidence:** independent QA, integration on `main`, and a final Goal Review — not an empty task list.
+**Done means evidence:** independent QA, integration on the plan branch, and a final Goal Review — not an empty task list.
 
 ## Framework
 
@@ -96,8 +96,8 @@ See [CONTEXT.md](CONTEXT.md) for the full glossary and bounded contexts.
 3. **Claim** — each ready context gets a lease, branch, worktree, and port.
 4. **Build & inspect** — coding-agent implements; qa-agent tests at a real boundary.
 5. **Repair** — defects produce evidence + Repair Plan; three Attempts then block for input.
-6. **Integrate** — merge to `main`, rerun checks (Integrated Verification).
-7. **Goal Review** — independent pass over the whole spec on integrated `main`.
+6. **Integrate** — merge the Work Item branch into the plan integration branch (never `main` while the plan is open), rerun checks (Integrated Verification).
+7. **Goal Review** — independent pass over the whole spec on the integrated plan branch.
 
 ### Key terms
 
@@ -108,6 +108,22 @@ See [CONTEXT.md](CONTEXT.md) for the full glossary and bounded contexts.
 | Context | Group of Work Items built together in one worktree |
 | Claim Lease | Heartbeat-proven exclusive ownership of a context |
 | Goal Review | Final independent audit of the whole Project Goal |
+
+### Plan integration branch
+
+Large goals must not commit to `main`/`master` while in flight.
+Create one plan branch (for example `plan/opensource-docker`) and pin it at the Git root:
+
+```text
+.harness/integration-branch
+plan/opensource-docker
+```
+
+The harness merges each `gen/<project>-<context>` Work Item branch into that plan branch only.
+Goal Review runs on the integrated plan branch.
+When the plan ships, merge the plan branch to `main` in one deliberate PR — not piecemeal during the run.
+
+Override for a single run with `HARNESS_INTEGRATION_BRANCH=plan/my-feature`.
 
 Retries: **3 Attempts** per Work Item (orchestrator), **5 resume tries** per blocked context (supervisor), **2 Goal Review reopenings** per item before blocking.
 
@@ -131,7 +147,7 @@ Windows: [`install.ps1`](install.ps1). Details: [installer docs](docs/installer/
 | An existing working app, just adopting the harness (no new goal) | `/harness:setup` (no args) |
 | A reviewed `project_specs.xml`, ready to build/resume | `/harness:generator` |
 | A long unattended run with monitoring/pause/resume | `/harness:supervisor` |
-| To independently re-audit an already-integrated main | `/harness:evaluator` |
+| To independently re-audit an already-integrated integration branch | `/harness:evaluator` |
 
 ### New project
 

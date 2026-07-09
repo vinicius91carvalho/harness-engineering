@@ -70,6 +70,9 @@ not create the registry.
    Cross-check docs against code/configuration. Prefer current implementation when
    docs are stale, but record every contradiction explicitly in the spec; never
    silently resolve one.
+   The planner must run the **spec review HTML loop** (`.harness/project_specs.draft.json`
+   → interactive review → `spec-review.mjs finalize`) before
+   `project_specs.xml` exists. Setup is not past this step until finalize succeeds.
 4. Before initialization, run
    `node <this-skill>/inventory.mjs "$PROJECT" .harness-technology-inventory.json project_specs.xml`.
    It verifies every evidence-backed technology appears in its intended spec section

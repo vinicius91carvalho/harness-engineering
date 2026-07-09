@@ -35,6 +35,7 @@ names='Clerk Stripe Anthropic Hindsight Composio'
 resolution='implementation prevails; docs stale'
 printf '<project_specification><technology_stack>AWS CDK PostgreSQL</technology_stack><integrations>%s<contradictions>%s</contradictions></integrations><prerequisites/></project_specification>\n' "$names" "$resolution" >"$TMP/repo/project_specs.xml"
 node "$ROOT/skills/setup/inventory.mjs" "$TMP/repo" >/dev/null
-grep -q 'record every contradiction explicitly' "$ROOT/skills/setup/SKILL.md"
+grep -q 'spec review HTML loop' "$ROOT/skills/setup/SKILL.md"
+grep -q 'spec-review.mjs' "$ROOT/skills/planner/SKILL.md"
 grep -q 'failure_behavior' "$ROOT/skills/planner/project_specs.template.xml"
 echo 'ok - setup checks a repository-derived integration inventory'

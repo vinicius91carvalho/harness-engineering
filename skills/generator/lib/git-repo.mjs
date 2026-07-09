@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { isAbsolute, resolve, dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
+import { integrationBranchName } from './integration-branch.mjs'
 
 export function git(repo, args, { allowFailure = false } = {}) {
   const result = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' })
@@ -24,12 +25,18 @@ export function projectPrefix(repo) {
   return git(repo, ['rev-parse', '--show-prefix']).stdout.trim()
 }
 
-export function readFeatureListFromMain(repo) {
+export function readFeatureListFromIntegration(repo) {
   const prefix = projectPrefix(repo)
-  const spec = prefix ? `main:${prefix}feature_list.json` : 'main:feature_list.json'
+  const branch = integrationBranchName(repo)
+  const spec = prefix ? `${branch}:${prefix}feature_list.json` : `${branch}:feature_list.json`
   const result = git(repo, ['show', spec], { allowFailure: true })
   if (result.status !== 0) return null
   return JSON.parse(result.stdout)
+}
+
+/** @deprecated Use readFeatureListFromIntegration */
+export function readFeatureListFromMain(repo) {
+  return readFeatureListFromIntegration(repo)
 }
 
 export function portInUse(port) {

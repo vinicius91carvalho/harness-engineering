@@ -1,11 +1,4 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="760" height="236" viewBox="0 0 760 236" role="img" aria-label="harness-engineering">
-  <defs>
-    <linearGradient id="title" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#8A2BE2"/>
-      <stop offset="55%" stop-color="#2496ED"/>
-      <stop offset="100%" stop-color="#2EA44F"/>
-    </linearGradient>
-  </defs>
   <rect width="760" height="236" rx="14" fill="#0d1117"/>
   <!-- Gandalf the Grey, pixel art -->
   <rect x="46" y="26" width="7" height="7" fill="#2f6fd0"/>
@@ -272,8 +265,8 @@
   <rect x="130" y="208" width="7" height="7" fill="#4a2e1a"/>
   <rect x="137" y="208" width="7" height="7" fill="#4a2e1a"/>
   <g font-family="'Courier New',monospace" font-weight="bold">
-    <text x="210" y="104" font-size="46" fill="url(#title)">HARNESS</text>
-    <text x="210" y="152" font-size="46" fill="url(#title)">ENGINEERING</text>
+    <text x="210" y="104" font-size="46" fill="#f0f6fc">HARNESS</text>
+    <text x="210" y="152" font-size="46" fill="#f0f6fc">ENGINEERING</text>
   </g>
   <text x="210" y="186" font-family="'Courier New',monospace" font-size="15" fill="#8b949e">A curated developer workflow for any AI harness.</text>
   <text x="210" y="208" font-family="'Courier New',monospace" font-weight="bold" font-size="15" fill="#c9d1d9">YOU SHOULD NOT PASS!</text>

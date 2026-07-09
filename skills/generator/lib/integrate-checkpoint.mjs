@@ -1,4 +1,4 @@
-/** Integrated Verification checkpoint: merge to main, resolve conflicts, run integration QA. */
+/** Integrated Verification checkpoint: merge to the plan integration branch, resolve conflicts, run integration QA. */
 
 import { mergeDo, mergeRelease } from './claim-lease.mjs'
 
@@ -31,7 +31,7 @@ export async function integrateCheckpoint(ctx) {
     updateFeature,
     readFeatures,
     writeState,
-    syncWorkdirWithMain,
+    syncWorkdirWithIntegration,
     join,
     acquireMergeLock,
   } = ctx
@@ -67,7 +67,7 @@ export async function integrateCheckpoint(ctx) {
     }
     if (git(['merge-base', '--is-ancestor', checkpointSha, 'HEAD'], integrationDir, true).status !== 0) {
       git(['merge', '--abort'], integrationDir, true)
-      return { passed: false, operational: true, defects: ['Checkpoint was not integrated into main'] }
+      return { passed: false, operational: true, defects: ['Checkpoint was not integrated into the integration branch'] }
     }
 
     await writeState({ phase: 'integration-qa', nextAction: 'integration-qa' })
@@ -80,10 +80,10 @@ export async function integrateCheckpoint(ctx) {
     if (verified.ok && current?.implementation === true && current?.qa === true && current?.integration === true) {
       const file = await journal(integrationDir, 'Integrated Verification passed', {
         Attempt: `${attempt}/${maxAttempts}`, WorkItem: feature.id, AcceptanceChecks: feature.acceptance_checks || [],
-        Outcome: 'passed on integrated main', Evidence: verified.artifact, NextAction: 'next Ready Work Item',
+        Outcome: 'passed on integrated branch', Evidence: verified.artifact, NextAction: 'next Ready Work Item',
       })
       commitPaths(integrationDir, [join(integrationDir, 'feature_list.json'), file], `verify(harness): integrate ${feature.id}`)
-      syncWorkdirWithMain(workdir)
+      syncWorkdirWithIntegration(workdir)
       await writeState({ phase: 'integrated', nextAction: 'next-work-item', lastResult: 'Integrated Verification passed' })
       return { passed: true }
     }
@@ -94,7 +94,7 @@ export async function integrateCheckpoint(ctx) {
       Attempt: `${attempt}/${maxAttempts}`, WorkItem: feature.id, Defects: defects, Evidence: verified.artifact, NextAction: 'Repair Plan',
     })
     commitPaths(integrationDir, [join(integrationDir, 'feature_list.json'), file], `qa(${feature.context}): ${feature.id} integration defect`)
-    syncWorkdirWithMain(workdir)
+    syncWorkdirWithIntegration(workdir)
     return { passed: false, defects, evidence: verified.artifact }
   } finally {
     mergeRelease(repo, process.pid)

@@ -16,7 +16,9 @@ top-level), `CONTROL` this skill directory, and
 `WORKER_HOST` one authenticated CLI installed on the machine: `claude`, `codex`,
 `opencode`, or `agent`. Role routing is selected by project-local `.harness/roles.json`.
 Herdr visibility is optional: pass `--display herdr` when running inside a herdr
-workspace; background workers are the default.
+workspace. Each admitted worker is started with `herdr agent start worker-<project>-<context>`
+on a dedicated `harness-workers` tab (max 4 panes per tab; additional tabs are created automatically)
+so it appears in the herdr agent sidebar (not just a silent background shell).
 
 At a monorepo root, resolve one project through `.harness/projects.json` before
 starting. Each project has its own specification, queue, supervisor state, and
@@ -32,7 +34,7 @@ no safe default.
 
 Before starting the supervisor, use the sibling `generator` skill's scaffold and
 reconciliation procedure so both `project_specs.xml` and a valid
-`feature_list.json` exist on `main`. Do not report a long-running goal as started
+`project_specs.xml` and `feature_list.json` exist on the integration branch (see `.harness/integration-branch`). Do not report a long-running goal as started
 until this validation succeeds:
 
 ```bash
@@ -141,19 +143,22 @@ node "$CONTROL/scripts/harness-control.mjs" stop   --repo "$REPO"
 ```
 
 Never infer completion from an empty queue or agent prose. Completion requires a
-persisted `run_completed` event produced by mandatory Goal Review on integrated
-`main`.
+persisted `run_completed` event produced by mandatory Goal Review on the integrated plan branch.
 
 ## Herdr workflow (optional)
 
 Herdr is not required. Background workers are the default. When you run inside a
-herdr workspace and want visible panes, pass `--display herdr`. Each admitted
-worker opens in a sibling pane labeled `worker-<context>`.
+herdr workspace and want visible workers in the agent sidebar, pass `--display herdr`.
+Each admitted worker is started as a named agent (`worker-<project>-<context>`).
 
 ```bash
 node "$CONTROL/scripts/harness-control.mjs" start --repo "$REPO" --host "$WORKER_HOST" --display herdr
 ```
 
-Use `herdr pane list`, `herdr pane read`, and `herdr wait agent-status` from the
-supervisor pane to observe workers. Omit `--display herdr` for background workers.
+Use `herdr agent list`, `herdr pane read`, and `herdr wait agent-status` from the
+supervisor pane to observe workers. Harness reports `working` while the orchestrator
+runs; herdr `blocked` or an interactive prompt raises `input_required`. Herdr `idle`
+and merge-lock waits are normal between turns and do not stop workers. Herdr panes no longer flood with `BUSY` lines — the orchestrator prints a short status line at most every 10s while waiting. Workers close
+only when the pane exits or the orchestrator heartbeat goes stale. Omit `--display herdr`
+for background workers.
 Remote access uses herdr's SSH and plugin transports.

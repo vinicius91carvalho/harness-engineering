@@ -33,6 +33,7 @@ jobs:
           bash tests/site_test.sh
           bash tests/reconcile_test.sh
           node tests/herdr_spawn_test.mjs
+          node tests/spec_review_test.mjs
           bash tests/setup_inventory_test.sh
           bash tests/claim_test.sh
           bash tests/lib_test.sh
@@ -66,6 +67,7 @@ jobs:
         run: bash tests/supervisor_e2e_test.sh
       - run: bash tests/site_test.sh
       - run: node tests/herdr_spawn_test.mjs
+      - run: node tests/spec_review_test.mjs
       - run: bash tests/reconcile_test.sh
       - run: bash tests/setup_inventory_test.sh
       - run: bash tests/claim_test.sh

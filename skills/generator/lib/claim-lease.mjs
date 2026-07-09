@@ -7,12 +7,13 @@ import {
   gitRoot,
   gitCommonDir,
   projectPrefix,
-  readFeatureListFromMain,
+  readFeatureListFromIntegration,
   portInUse,
   processAlive,
   readJsonFile,
   writeJsonAtomic,
 } from './git-repo.mjs'
+import { integrationBranchName, integrationBranchRef } from './integration-branch.mjs'
 import { claimKey, projectIdFromPrefix, sanitizeKey } from './project-keys.mjs'
 import { readyWorkItems } from './ready-work-items.mjs'
 
@@ -149,7 +150,7 @@ function readyModeForClaim(mode) {
 
 export function pickClaimCandidate(repo, mode, selector, claims) {
   const paths = repoPaths(repo)
-  const queue = readFeatureListFromMain(repo)
+  const queue = readFeatureListFromIntegration(repo)
   if (!queue) return null
 
   const ready = readyWorkItems(queue, {
@@ -202,8 +203,9 @@ function featureListValid(worktreePath) {
   }
 }
 
-function restoreFeatureListFromMain(repo) {
-  git(repo, ['restore', '-s', 'main', '--', 'feature_list.json'], { allowFailure: true })
+function restoreFeatureListFromIntegration(repo) {
+  const branch = integrationBranchName(repo)
+  git(repo, ['restore', '-s', branch, '--', 'feature_list.json'], { allowFailure: true })
 }
 
 function removeWorktree(repo, checkout) {
@@ -231,10 +233,10 @@ function addWorktree(repo, checkout, branch) {
   if (branchExists(repo, branch)) {
     git(repo, ['worktree', 'add', checkout, branch])
   } else {
-    const result = git(repo, ['worktree', 'add', checkout, '-b', branch, 'main'], { allowFailure: true })
+    const result = git(repo, ['worktree', 'add', checkout, '-b', branch, integrationBranchName(repo)], { allowFailure: true })
     if (result.status !== 0) return 75
   }
-  restoreFeatureListFromMain(repo)
+  restoreFeatureListFromIntegration(repo)
   return 0
 }
 
@@ -251,7 +253,7 @@ export function prepareWorktree(repo, context, paths) {
     && worktreeRegistered(repo, checkout)
   ) {
     if (!featureListValid(wt)) {
-      restoreFeatureListFromMain(repo)
+      restoreFeatureListFromIntegration(repo)
     }
     if (featureListValid(wt)) {
       return { branch, checkout, worktree: wt }
@@ -386,6 +388,11 @@ function stealDeadMergeLock(lockDir) {
   return true
 }
 
+function mergeBusySignal() {
+  if (process.env.HARNESS_HERDR_PANE === '1' || process.env.HARNESS_DISPLAY === 'herdr') return
+  process.stdout.write('BUSY\n')
+}
+
 export function mergeAcquire(repo, session) {
   const { mergeLockDir, repo: repoPath, prefix } = repoPaths(repo)
   mkdirSync(dirname(mergeLockDir), { recursive: true })
@@ -394,25 +401,26 @@ export function mergeAcquire(repo, session) {
     mkdirSync(mergeLockDir)
   } catch {
     if (!stealDeadMergeLock(mergeLockDir)) {
-      process.stdout.write('BUSY\n')
+      mergeBusySignal()
       return { busy: true }
     }
     try {
       mkdirSync(mergeLockDir)
     } catch {
-      process.stdout.write('BUSY\n')
+      mergeBusySignal()
       return { busy: true }
     }
   }
   writeFileSync(join(mergeLockDir, 'owner'), `${session ?? process.pid}\n`)
   writeFileSync(join(mergeLockDir, 'host'), `${host}\n`)
 
+  const integrationRef = integrationBranchRef(repoPath)
   const listResult = git(repoPath, ['worktree', 'list', '--porcelain'])
   let integ = null
   let current = null
   for (const line of listResult.stdout.split('\n')) {
     if (line.startsWith('worktree ')) current = line.slice('worktree '.length)
-    if (line === 'branch refs/heads/main' && current) {
+    if (line === `branch ${integrationRef}` && current) {
       integ = current
       break
     }
@@ -421,7 +429,7 @@ export function mergeAcquire(repo, session) {
   if (!integ) {
     integ = `${repoPath.replace(/\/$/, '')}-wt-integration`
     if (!existsSync(integ)) {
-      git(repoPath, ['worktree', 'add', integ, 'main'])
+      git(repoPath, ['worktree', 'add', integ, integrationBranchName(repoPath)])
     }
   }
 

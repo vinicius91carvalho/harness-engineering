@@ -40,7 +40,8 @@ const { planWorkerClosedActions } = await importLib('worker-lifecycle.mjs')
 const { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } = await importLib('supervisor-tick.mjs')
 const { pruneOrphanPendingInputs, isCrashBoundContext } = await importLib('supervisor-claims.mjs')
 const { selectClaim, resumeClaim, releaseClaim } = await importLib('claim-lease.mjs')
-const { resolveDisplayMode, spawnInPane, closePane, isPaneDone, readPaneTail, getPaneAgentStatus, shellQuote } =
+const { integrationBranchName, integrationBranchRef } = await importLib('integration-branch.mjs')
+const { resolveDisplayMode, spawnAgent, closePane, readPaneTail, getPaneAgentStatus, paneExists, reportHarnessAgent, detectPaneWaiting, getFocusedWorkspaceId, listHarnessWorkerTabs, closeDanglingShellPanes, closeAllDanglingHarnessShells } =
   await import(pathToFileURL(join(supervisorLib, 'herdr-spawn.mjs')).href)
 const orchestrator = join(generatorDir, 'orchestrator.mjs')
 const reconciler = join(generatorDir, 'reconcile.mjs')
@@ -60,6 +61,7 @@ function git(args, allowFailure = false) { return exec('git', args, repo, allowF
 
 const commonRaw = git(['rev-parse', '--git-common-dir']).stdout.trim()
 const commonGit = isAbsolute(commonRaw) ? commonRaw : resolve(repo, commonRaw)
+const herdrLayoutLock = join(commonGit, 'harness-control', 'herdr-layout.lock')
 const projectPrefix = git(['rev-parse', '--show-prefix']).stdout.trim().replace(/\/$/, '')
 const projectId = projectPrefix ? projectPrefix.replace(/[^a-zA-Z0-9_-]/g, '_') : 'root'
 const root = projectPrefix ? join(commonGit, 'harness-control', projectId) : join(commonGit, 'harness-control')
@@ -188,14 +190,16 @@ async function capacity(config, active = 0) {
   return computeCapacity(config, quotaFile, active)
 }
 
-async function mainCheckout() {
+async function integrationCheckout() {
+  const branchRef = integrationBranchRef(repo)
+  const branch = integrationBranchName(repo)
   const lines = git(['worktree', 'list', '--porcelain']).stdout.split('\n')
   let worktree = ''
   for (const line of lines) {
     if (line.startsWith('worktree ')) worktree = line.slice(9)
-    if (line === 'branch refs/heads/main') return projectPrefix ? join(worktree, projectPrefix) : worktree
+    if (line === `branch ${branchRef}`) return projectPrefix ? join(worktree, projectPrefix) : worktree
   }
-  fatal('main must be checked out in a worktree')
+  fatal(`${branch} must be checked out in a worktree (set .harness/integration-branch or HARNESS_INTEGRATION_BRANCH)`)
 }
 
 class Supervisor {
@@ -234,6 +238,7 @@ class Supervisor {
       workers: Object.fromEntries([...this.workers].map(([key, worker]) => [key, {
         pid: worker.child?.pid || null,
         paneId: worker.paneId || null,
+        agentName: worker.agentName || null,
         display: worker.type || 'background',
         context: worker.context, featureIds: worker.featureIds,
         worktree: worker.worktree, port: worker.port, logFile: worker.logFile, startedAt: worker.startedAt,
@@ -380,10 +385,11 @@ class Supervisor {
     if (guidance) args.push('--guidance', guidance)
     const logFile = join(logDir, `${key.replace(/[^a-zA-Z0-9_-]/g, '_')}-${Date.now()}.log`)
     if (this.config.display === 'herdr') {
-      const command = [process.execPath, ...args].map(shellQuote).join(' ')
-      const { paneId } = spawnInPane(command, `worker-${key}`)
+      const agentName = `worker-${claim.project || projectId}-${key}`
+      const { paneId } = spawnAgent(agentName, [process.execPath, ...args], { cwd: claim.worktree, layoutLockDir: herdrLayoutLock })
+      reportHarnessAgent(paneId, agentName, 'working', 'orchestrator starting')
       this.workers.set(key, {
-        type: 'herdr', paneId, logFile, context: claim.context, featureIds: claim.featureIds,
+        type: 'herdr', paneId, agentName, logFile, context: claim.context, featureIds: claim.featureIds,
         worktree: claim.worktree, port: claim.port, startedAt: new Date().toISOString(),
       })
       await this.emit('worker_started', { context: claim.context, featureIds: claim.featureIds, paneId, display: 'herdr' })
@@ -408,14 +414,53 @@ class Supervisor {
     await this.save({ status: 'complete', completedAt: new Date().toISOString() })
   }
 
+  async inspectHerdrAgentPresence() {
+    const waitingReason = 'Harness worker needs human input'
+    try {
+      const workspaceId = getFocusedWorkspaceId()
+      closeAllDanglingHarnessShells(workspaceId)
+      const keep = new Set([...this.workers.values()].filter((worker) => worker.type === 'herdr' && worker.paneId).map((worker) => worker.paneId))
+      for (const tab of listHarnessWorkerTabs(workspaceId)) closeDanglingShellPanes(tab.tab_id, keep)
+    } catch {}
+    for (const [key, worker] of [...this.workers]) {
+      if (worker.type !== 'herdr' || !worker.paneId || !worker.agentName) continue
+      if (!paneExists(worker.paneId)) continue
+      const runState = await readJson(runStateFile(key), {})
+      const terminal = ['complete', 'blocked', 'failed'].includes(runState.status)
+        || runState.nextAction === 'release-claim'
+      const tail = readPaneTail(worker.paneId, 60)
+      const paneStatus = getPaneAgentStatus(worker.paneId)
+      const waiting = detectPaneWaiting(tail, paneStatus)
+      if (!terminal) {
+        if (waiting) {
+          reportHarnessAgent(worker.paneId, worker.agentName, 'blocked', waiting.reason)
+          if (waiting.kind === 'prompt' || waiting.kind === 'blocked') {
+            await this.input('context', waitingReason, {
+              kind: waiting.kind,
+              paneStatus,
+              phase: runState.phase,
+              nextAction: runState.nextAction,
+              tail: tail.slice(-2000),
+            }, key)
+          }
+        } else {
+          const message = runState.childPid
+            ? `${runState.phase || 'coding'} (agent pid ${runState.childPid})`
+            : (runState.phase || runState.nextAction || 'orchestrator running')
+          reportHarnessAgent(worker.paneId, worker.agentName, 'working', message)
+        }
+      }
+    }
+  }
+
   async inspectStuckWorkers() {
     for (const [key, worker] of [...this.workers]) {
       const runState = await readJson(runStateFile(key), {})
       if (worker.type === 'herdr') {
-        const status = getPaneAgentStatus(worker.paneId)
-        const stuck = status === 'blocked' || status === 'unknown' ||
-          await isWorkerStuck({ logFile: worker.logFile, runState, thresholdMs: this.config.stuckTimeoutMs })
-        if (!stuck) continue
+        if (!paneExists(worker.paneId)) continue
+        // Never kill on herdr blocked alone — harness reports blocked for merge locks and
+        // between pi/codex turns. Trust orchestrator heartbeat and pane exit instead.
+        if (!(await isWorkerStuck({ logFile: worker.logFile, runState, thresholdMs: this.config.stuckTimeoutMs }))) continue
       } else {
         if (!(await isWorkerStuck({ logFile: worker.logFile, runState, thresholdMs: this.config.stuckTimeoutMs }))) continue
       }
@@ -437,11 +482,11 @@ class Supervisor {
   async inspectHerdrWorkers() {
     for (const [key, worker] of [...this.workers]) {
       if (worker.type !== 'herdr') continue
+      if (paneExists(worker.paneId)) continue
+      const tail = readPaneTail(worker.paneId)
       const runState = await readJson(runStateFile(key), {})
       const terminal = ['complete', 'blocked', 'failed'].includes(runState.status)
         || runState.nextAction === 'release-claim'
-      if (!terminal && !isPaneDone(worker.paneId)) continue
-      const tail = readPaneTail(worker.paneId)
       await this.trackClose(this.workerClosed(key, terminal ? 0 : 1, tail).catch((error) => this.crash(error)))
     }
   }
@@ -497,7 +542,7 @@ class Supervisor {
         if (plan.clearCrashCount) delete this.state.crashCounts?.[key]
         await this.save()
         this.workers.delete(key)
-        cleanupBrowserOrphans({ port: worker.port })
+        cleanupBrowserOrphans({ port: worker.port, workdir: worker.worktree })
         return
       }
       case 'goal_complete':
@@ -526,7 +571,7 @@ class Supervisor {
         if (plan.clearCrashCount) delete this.state.crashCounts?.[key]
         await this.save()
         this.workers.delete(key)
-        cleanupBrowserOrphans({ port: worker.port })
+        cleanupBrowserOrphans({ port: worker.port, workdir: worker.worktree })
         return
       case 'crash_input':
         this.state.crashCounts = this.state.crashCounts || {}
@@ -539,7 +584,7 @@ class Supervisor {
         break
     }
     this.workers.delete(key)
-    cleanupBrowserOrphans({ port: worker.port })
+    cleanupBrowserOrphans({ port: worker.port, workdir: worker.worktree })
     await this.save()
   }
 
@@ -572,15 +617,16 @@ class Supervisor {
 
   async maybeGoalReview(snapshot, active, available) {
     if (!snapshot.queue.length || snapshot.counts.integrated !== snapshot.counts.total || active > 0 || available < 1 || this.workers.has('goal-review')) return false
-    const worktree = await mainCheckout()
+    const worktree = await integrationCheckout()
     const claim = { context: 'goal-review', worktree, port: 5170, featureIds: [] }
     const args = [orchestrator, '--host', this.config.host, '--repo', repo, '--workdir', worktree,
       '--mode', 'goal-review', '--context', 'goal-review', '--port', '5170']
     const logFile = join(logDir, `goal-review-${Date.now()}.log`)
     if (this.config.display === 'herdr') {
-      const command = [process.execPath, ...args].map(shellQuote).join(' ')
-      const { paneId } = spawnInPane(command, 'worker-goal-review')
-      this.workers.set('goal-review', { type: 'herdr', paneId, logFile, ...claim, startedAt: new Date().toISOString() })
+      const agentName = `worker-${projectId}-goal-review`
+      const { paneId } = spawnAgent(agentName, [process.execPath, ...args], { cwd: worktree, layoutLockDir: herdrLayoutLock })
+      reportHarnessAgent(paneId, agentName, 'working', 'goal review starting')
+      this.workers.set('goal-review', { type: 'herdr', paneId, agentName, logFile, ...claim, startedAt: new Date().toISOString() })
       await this.emit('goal_review_started', { paneId, display: 'herdr' })
       await this.save()
       return true
@@ -619,6 +665,7 @@ class Supervisor {
     }
     await this.processResponses()
     if (this.stopping || this.state.status === 'stopped' || this.state.status === 'complete') return
+    await this.inspectHerdrAgentPresence()
     await this.inspectHerdrWorkers()
     await this.inspectStuckWorkers()
     const { external, recoverable } = await this.inspectClaims()
@@ -717,7 +764,8 @@ async function start() {
   const desired = await readJson(controlFile, {})
   const goalStateName = projectPrefix ? `${projectId}--goal-review.json` : 'goal-review.json'
   const goalState = await readJson(join(commonGit, 'harness-runs', goalStateName), {})
-  const head = git(['rev-parse', 'main'], true).stdout.trim()
+  const integrationBranch = integrationBranchName(repo)
+  const head = git(['rev-parse', integrationBranch], true).stdout.trim()
   const clean = git(['status', '--porcelain'], true).stdout.trim() === ''
   if (current.status === 'complete' && clean && goalState.reviewedHead === head) {
     return process.stdout.write(`${JSON.stringify({ started: false, status: 'complete', reviewedHead: head })}\n`)

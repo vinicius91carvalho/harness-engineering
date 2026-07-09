@@ -126,9 +126,86 @@ only real prerequisite check IDs in `depends_on`. Each description must state an
 observable input/action and expected result. Cover every part of the Project Goal;
 the generator rejects missing mappings, unknown dependencies, and dependency cycles.
 
+## Spec review (required before `project_specs.xml`)
+
+Never write or edit `project_specs.xml` until the user has confirmed every
+specification item in the interactive HTML review loop.
+
+1. As you interview, assemble the full specification as `xml_draft` (valid XML
+   matching `project_specs.template.xml`) and a parallel `items` array — one
+   review card per top-level section, feature area, and acceptance check.
+2. Write `.harness/project_specs.draft.json` in the resolved project root:
+
+```json
+{
+  "version": 1,
+  "revision": 1,
+  "project_name": "Notes App",
+  "xml_draft": "<project_specification>...</project_specification>",
+  "items": [
+    {
+      "id": "project_goal",
+      "kind": "section",
+      "title": "Project Goal",
+      "summary": "One-line outcome",
+      "body": "Full project goal text"
+    },
+    {
+      "id": "foundation",
+      "kind": "feature_area",
+      "title": "Core features — foundation",
+      "summary": "Runtime blockers and local deployment",
+      "body": "- capability bullets..."
+    },
+    {
+      "id": "AC-001",
+      "kind": "acceptance_check",
+      "title": "AC-001",
+      "summary": "Observable behavior in one line",
+      "body": "Full acceptance check description",
+      "meta": { "context": "foundation", "category": "foundation", "depends_on": "" }
+    }
+  ]
+}
+```
+
+3. Render and open the review page (skill directory = `PLANNER`):
+
+```bash
+node "$PLANNER/spec-review.mjs" open "$PROJECT"
+```
+
+4. Tell the user to click each card, add comments on items that need changes,
+   check **Confirmed** on correct items, click **Export feedback**, and save the
+   download to `.harness/spec-review-feedback.json` (path shown in the page).
+5. Read feedback and check status:
+
+```bash
+node "$PLANNER/spec-review.mjs" status "$PROJECT"
+```
+
+- **Exit 1** — some items are neither confirmed nor commented; ask the user to
+  finish the review page.
+- **Exit 2** — one or more items have comments; apply those revisions to
+  `xml_draft` and the matching `items` entries, bump `revision`, write the
+  draft again, delete stale feedback, re-run `open`, and repeat from step 4.
+- **Exit 0** — every item is confirmed; finalize:
+
+```bash
+node "$PLANNER/spec-review.mjs" finalize "$PROJECT"
+```
+
+**Feature mode:** review only the new feature areas and acceptance checks being
+appended, but `xml_draft` must be the full append-only XML (existing content
+preserved plus new entries). Never finalize until the new items are confirmed.
+
+**Existing codebase / setup:** same loop — mapping is not complete until review
+passes and `finalize` writes `project_specs.xml`.
+
 ## Finish
 
-- Write/update `project_specs.xml` in the resolved project root.
+- After `finalize`, `project_specs.xml` exists in the resolved project root.
+  Do not hand-edit the file to bypass review.
 - **New Project**: tell the user to review the file, then open a NEW session and
   run **`/generator`** — it scaffolds the project (via the initializer agent) on
   first run, then implements and QA's features. Multiple `/generator` sessions can

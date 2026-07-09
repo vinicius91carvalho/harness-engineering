@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, chmodSync } from 'node:fs'
 import { readFile, writeFile as writeFileAsync, appendFile as appendFileAsync, mkdir as mkdirAsync } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { parseObject, isProviderQuotaLimited, VERDICT_BEGIN, VERDICT_END } from '../skills/generator/lib/verdict.mjs'
@@ -18,6 +19,21 @@ import { planWorkerClosedActions } from '../skills/generator/lib/worker-lifecycl
 import { pruneOrphanPendingInputs, isCrashBoundContext, liveClaimContexts } from '../skills/generator/lib/supervisor-claims.mjs'
 import { createWorkflowState } from '../skills/generator/lib/workflow-state.mjs'
 import { readJson, atomicJson } from '../skills/generator/lib/fs-json.mjs'
+import { integrationBranchName, DEFAULT_INTEGRATION_BRANCH } from '../skills/generator/lib/integration-branch.mjs'
+import { cleanupBrowserOrphans } from '../skills/generator/lib/browser-cleanup.mjs'
+import { mergeAcquire, mergeRelease } from '../skills/generator/lib/claim-lease.mjs'
+import { hostSpawnVisible } from '../skills/generator/lib/agent-spawn.mjs'
+
+function withoutIntegrationBranchEnv(fn) {
+  const saved = process.env.HARNESS_INTEGRATION_BRANCH
+  delete process.env.HARNESS_INTEGRATION_BRANCH
+  try {
+    return fn()
+  } finally {
+    if (saved === undefined) delete process.env.HARNESS_INTEGRATION_BRANCH
+    else process.env.HARNESS_INTEGRATION_BRANCH = saved
+  }
+}
 
 test('parseObject reads delimited verdict', () => {
   const body = `${VERDICT_BEGIN}\n{"goal":true}\n${VERDICT_END}`
@@ -62,28 +78,76 @@ test('stuck threshold default', () => {
   assert.equal(stuckThresholdMs(), 600_000)
 })
 
+test('browser cleanup is a no-op on win32', () => {
+  assert.deepEqual(cleanupBrowserOrphans({ port: 5170, workdir: '/tmp/wt' }), { killed: 0 })
+})
+
+test('merge lock does not spam BUSY on stdout in herdr panes', () => {
+  withoutIntegrationBranchEnv(() => {
+    const root = mkdtempSync(join(tmpdir(), 'merge-busy-'))
+    spawnSync('git', ['init', '-b', 'main'], { cwd: root })
+    spawnSync('git', ['config', 'user.name', 'test'], { cwd: root })
+    spawnSync('git', ['config', 'user.email', 't@example.invalid'], { cwd: root })
+    writeFileSync(join(root, 'README.md'), 'x\n')
+    spawnSync('git', ['add', 'README.md'], { cwd: root })
+    spawnSync('git', ['commit', '-qm', 'init'], { cwd: root })
+    const held = mergeAcquire(root, process.pid)
+    assert.ok(held.integDir)
+    const claimLease = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'generator', 'lib', 'claim-lease.mjs')
+    const child = spawnSync(process.execPath, [
+      '-e',
+      `import { mergeAcquire } from ${JSON.stringify(claimLease)};
+       const result = mergeAcquire(${JSON.stringify(root)}, 999999);
+       if (result.busy) process.exit(0);
+       process.stderr.write(JSON.stringify(result));
+       process.exit(2);`,
+    ], { env: { ...process.env, HARNESS_HERDR_PANE: '1' }, encoding: 'utf8' })
+    assert.equal(child.status, 0, child.stderr || child.stdout)
+    assert.equal(child.stdout, '')
+    mergeRelease(root, process.pid)
+  })
+})
+
+test('hostSpawnVisible respects herdr env', () => {
+  assert.equal(hostSpawnVisible(), Boolean(process.env.HARNESS_HERDR_PANE === '1' || process.env.HARNESS_DISPLAY === 'herdr'))
+})
+
+test('integration branch resolves from file and env', () => {
+  withoutIntegrationBranchEnv(() => {
+    const root = mkdtempSync(join(tmpdir(), 'integration-branch-'))
+    spawnSync('git', ['init'], { cwd: root })
+    mkdirSync(join(root, '.harness'), { recursive: true })
+    writeFileSync(join(root, '.harness', 'integration-branch'), 'plan/demo\n')
+    assert.equal(integrationBranchName(root), 'plan/demo')
+    assert.equal(integrationBranchName(root, { env: { HARNESS_INTEGRATION_BRANCH: 'plan/override' } }), 'plan/override')
+    assert.equal(DEFAULT_INTEGRATION_BRANCH, 'main')
+  })
+})
+
 
 test('pickClaimCandidate selects first unclaimed ready context', () => {
-  const tmp = mkdtempSync(join(tmpdir(), 'claim-pick-'))
-  spawnSync('git', ['init', '-b', 'main'], { cwd: tmp, encoding: 'utf8' })
-  spawnSync('git', ['config', 'user.name', 'test'], { cwd: tmp })
-  spawnSync('git', ['config', 'user.email', 't@example.invalid'], { cwd: tmp })
-  const queue = [
-    { id: 'A', context: 'alpha', acceptance_checks: ['AC-A'], depends_on: [], integration: false },
-    { id: 'B', context: 'beta', acceptance_checks: ['AC-B'], depends_on: [], integration: false },
-  ]
-  writeFileSync(join(tmp, 'feature_list.json'), `${JSON.stringify(queue)}\n`)
-  spawnSync('git', ['add', 'feature_list.json'], { cwd: tmp })
-  spawnSync('git', ['commit', '-qm', 'init'], { cwd: tmp })
+  withoutIntegrationBranchEnv(() => {
+    const tmp = mkdtempSync(join(tmpdir(), 'claim-pick-'))
+    spawnSync('git', ['init', '-b', 'main'], { cwd: tmp, encoding: 'utf8' })
+    spawnSync('git', ['config', 'user.name', 'test'], { cwd: tmp })
+    spawnSync('git', ['config', 'user.email', 't@example.invalid'], { cwd: tmp })
+    const queue = [
+      { id: 'A', context: 'alpha', acceptance_checks: ['AC-A'], depends_on: [], integration: false },
+      { id: 'B', context: 'beta', acceptance_checks: ['AC-B'], depends_on: [], integration: false },
+    ]
+    writeFileSync(join(tmp, 'feature_list.json'), `${JSON.stringify(queue)}\n`)
+    spawnSync('git', ['add', 'feature_list.json'], { cwd: tmp })
+    spawnSync('git', ['commit', '-qm', 'init'], { cwd: tmp })
 
-  const first = pickClaimCandidate(tmp, 'all', '', {})
-  assert.equal(first.context, 'alpha')
-  assert.deepEqual(first.featureIds, ['A'])
+    const first = pickClaimCandidate(tmp, 'all', '', {})
+    assert.equal(first.context, 'alpha')
+    assert.deepEqual(first.featureIds, ['A'])
 
-  const claims = { alpha: { status: 'building' } }
-  const second = pickClaimCandidate(tmp, 'all', '', claims)
-  assert.equal(second.context, 'beta')
-  assert.deepEqual(second.featureIds, ['B'])
+    const claims = { alpha: { status: 'building' } }
+    const second = pickClaimCandidate(tmp, 'all', '', claims)
+    assert.equal(second.context, 'beta')
+    assert.deepEqual(second.featureIds, ['B'])
+  })
 })
 
 test('mergeDo restores dirty runtime logs before merging', () => {

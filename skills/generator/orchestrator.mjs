@@ -10,9 +10,11 @@ import { readJson, atomicJson } from './lib/fs-json.mjs'
 import { parseObject, VERDICT_HINT, isProviderQuotaLimited, fallbackReason } from './lib/verdict.mjs'
 import { writeWorkerResult } from './lib/worker-result.mjs'
 import { cleanupBrowserOrphans } from './lib/browser-cleanup.mjs'
+import { spawnHostAgent, hostSpawnVisible } from './lib/agent-spawn.mjs'
 import { integrateCheckpoint } from './lib/integrate-checkpoint.mjs'
 import { buildHostCommand, hostCommands, roleNames } from './adapters/hosts.mjs'
 import { featurePrompt as buildFeaturePrompt } from './prompts/feature.mjs'
+import { integrationBranchName } from './lib/integration-branch.mjs'
 import { createWorkflowState } from './lib/workflow-state.mjs'
 import { buildPlan, buildCandidates, lastCoder, mkey, bumpStrike } from './lib/route-plan.mjs'
 import { blockClaim, mergeAcquire, mergeRelease } from './lib/claim-lease.mjs'
@@ -121,6 +123,10 @@ const {
 process.on('SIGINT', () => writeInterruptedState('SIGINT'))
 process.on('SIGTERM', () => writeInterruptedState('SIGTERM'))
 
+function logVisible(message) {
+  if (hostSpawnVisible()) process.stderr.write(`orchestrator: ${message}\n`)
+}
+
 async function isVerifyFirst(workdir = options.workdir) {
   try {
     const spec = await readFile(join(workdir, 'project_specs.xml'), 'utf8')
@@ -189,23 +195,31 @@ async function evidence(id, attempt, kind, detail, route = null) {
 }
 
 async function spawnAgent(program, args, cwd) {
+  const visible = hostSpawnVisible()
   return await new Promise((resolveRun) => {
-    child = spawn(program, args, {
+    child = spawnHostAgent(program, args, {
       cwd,
-      detached: process.platform !== 'win32',
       env: {
-        ...process.env,
         PORT: String(options.port),
         FRONTEND_PORT: String(options.port),
         BACKEND_PORT: String(Number(options.port) + 1000),
       },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      visible,
     })
     let stdout = '', stderr = '', timedOut = false, settled = false
     const finish = (result) => { if (!settled) { settled = true; child = null; resolveRun(result) } }
     const registered = writeState({ childPid: child.pid || null }).catch((error) => { terminateChild(); fail(error.message) })
-    child.stdout?.on('data', (data) => { stdout = `${stdout}${data}`.slice(-1_000_000) })
-    child.stderr?.on('data', (data) => { stderr = `${stderr}${data}`.slice(-1_000_000) })
+    child.stdout?.on('data', (data) => {
+      stdout = `${stdout}${data}`.slice(-1_000_000)
+      if (visible) {
+        const text = String(data)
+        if (!/^BUSY\n?$/.test(text.trim())) process.stdout.write(data)
+      }
+    })
+    child.stderr?.on('data', (data) => {
+      stderr = `${stderr}${data}`.slice(-1_000_000)
+      if (visible) process.stderr.write(data)
+    })
     const timeout = setTimeout(() => { timedOut = true; terminateChild() }, Number(process.env.HARNESS_AGENT_TIMEOUT_MS || 1_800_000))
     child.on('close', async (code) => {
       clearTimeout(timeout)
@@ -254,6 +268,9 @@ async function runAgent(kind, prompt, id, attempt, cwd = options.workdir) {
     const [program, args] = direct
       ? hostCommands[candidate.harness](referencedPrompt)
       : buildHostCommand(candidate.harness, referencedPrompt, candidate.model)
+    if (hostSpawnVisible()) {
+      process.stderr.write(`orchestrator: ${kind} → ${program} attempt ${attempt}\n`)
+    }
     await writeState({ agentRoute: route, childPid: null })
     const result = await spawnAgent(program, args, cwd)
     const reason = !direct && !result.ok ? fallbackReason(result) : null
@@ -273,6 +290,7 @@ async function runAgent(kind, prompt, id, attempt, cwd = options.workdir) {
     const diagnostic = `${failures.length ? `fallbacks=${JSON.stringify(failures)}\n` : ''}${result.parsed ? `${JSON.stringify(result.parsed, null, 2)}\n` : `${result.stdout}${result.stderr ? `\n--- stderr ---\n${result.stderr}` : ''}`.slice(-16_000)}`
     const artifact = await evidence(id, attempt, kind, diagnostic, selected)
     await writeState({ childPid: null, evidence: artifact, agentRoute: selected, routeHistory })
+    cleanupBrowserOrphans({ port: options.port, workdir: cwd })
     return { ...result, artifact, route: selected }
   }
 }
@@ -290,7 +308,7 @@ async function stopApp(workdir) {
   if (!pid) { if (getState().appPid) await writeState({ appPid: null }); return }
   try { process.kill(pid, 'SIGTERM') } catch {}
   try { await unlink(pidFile) } catch {}
-  cleanupBrowserOrphans({ port: options.port })
+  cleanupBrowserOrphans({ port: options.port, workdir })
   await writeState({ appPid: null })
 }
 
@@ -298,6 +316,7 @@ function featurePrompt(kind, feature, attempt, repairPlan = null, workdir = opti
   return buildFeaturePrompt(kind, feature, attempt, repairPlan, workdir, {
     port: options.port,
     getVerifyFirst: (wd) => verifyFirstCache.get(wd),
+    integrationBranch: integrationBranchName(options.repo),
   })
 }
 
@@ -334,16 +353,26 @@ async function planRepair(feature, attempt, defectReport) {
 
 async function acquireMergeLock() {
   const tryBudget = Number(process.env.HARNESS_MERGE_LOCK_TRIES || 3600)
+  const visible = hostSpawnVisible()
+  let lastLog = 0
   for (let tries = 0; tries < tryBudget; tries++) {
     const result = mergeAcquire(options.repo, process.pid)
-    if (!result.busy && result.integDir) return result.integDir
+    if (!result.busy && result.integDir) {
+      if (visible) process.stderr.write('orchestrator: merge lock acquired\n')
+      return result.integDir
+    }
+    if (visible && Date.now() - lastLog >= 10_000) {
+      process.stderr.write('orchestrator: waiting for merge lock (another context is integrating)…\n')
+      lastLog = Date.now()
+    }
     await new Promise((resolveWait) => setTimeout(resolveWait, 500))
   }
   fail('timed out waiting for merge lock')
 }
 
-function syncWorkdirWithMain(workdir) {
-  const result = git(['merge', '--no-edit', 'main'], workdir, true)
+function syncWorkdirWithIntegration(workdir) {
+  const branch = integrationBranchName(options.repo)
+  const result = git(['merge', '--no-edit', branch], workdir, true)
   if (result.status !== 0) git(['merge', '--abort'], workdir, true)
 }
 
@@ -363,13 +392,19 @@ async function integrate(feature, attempt) {
     updateFeature,
     readFeatures,
     writeState,
-    syncWorkdirWithMain,
+    syncWorkdirWithIntegration,
     join,
     acquireMergeLock,
   })
 }
 
 async function runWorkItems() {
+  logVisible(`build context=${context} host=${options.host} port=${options.port} features=${wanted.join(',') || 'all'}`)
+  if (hostSpawnVisible()) {
+    process.stderr.write(
+      `orchestrator: workdir=${options.workdir}\n`,
+    )
+  }
   return runAttemptLoop({
     wanted,
     options,
@@ -417,7 +452,7 @@ async function runGoalReviewLocked() {
   if (incomplete.length) fail(`Goal Review requires every Work Item integrated; incomplete: ${incomplete.map((item) => item.id).join(', ')}`)
   setState(await readJson(stateFile, {}))
   const dirtyBefore = git(['status', '--porcelain', '--', '.'], options.workdir).stdout.trim()
-  if (dirtyBefore) fail('Goal Review requires a clean integrated main checkout')
+  if (dirtyBefore) fail(`Goal Review requires a clean integrated ${integrationBranchName(options.repo)} checkout`)
   const headBefore = git(['rev-parse', 'HEAD'], options.workdir).stdout.trim()
   const state = getState()
   if (state.status === 'complete' && state.phase === 'complete' && state.reviewedHead === headBefore) {
@@ -426,7 +461,8 @@ async function runGoalReviewLocked() {
   await writeState({ status: 'running', phase: 'goal-review', nextAction: 'goal-review', attempt: 1 })
   heartbeatTimer = setInterval(() => writeState().catch(() => {}), 15_000)
   itemPlan = buildPlan(options.repo, await readRoles())
-  const prompt = `You are the independent Goal Review agent. Read project_specs.xml, especially Project Goal and every stable Acceptance Check. On integrated main, exercise every check and cross-feature primary journeys through a real browser or real HTTP. Do not trust existing flags. Do not modify product code. Return only JSON: {"goal":true|false,"summary":"...","acceptanceCheckIds":["AC-..."],"defects":["expected ...; observed ...; evidence ..."]}. ${VERDICT_HINT}`
+  const integrationBranch = integrationBranchName(options.repo)
+  const prompt = `You are the independent Goal Review agent. Read project_specs.xml, especially Project Goal and every stable Acceptance Check. On integrated ${integrationBranch} (never main/master for in-flight plans), exercise every check and cross-feature primary journeys through a real browser or real HTTP. Do not trust existing flags. Do not modify product code. Never commit to main/master. Return only JSON: {"goal":true|false,"summary":"...","acceptanceCheckIds":["AC-..."],"defects":["expected ...; observed ...; evidence ..."]}. ${VERDICT_HINT}`
   const reviewed = await runAgent('GOAL_REVIEW', prompt, 'goal', 1)
   const verdict = reviewed.parsed
   const dirtyAfter = git(['status', '--porcelain', '--', '.'], options.workdir).stdout.trim()
@@ -480,12 +516,13 @@ async function runGoalReviewLocked() {
 }
 
 async function runGoalReview() {
+  logVisible(`goal-review context=${context} host=${options.host} port=${options.port}`)
   const lockedMain = await acquireMergeLock()
   const canonicalLockedMain = realpathSync(lockedMain)
   const canonicalWorkdir = realpathSync(options.workdir)
   if (canonicalLockedMain !== canonicalWorkdir) {
     mergeRelease(options.repo, process.pid)
-    fail(`Goal Review must run in the locked main checkout: ${canonicalLockedMain}`)
+    fail(`Goal Review must run in the locked integration checkout (${integrationBranchName(options.repo)}): ${canonicalLockedMain}`)
   }
   try {
     return await runGoalReviewLocked()
@@ -494,6 +531,7 @@ async function runGoalReview() {
   }
 }
 
+logVisible(`started pid=${process.pid} workdir=${options.workdir}`)
 const result = options.mode === 'goal-review' ? await runGoalReview() : await runWorkItems()
 await writeWorkerResult(stateFile, { exitCode: 0, payload: result })
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
