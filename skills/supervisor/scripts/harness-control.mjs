@@ -40,10 +40,17 @@ const { planWorkerClosedActions } = await importLib('worker-lifecycle.mjs')
 const { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } = await importLib('supervisor-tick.mjs')
 const { planTickAdmission } = await importLib('supervisor-admission.mjs')
 const { pruneOrphanPendingInputs, isCrashBoundContext } = await importLib('supervisor-claims.mjs')
+const { planAutoRetryResponses } = await importLib('supervisor-auto-respond.mjs')
 const { selectClaim, resumeClaim, releaseClaim } = await importLib('claim-lease.mjs')
 const { integrationBranchName, integrationBranchRef } = await importLib('integration-branch.mjs')
-const { resolveDisplayMode, spawnAgent, closePane, readPaneTail, getPaneAgentStatus, paneExists, reportHarnessAgent, detectPaneWaiting, getFocusedWorkspaceId, listHarnessWorkerTabs, closeDanglingShellPanes, closeAllDanglingHarnessShells } =
-  await import(pathToFileURL(join(supervisorLib, 'herdr-spawn.mjs')).href)
+const {
+  resolveDisplayMode, spawnAgent, closeWorkerDisplay, renameWorkerTab,
+  buildWorkerTabLabel, roleFromPhase, readPaneTail, getPaneAgentStatus, paneExists,
+  reportHarnessAgent, detectPaneWaiting, detectPaneOrchestratorExited, detectPaneMergeLockWait,
+  paneShowsIdleShell, listProjectWorkerAgents, contextFromWorkerAgent, getFocusedWorkspaceId,
+  listHarnessWorkerTabs, closeDanglingShellPanes, closeStaleHarnessPanesForProject,
+  closeAllDanglingHarnessShells,
+} = await import(pathToFileURL(join(supervisorLib, 'herdr-spawn.mjs')).href)
 const orchestrator = join(generatorDir, 'orchestrator.mjs')
 const reconciler = join(generatorDir, 'reconcile.mjs')
 
@@ -139,7 +146,11 @@ async function updateSupervisorLock(token, status = 'running', pid = process.pid
   const owner = await readJson(supervisorOwner, {})
   if (owner.token !== token) {
     if (status === 'stopping') return
-    fatal('supervisor lease was lost')
+    // Another start/run may have stolen a stale lease, or the lock dir was
+    // removed mid-tick. Re-acquire instead of exiting — exiting used to kill
+    // every herdr worker pane via run()'s finally block.
+    await acquireSupervisorLock(token, pid, status, Math.max(10, number('supervisor-lease-seconds', 30)))
+    return
   }
   await atomicJson(supervisorOwner, { ...owner, pid, host: hostname(), status, heartbeatEpoch: Math.floor(Date.now() / 1000) })
 }
@@ -242,6 +253,8 @@ class Supervisor {
       workers: Object.fromEntries([...this.workers].map(([key, worker]) => [key, {
         pid: worker.child?.pid || null,
         paneId: worker.paneId || null,
+        tabId: worker.tabId || null,
+        tabLabel: worker.tabLabel || null,
         agentName: worker.agentName || null,
         display: worker.type || 'background',
         context: worker.context, featureIds: worker.featureIds,
@@ -310,6 +323,49 @@ class Supervisor {
     }
     await this.save()
     if (!previous.startedAt) await this.emit('run_started', { host: this.config.host, config: this.config })
+    await this.rehydrateHerdrWorkers()
+  }
+
+  /** Reattach live herdr panes after supervisor restart (orchestrators keep running). */
+  async rehydrateHerdrWorkers() {
+    if (this.config.display !== 'herdr') return
+    const claims = await ownClaims()
+    const savedWorkers = this.state?.workers || {}
+    for (const agent of listProjectWorkerAgents(projectId)) {
+      const context = contextFromWorkerAgent(agent.agent, projectId)
+      if (!context || this.workers.has(context)) continue
+      if (!paneExists(agent.pane_id)) continue
+      const tail = readPaneTail(agent.pane_id, 30)
+      if (paneShowsIdleShell(tail) && !detectPaneMergeLockWait(tail)) continue
+      let claim
+      if (context === 'goal-review') {
+        try {
+          claim = { context: 'goal-review', worktree: await integrationCheckout(), port: 5170, featureIds: [] }
+        } catch {
+          continue
+        }
+      } else {
+        claim = Object.values(claims).find((entry) => entry.context === context)
+        if (!claim) continue
+      }
+      const runState = await readJson(runStateFile(context), {})
+      const live = processAlive(runState.ownerPid) || processAlive(runState.childPid)
+      if (!live && !detectPaneMergeLockWait(tail) && context !== 'goal-review') continue
+      const saved = savedWorkers[context] || {}
+      this.workers.set(context, {
+        type: 'herdr',
+        paneId: agent.pane_id,
+        tabId: saved.tabId || agent.tab_id || null,
+        tabLabel: saved.tabLabel || null,
+        agentName: agent.agent,
+        logFile: saved.logFile || join(logDir, `${context.replace(/[^a-zA-Z0-9_-]/g, '_')}-reattached.log`),
+        context: claim.context,
+        featureIds: saved.featureIds || claim.featureIds || [],
+        worktree: saved.worktree || claim.worktree,
+        port: saved.port || claim.port,
+        startedAt: saved.startedAt || new Date().toISOString(),
+      })
+    }
   }
 
   async snapshot() {
@@ -416,13 +472,25 @@ class Supervisor {
     }
     if (this.config.display === 'herdr') {
       const agentName = `worker-${claim.project || projectId}-${key}`
-      const { paneId } = spawnAgent(agentName, [process.execPath, ...args], { cwd: claim.worktree, layoutLockDir: herdrLayoutLock })
+      const runState = await readJson(runStateFile(key), {})
+      const retry = Math.max(1, Number(runState.attempt) || Number(this.state.retryQueue?.[key]?.attempts) || 1)
+      const taskId = (claim.featureIds && claim.featureIds[0]) || claim.context || key
+      const role = roleFromPhase(runState.phase || 'coding')
+      const project = claim.project || projectId
+      const { paneId, tabId, tabLabel } = spawnAgent(agentName, [process.execPath, ...args], {
+        cwd: claim.worktree,
+        layoutLockDir: herdrLayoutLock,
+        taskId,
+        role,
+        project,
+        retry,
+      })
       reportHarnessAgent(paneId, agentName, 'working', 'orchestrator starting')
       this.workers.set(key, {
-        type: 'herdr', paneId, agentName, logFile, context: claim.context, featureIds: claim.featureIds,
+        type: 'herdr', paneId, tabId, tabLabel, agentName, logFile, context: claim.context, featureIds: claim.featureIds,
         worktree: claim.worktree, port: claim.port, startedAt: new Date().toISOString(),
       })
-      await this.emit('worker_started', { context: claim.context, featureIds: claim.featureIds, paneId, display: 'herdr' })
+      await this.emit('worker_started', { context: claim.context, featureIds: claim.featureIds, paneId, tabId, tabLabel, display: 'herdr' })
       await this.save()
       return
     }
@@ -450,7 +518,10 @@ class Supervisor {
       const workspaceId = getFocusedWorkspaceId()
       closeAllDanglingHarnessShells(workspaceId)
       const keep = new Set([...this.workers.values()].filter((worker) => worker.type === 'herdr' && worker.paneId).map((worker) => worker.paneId))
-      for (const tab of listHarnessWorkerTabs(workspaceId)) closeDanglingShellPanes(tab.tab_id, keep)
+      for (const tab of listHarnessWorkerTabs(workspaceId)) {
+        closeDanglingShellPanes(tab.tab_id, keep)
+        closeStaleHarnessPanesForProject(tab.tab_id, projectId, keep)
+      }
     } catch {}
     for (const [key, worker] of [...this.workers]) {
       if (worker.type !== 'herdr' || !worker.paneId || !worker.agentName) continue
@@ -474,10 +545,27 @@ class Supervisor {
             }, key)
           }
         } else {
-          const message = runState.childPid
+          let message = runState.childPid
             ? `${runState.phase || 'coding'} (agent pid ${runState.childPid})`
             : (runState.phase || runState.nextAction || 'orchestrator running')
+          if (detectPaneMergeLockWait(tail)) {
+            message = 'waiting for merge lock (another context is integrating)'
+          }
           reportHarnessAgent(worker.paneId, worker.agentName, 'working', message)
+          if (worker.tabId) {
+            const taskId = (worker.featureIds && worker.featureIds[0]) || worker.context || key
+            const retry = Math.max(1, Number(runState.attempt) || 1)
+            const nextLabel = buildWorkerTabLabel({
+              taskId,
+              role: roleFromPhase(runState.phase || 'coding'),
+              project: projectId,
+              retry,
+            })
+            if (nextLabel !== worker.tabLabel) {
+              renameWorkerTab(worker.tabId, nextLabel)
+              worker.tabLabel = nextLabel
+            }
+          }
         }
       }
     }
@@ -495,7 +583,7 @@ class Supervisor {
         if (!(await isWorkerStuck({ logFile: worker.logFile, runState, thresholdMs: this.config.stuckTimeoutMs }))) continue
       }
       await this.emit('worker_stuck', { context: key, logFile: worker.logFile, phase: runState.phase }, true)
-      if (worker.type === 'herdr') closePane(worker.paneId)
+      if (worker.type === 'herdr') closeWorkerDisplay(worker.paneId, worker.tabId)
       else try { worker.child.kill('SIGTERM') } catch {}
       if (worker.type !== 'herdr') {
         setTimeout(() => { try { worker.child.kill('SIGKILL') } catch {} }, 5000)
@@ -516,17 +604,29 @@ class Supervisor {
       const terminal = ['complete', 'blocked', 'failed'].includes(runState.status)
         || runState.nextAction === 'release-claim'
       const gone = !paneExists(worker.paneId)
+      const tail = gone ? '' : readPaneTail(worker.paneId)
+      const childAlive = processAlive(runState.childPid)
+      const startedMs = worker.startedAt ? Date.parse(worker.startedAt) : 0
+      const warmedUp = startedMs > 0 && Date.now() - startedMs > 45_000
+      const orphanShell = !terminal && !gone && (
+        detectPaneOrchestratorExited(tail)
+        || (runState.childPid && !childAlive)
+        || (warmedUp && !childAlive && paneShowsIdleShell(tail))
+        || (warmedUp && !runState.status && !runState.heartbeat)
+      )
       // Herdr panes often keep a live shell after the orchestrator exits, so
-      // "pane still exists" is not enough. Treat terminal Run State as done,
-      // close the pane for human monitoring cleanup, then finalize.
-      if (!gone && !terminal) continue
-      const tail = readPaneTail(worker.paneId)
-      if (!gone && terminal) {
+      // "pane still exists" is not enough. Treat terminal Run State, a dead
+      // child, or an idle shell with no run state as done — close the tab
+      // immediately (finished agents must not linger), then finalize.
+      if (!gone && !terminal && !orphanShell) continue
+      if (!gone) {
         if (worker.agentName) {
-          const state = runState.status === 'complete' ? 'done' : 'idle'
+          const state = terminal && runState.status === 'complete' ? 'done' : 'idle'
           reportHarnessAgent(worker.paneId, worker.agentName, state, runState.status || 'finished')
         }
-        closePane(worker.paneId)
+        closeWorkerDisplay(worker.paneId, worker.tabId)
+      } else if (worker.tabId) {
+        closeWorkerDisplay(null, worker.tabId)
       }
       await this.trackClose(this.workerClosed(key, terminal ? 0 : 1, tail).catch((error) => this.crash(error)))
     }
@@ -637,6 +737,33 @@ class Supervisor {
     await this.save()
   }
 
+  async autoRespondPendingInputs() {
+    const planned = planAutoRetryResponses(this.state.pendingInputs, {
+      workers: this.workers,
+      retryQueue: this.state.retryQueue,
+      crashCounts: this.state.crashCounts,
+      isCrashBound: (context) => isCrashBoundContext(context, this.state.crashCounts),
+    })
+    if (!planned.length) return 0
+    await mkdir(responseDir, { recursive: true })
+    let written = 0
+    for (const item of planned) {
+      const file = join(responseDir, `${item.eventId}.json`)
+      try {
+        await writeFile(file, `${JSON.stringify(item.response, null, 2)}\n`, { flag: 'wx' })
+        written++
+        await this.emit('input_auto_responded', {
+          requestId: item.eventId,
+          context: item.context,
+          action: item.response.action,
+        })
+      } catch (error) {
+        if (error.code !== 'EEXIST') throw error
+      }
+    }
+    return written
+  }
+
   async processResponses() {
     for (const [id, request] of Object.entries(this.state.pendingInputs || {})) {
       if (request.status !== 'pending') continue
@@ -652,9 +779,23 @@ class Supervisor {
         await atomicJson(controlFile, { status: 'paused', at: new Date().toISOString() })
         await this.save({ status: 'paused' })
       } else if (response.action === 'retry' && request.context) {
-        this.state.retryQueue[request.context] = { guidance: response.guidance || 'Retry after user review' }
+        // Preserve operator/custom retryQueue guidance when an auto-retry response races in.
+        const existing = this.state.retryQueue?.[request.context]
+        if (existing?.guidance && response.auto) {
+          this.state.retryQueue[request.context] = { ...existing, attempts: existing.attempts || 0 }
+        } else {
+          this.state.retryQueue[request.context] = { guidance: response.guidance || 'Retry after user review' }
+        }
         delete this.state.crashCounts?.[request.context]
         await this.save()
+      } else if (response.action === 'retry' && request.scope === 'goal') {
+        // Goal-scoped retries have no Work Item context — queue goal-review with guidance.
+        this.state.retryQueue ||= {}
+        const existing = this.state.retryQueue['goal-review']
+        if (!(existing?.guidance && response.auto)) {
+          this.state.retryQueue['goal-review'] = { guidance: response.guidance || 'Retry Goal Review after user review', attempts: 0 }
+        }
+        await this.save({ status: 'running' })
       } else if (response.action === 'retry') {
         await this.save({ status: 'running' })
       } else if (response.action === 'amend') {
@@ -664,7 +805,7 @@ class Supervisor {
     }
   }
 
-  async maybeGoalReview(snapshot, active, available) {
+  async maybeGoalReview(snapshot, active, available, guidance = '') {
     if (!snapshot.queue.length || snapshot.counts.integrated !== snapshot.counts.total || active > 0 || available < 1 || this.workers.has('goal-review')) return false
     const goalStateName = projectPrefix ? `${projectId}--goal-review.json` : 'goal-review.json'
     const goalState = await readJson(join(commonGit, 'harness-runs', goalStateName), {})
@@ -674,17 +815,32 @@ class Supervisor {
       await this.save({ status: 'complete' })
       return true
     }
+    const queued = this.state.retryQueue?.['goal-review']
+    const reviewGuidance = guidance || queued?.guidance || ''
     const worktree = await integrationCheckout()
     const claim = { context: 'goal-review', worktree, port: 5170, featureIds: [] }
     const args = [orchestrator, '--host', this.config.host, '--repo', repo, '--workdir', worktree,
       '--mode', 'goal-review', '--context', 'goal-review', '--port', '5170']
+    if (reviewGuidance) args.push('--guidance', reviewGuidance)
     const logFile = join(logDir, `goal-review-${Date.now()}.log`)
+    if (queued) {
+      delete this.state.retryQueue['goal-review']
+    }
     if (this.config.display === 'herdr') {
       const agentName = `worker-${projectId}-goal-review`
-      const { paneId } = spawnAgent(agentName, [process.execPath, ...args], { cwd: worktree, layoutLockDir: herdrLayoutLock })
+      const { paneId, tabId, tabLabel } = spawnAgent(agentName, [process.execPath, ...args], {
+        cwd: worktree,
+        layoutLockDir: herdrLayoutLock,
+        taskId: 'goal-review',
+        role: 'goal-review',
+        project: projectId,
+        retry: Math.max(1, Number(queued?.attempts) || 1),
+      })
       reportHarnessAgent(paneId, agentName, 'working', 'goal review starting')
-      this.workers.set('goal-review', { type: 'herdr', paneId, agentName, logFile, ...claim, startedAt: new Date().toISOString() })
-      await this.emit('goal_review_started', { paneId, display: 'herdr' })
+      this.workers.set('goal-review', {
+        type: 'herdr', paneId, tabId, tabLabel, agentName, logFile, ...claim, startedAt: new Date().toISOString(),
+      })
+      await this.emit('goal_review_started', { paneId, tabId, tabLabel, display: 'herdr' })
       await this.save()
       return true
     }
@@ -720,8 +876,10 @@ class Supervisor {
     if ((['paused', 'stopped'].includes(control.status) || mayResume) && control.status !== this.state.status) {
       await this.save({ status: control.status })
     }
+    await this.autoRespondPendingInputs()
     await this.processResponses()
     if (this.stopping || this.state.status === 'stopped' || this.state.status === 'complete') return
+    await this.rehydrateHerdrWorkers()
     await this.inspectHerdrAgentPresence()
     await this.inspectHerdrWorkers()
     await this.inspectStuckWorkers()
@@ -735,6 +893,34 @@ class Supervisor {
     let slots = cap.available
     const { attempts: retryAttempts } = drainRetryQueue(this.state.retryQueue, slots)
     for (const { context, retry } of retryAttempts) {
+      // Rehydrated herdr workers (or an external live orchestrator) already own
+      // this context — drop the retry instead of force-resuming into a race that
+      // exhausts attempts and raises "Retry could not resume the Claim Lease".
+      if (this.workers.has(context)) {
+        const outcome = applyRetryResumeOutcome(this.state.retryQueue, context, retry, true)
+        this.state.retryQueue = outcome.updatedQueue
+        await this.save()
+        continue
+      }
+      if (context === 'goal-review') {
+        if (slots < 1) {
+          await this.save()
+          continue
+        }
+        const started = await this.maybeGoalReview(snapshot, active, slots, retry.guidance)
+        const outcome = applyRetryResumeOutcome(this.state.retryQueue, context, retry, started)
+        this.state.retryQueue = outcome.updatedQueue
+        if (started) slots -= 1
+        await this.save()
+        continue
+      }
+      const runState = await readJson(runStateFile(context), {})
+      if (processAlive(runState.ownerPid) || processAlive(runState.childPid)) {
+        const outcome = applyRetryResumeOutcome(this.state.retryQueue, context, retry, true)
+        this.state.retryQueue = outcome.updatedQueue
+        await this.save()
+        continue
+      }
       // Without a free slot we cannot spawn a resumed worker. Still advance failed attempts
       // so exhaustion can raise Input Requests on memory-starved hosts (macOS CI).
       if (slots < 1) {
@@ -813,7 +999,16 @@ class Supervisor {
         return
       }
       while (!this.stopping && this.state.status !== 'stopped' && this.state.status !== 'complete') {
-        await this.tick()
+        try {
+          await this.tick()
+        } catch (error) {
+          // Keep the supervisor alive through transient herdr/git/fs failures.
+          // A thrown tick used to fall into finally and close every live herdr pane.
+          try {
+            await this.emit('supervisor_tick_failed', { error: error.message || String(error) }, true)
+            await this.save({ lastError: error.message || String(error) })
+          } catch {}
+        }
         if (options.once === 'true') break
         await new Promise((done) => setTimeout(done, this.config.pollMs))
       }
@@ -821,16 +1016,19 @@ class Supervisor {
       await this.save({ status: this.state.status })
     } finally {
       this.stopping = true
+      // Herdr workers outlive the supervisor process — never close their panes
+      // here. inspectHerdrWorkers closes panes only when Run State is terminal
+      // or the shell is idle. Background children still get SIGTERM.
       for (const worker of this.workers.values()) {
-        if (worker.type === 'herdr') closePane(worker.paneId)
-        else if (worker.child) {
+        if (worker.type === 'herdr') continue
+        if (worker.child) {
           try { worker.child.stdout?.destroy?.() } catch {}
           try { worker.child.stderr?.destroy?.() } catch {}
           try { worker.child.kill('SIGTERM') } catch {}
         }
       }
       const deadline = Date.now() + 5000
-      while (this.workers.size > 0 && Date.now() < deadline) {
+      while ([...this.workers.values()].some((worker) => worker.type !== 'herdr') && Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 25))
       }
       await this.drainFinalizers()
@@ -845,9 +1043,11 @@ class Supervisor {
 
   async stop(signal) {
     this.stopping = true
+    // Do not close herdr panes on SIGINT/SIGTERM — orchestrators keep running
+    // and the next supervisor start rehydrates them.
     for (const worker of this.workers.values()) {
-      if (worker.type === 'herdr') closePane(worker.paneId)
-      else try { worker.child.kill('SIGTERM') } catch {}
+      if (worker.type === 'herdr') continue
+      try { worker.child.kill('SIGTERM') } catch {}
     }
     await this.emit('supervisor_stopped', { signal }, true)
     const control = await readJson(controlFile, {})

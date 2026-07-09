@@ -16,6 +16,22 @@ When you change any bundled script (e.g. `scripts/statusline.sh`) or a plugin's
 behavior, update `README.md` in the same change to match. Docs that drift from
 the scripts are worse than no docs.
 
+## Harness pipeline conventions
+
+- **QA observation method:** exercise each Acceptance Check with the method it
+  specifies (grep/file audit, CLI exit code, real HTTP, or real browser).
+  Do not start a server or browser for a static audit.
+  Emit the harness verdict as soon as the check passes or fails — do not keep re-analyzing.
+- **Custom retry guidance wins:** if `retryQueue[context].guidance` is already set
+  (operator or prior respond), auto-retry must preserve it.
+  Never overwrite with generic "coding exhausted" / "worker exited" text.
+- **Herdr layout:** one named tab per worker, not packed panes on `harness-workers`.
+  Tab label: `{taskId} - {role} - {project} - r{retry}`
+  (e.g. `WI-AC-025 - qa - public-docs - r1`).
+  Rename the tab when the orchestrator phase changes; close the whole tab when the worker finishes.
+
+> Keep this section in sync with `AGENTS.md`.
+
 ## Layout
 
 - `.claude-plugin/marketplace.json` — the marketplace: lists every plugin and its source.

@@ -12,13 +12,20 @@ function commandExists(cmd) {
   return spawnSync('sh', ['-c', `command -v ${cmd}`], { stdio: 'ignore' }).status === 0
 }
 
-/** Spawn a host CLI so herdr panes get a PTY (thinking/TUI) while stdout/stderr are still captured. */
+/**
+ * Spawn a host CLI so herdr panes show live agent thinking/tool output.
+ * Uses `script -f` for a flushed PTY; stdout/stderr stay piped so the
+ * orchestrator can capture the verdict while mirroring every chunk to the pane.
+ */
 export function spawnHostAgent(program, args, { cwd, env = {}, visible = hostSpawnVisible() } = {}) {
   const mergedEnv = { ...process.env, ...env }
+  if (visible) mergedEnv.PYTHONUNBUFFERED = mergedEnv.PYTHONUNBUFFERED || '1'
   const usePty = visible && commandExists('script')
   if (usePty) {
     const cmd = [program, ...args].map(shellQuote).join(' ')
-    return spawn('script', ['-q', '-e', '-c', cmd, '/dev/null'], {
+    // -f flushes after each write so thinking/tool logs appear in the pane live,
+    // not only when the agent process exits.
+    return spawn('script', ['-q', '-e', '-f', '-c', cmd, '/dev/null'], {
       cwd,
       env: mergedEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -30,4 +37,10 @@ export function spawnHostAgent(program, args, { cwd, env = {}, visible = hostSpa
     env: mergedEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
+}
+
+/** Build the argv used for herdr-visible agent spawns (testable). */
+export function visibleScriptArgv(program, args) {
+  const cmd = [program, ...args].map(shellQuote).join(' ')
+  return ['script', ['-q', '-e', '-f', '-c', cmd, '/dev/null']]
 }

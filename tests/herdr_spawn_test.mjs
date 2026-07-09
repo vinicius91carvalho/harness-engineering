@@ -10,16 +10,22 @@ import {
   spawnAgent,
   spawnInPane,
   closePane,
+  closeWorkerDisplay,
   getPaneAgentStatus,
-  isPaneDone,
   paneExists,
   readPaneTail,
   resolveHarnessWorkerTab,
   nextHarnessWorkerTabLabel,
+  buildWorkerTabLabel,
+  roleFromPhase,
+  renameWorkerTab,
   detectPaneWaiting,
-  reportHarnessAgent,
-  closeDanglingShellPanes,
+  detectPaneOrchestratorExited,
+  detectPaneMergeLockWait,
+  paneShowsIdleShell,
+  closeStaleHarnessPanesForProject,
   listTabPanes,
+  listHarnessWorkerTabs,
 } from '../skills/supervisor/lib/herdr-spawn.mjs'
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), 'fixtures')
@@ -53,14 +59,12 @@ const env = {
   HARNESS_TEST_HERDR_STATE: stateFile,
   HARNESS_TEST_HERDR_HELPER: join(tmp, 'herdr-mock-helper.mjs'),
   HERDR_ENV: '1',
-  HARNESS_HERDR_MAX_PANES_PER_TAB: '4',
 }
 process.env.PATH = env.PATH
 process.env.HERDR_ENV = '1'
 process.env.HARNESS_TEST_HERDR_LOG = log
 process.env.HARNESS_TEST_HERDR_STATE = stateFile
 process.env.HARNESS_TEST_HERDR_HELPER = env.HARNESS_TEST_HERDR_HELPER
-process.env.HARNESS_HERDR_MAX_PANES_PER_TAB = '4'
 
 function assert(condition, message) {
   if (!condition) {
@@ -101,8 +105,12 @@ delete process.env.HARNESS_DISPLAY
 
 // --- tab labeling ----------------------------------------------------------
 
-assert(nextHarnessWorkerTabLabel([]) === 'harness-workers', 'first harness tab label')
-assert(nextHarnessWorkerTabLabel([{ label: 'harness-workers' }]) === 'harness-workers-2', 'second harness tab label')
+assert(nextHarnessWorkerTabLabel([]) === 'harness-workers', 'legacy first harness tab label')
+assert(nextHarnessWorkerTabLabel([{ label: 'harness-workers' }]) === 'harness-workers-2', 'legacy second harness tab label')
+assert(buildWorkerTabLabel({ taskId: 'WI-AC-025', role: 'qa', project: 'public-docs', retry: 1 }) === 'WI-AC-025 - qa - public-docs - r1', 'named worker tab label')
+assert(roleFromPhase('INTEGRATION_QA') === 'integration-qa', 'phase maps to role')
+assert(roleFromPhase('coding') === 'code', 'coding maps to code')
+assert(roleFromPhase('unknown') === 'orchestrator', 'unknown phase defaults to orchestrator')
 
 // --- pane waiting / BUSY gating (no regressions) ---------------------------
 
@@ -110,101 +118,105 @@ assert(detectPaneWaiting('BUSY\nBUSY\nBUSY\nBUSY\nBUSY\nBUSY\nBUSY\nBUSY', 'unkn
 assert(detectPaneWaiting('', 'idle') === null, 'herdr idle is not a supervisor stop condition')
 assert(detectPaneWaiting('coding...', 'unknown') === null, 'active output is not waiting')
 assert(detectPaneWaiting('', 'blocked')?.kind === 'blocked', 'herdr blocked means human input')
+assert(detectPaneMergeLockWait('orchestrator: waiting for merge lock (another context is integrating)…') === true, 'merge lock wait is detectable')
+assert(detectPaneOrchestratorExited('Session terminated, killing shell... ...killed.') === true, 'killed shell is detectable')
+assert(detectPaneOrchestratorExited('Session terminated, killing shell... ...killed.\norchestrator: CODING → pi attempt 1') === false, 'restarted orchestrator after kill is not exited')
+assert(paneShowsIdleShell('…/relay  plan/opensource-docker  v24  ❯') === true, 'idle shell prompt is detectable')
+assert(paneShowsIdleShell('orchestrator: goal-review complete\n…/relay  v24  ❯') === true, 'idle prompt after orchestrator history is detectable')
+assert(paneShowsIdleShell('orchestrator: merge lock acquired\norchestrator: INTEGRATION_QA → pi attempt 3') === false, 'active orchestrator is not idle shell')
 
-// --- resolveHarnessWorkerTab creates a fresh tab ----------------------------
+// --- each spawn gets its own named tab -------------------------------------
 
-const firstTab = resolveHarnessWorkerTab('1')
-assert(firstTab.tabId === '1-2', 'creates harness-workers tab when none exist')
-assert(firstTab.created === true, 'first harness tab is newly created')
-assert(firstTab.rootPaneId === '1-r2', 'tab create exposes root pane for first worker')
-
-// --- spawnAgent overflows to a new tab when the current one is full --------
-
-seedState({
-  tabs: [
-    baseTab,
-    { tab_id: '1-2', label: 'harness-workers', pane_count: 4, workspace_id: '1', number: 2 },
-  ],
-  panes: [basePane, { pane_id: '1-r2', tab_id: '1-2', workspace_id: '1', agent_status: 'working' }],
-  seq: 0,
-})
+seedState({ tabs: [baseTab], panes: [basePane], seq: 0 })
 resetLog()
 
-const { paneId, tabId } = spawnAgent('worker-core-test', ['node', '-e', 'console.log(1)'], { cwd: '/tmp/worktree' })
-assert(tabId === '1-3', 'spawn opens overflow harness tab when current tab is full')
-assert(paneId === '1-r3', 'first worker on a new tab reuses root pane via pane run')
-assert(getPaneAgentStatus(paneId) === 'working', 'getPaneAgentStatus reads pane state')
-assert(paneExists(paneId) === true, 'paneExists is true for live pane')
-assert(getPaneAgentStatus('1-9') === 'gone', 'missing pane reports gone')
-assert(readPaneTail(paneId).includes('worker output'), 'readPaneTail returns pane text')
-
-const overflowLog = spawnSync('cat', [log], { encoding: 'utf8', env }).stdout
-assert(overflowLog.includes('1-r3'), 'first worker on new tab runs in root pane via pane run')
-assert(overflowLog.includes('harness: worker-core-test starting'), 'pane run prints harness start banner')
-assert(overflowLog.includes('PATH='), 'pane run forwards supervisor PATH into the worker pane')
-assert(overflowLog.includes('HARNESS_HERDR_PANE=') && overflowLog.includes('HARNESS_DISPLAY='), 'pane run injects herdr display env')
-
-closePane(paneId)
-
-// --- each worker gets its own unique, dedicated pane -----------------------
-
-const sharedTabId = '1-4'
-seedState({
-  tabs: [
-    baseTab,
-    { tab_id: sharedTabId, label: 'harness-workers-3', pane_count: 1, workspace_id: '1', number: 4 },
-  ],
-  panes: [basePane, { pane_id: `${sharedTabId}-r1`, tab_id: sharedTabId, workspace_id: '1', agent_status: 'working' }],
-  seq: 10,
+const first = spawnAgent('worker-public-docs-invariants', ['node', '-e', 'console.log(1)'], {
+  cwd: '/tmp/worktree',
+  taskId: 'WI-AC-025',
+  role: 'qa',
+  project: 'public-docs',
+  retry: 2,
 })
-resetLog()
+assert(first.tabLabel === 'WI-AC-025 - qa - public-docs - r2', 'spawnAgent uses named tab label')
+assert(first.paneId === '1-r2', 'worker reuses the new tab root pane')
+assert(getPaneAgentStatus(first.paneId) === 'working', 'getPaneAgentStatus reads pane state')
+assert(paneExists(first.paneId) === true, 'paneExists is true for live pane')
+assert(readPaneTail(first.paneId).includes('worker output'), 'readPaneTail returns pane text')
 
-const workerA = spawnAgent('worker-a', ['node', '-e', 'console.log(1)'], { cwd: '/tmp/worktree' })
-const workerB = spawnAgent('worker-b', ['node', '-e', 'console.log(2)'], { cwd: '/tmp/worktree' })
-assert(workerA.tabId === sharedTabId && workerB.tabId === sharedTabId, 'both workers land on the same not-yet-full tab')
-assert(workerA.paneId !== workerB.paneId, 'spawnAgent twice creates two different paneIds')
-assert(workerA.paneId !== `${sharedTabId}-r1` && workerB.paneId !== `${sharedTabId}-r1`, 'new workers never reuse an existing worker pane')
+const firstLog = spawnSync('cat', [log], { encoding: 'utf8', env }).stdout
+assert(firstLog.includes('1-r2'), 'worker runs in dedicated tab root pane')
+assert(firstLog.includes('PATH='), 'pane run forwards supervisor PATH into the worker pane')
+assert(firstLog.includes('HARNESS_HERDR_PANE=') && firstLog.includes('HARNESS_DISPLAY='), 'pane run injects herdr display env')
 
-const panesAfterTwoWorkers = listTabPanes(sharedTabId).map((pane) => pane.pane_id)
-assert(panesAfterTwoWorkers.includes(workerA.paneId), 'worker A pane is still present')
-assert(panesAfterTwoWorkers.includes(workerB.paneId), 'worker B pane is still present')
-assert(new Set(panesAfterTwoWorkers).size === panesAfterTwoWorkers.length, 'no duplicate/shared panes on the tab')
+const second = spawnAgent('worker-core-foundation', ['node', '-e', 'console.log(2)'], {
+  cwd: '/tmp/worktree',
+  taskId: 'WI-AC-001',
+  role: 'code',
+  project: 'core',
+  retry: 1,
+})
+assert(second.tabId !== first.tabId, 'second worker gets a different tab')
+assert(second.paneId !== first.paneId, 'second worker gets a different pane')
+assert(second.tabLabel === 'WI-AC-001 - code - core - r1', 'second worker has its own label')
 
-const sharedLog = spawnSync('cat', [log], { encoding: 'utf8', env }).stdout
-assert(sharedLog.includes('harness: worker-a starting'), 'worker A gets its own start banner')
-assert(sharedLog.includes('harness: worker-b starting'), 'worker B gets its own start banner')
+renameWorkerTab(first.tabId, 'WI-AC-025 - merge - public-docs - r2')
+const renamed = listHarnessWorkerTabs('1').find((tab) => tab.tab_id === first.tabId)
+assert(renamed?.label === 'WI-AC-025 - merge - public-docs - r2', 'renameWorkerTab updates label')
 
-// --- dangling shells are closed, never reclaimed for a new worker ----------
+closeWorkerDisplay(first.paneId, first.tabId)
+assert(!listTabPanes(first.tabId).length, 'closeWorkerDisplay removes panes on the tab')
+assert(!listHarnessWorkerTabs('1').some((tab) => tab.tab_id === first.tabId), 'closeWorkerDisplay closes the tab')
 
-const danglingTabId = '1-5'
-const danglingRoot = `${danglingTabId}-r1`
-const danglingExtra = `${danglingTabId}-extra`
+// --- resolveHarnessWorkerTab still creates a dedicated tab -----------------
+
+seedState({ tabs: [baseTab], panes: [basePane], seq: 0 })
+const resolved = resolveHarnessWorkerTab('1')
+assert(resolved.created === true, 'resolveHarnessWorkerTab creates a tab')
+assert(resolved.rootPaneId, 'resolveHarnessWorkerTab exposes root pane')
+
+// --- monorepo: pane cleanup is scoped per subproject -----------------------
+
+const sharedHarnessTab = '1-6'
 seedState({
   tabs: [
     baseTab,
-    { tab_id: danglingTabId, label: 'harness-workers-4', pane_count: 2, workspace_id: '1', number: 5 },
+    { tab_id: sharedHarnessTab, label: 'WI-AC-010 - code - core - r1', pane_count: 4, workspace_id: '1', number: 6 },
   ],
   panes: [
     basePane,
-    { pane_id: danglingRoot, tab_id: danglingTabId, workspace_id: '1', agent_status: 'working' },
-    { pane_id: danglingExtra, tab_id: danglingTabId, workspace_id: '1', agent_status: 'idle' },
+    { pane_id: '1-6-core-live', tab_id: sharedHarnessTab, workspace_id: '1', agent: 'worker-core-live', agent_status: 'working' },
+    { pane_id: '1-6-core-done', tab_id: sharedHarnessTab, workspace_id: '1', agent: 'worker-core-done', agent_status: 'idle' },
+    { pane_id: '1-6-relay-done', tab_id: sharedHarnessTab, workspace_id: '1', agent: 'worker-relay-done', agent_status: 'idle' },
   ],
-  seq: 20,
+  seq: 30,
 })
-resetLog()
 
-const workerC = spawnAgent('worker-dangling-cleanup', ['node', '-e', 'console.log(3)'], { cwd: '/tmp/worktree' })
-const remaining = listTabPanes(workerC.tabId).map((pane) => pane.pane_id)
-assert(!remaining.includes(danglingExtra), 'dangling shell pane is closed before a new worker pane is split')
-assert(remaining.includes(danglingRoot), 'existing worker pane is preserved, never treated as dangling')
-assert(
-  remaining.includes(workerC.paneId) && workerC.paneId !== danglingRoot && workerC.paneId !== danglingExtra,
-  'new worker gets its own unique pane, never a reclaimed dangling shell',
-)
+closeStaleHarnessPanesForProject(sharedHarnessTab, 'core', new Set(['1-6-core-live']))
+const afterScopedClose = listTabPanes(sharedHarnessTab).map((pane) => pane.pane_id)
+assert(afterScopedClose.includes('1-6-core-live'), 'active core worker pane is kept')
+assert(!afterScopedClose.includes('1-6-core-done'), 'finished core worker pane is closed')
+assert(afterScopedClose.includes('1-6-relay-done'), 'sibling subproject relay pane is never closed by core supervisor')
+
+seedState({
+  tabs: [
+    baseTab,
+    { tab_id: sharedHarnessTab, label: 'WI-AC-020 - code - relay - r1', pane_count: 1, workspace_id: '1', number: 6 },
+  ],
+  panes: [
+    basePane,
+    { pane_id: '1-6-relay-stale', tab_id: sharedHarnessTab, workspace_id: '1', agent: 'worker-relay-stale', agent_status: 'working' },
+  ],
+  pane_tails: { '1-6-relay-stale': '…/relay  plan/opensource-docker  v24  ❯' },
+  seq: 40,
+})
+closeStaleHarnessPanesForProject(sharedHarnessTab, 'relay', new Set())
+assert(!listTabPanes(sharedHarnessTab).some((pane) => pane.pane_id === '1-6-relay-stale'), 'untracked idle relay pane is closed on supervisor tick')
+assert(!listHarnessWorkerTabs('1').some((tab) => tab.tab_id === sharedHarnessTab), 'empty worker tab is closed after cleanup')
 
 // --- legacy spawnInPane still works -----------------------------------------
 
 const { paneId: legacyPane } = spawnInPane('node -e "console.log(1)"', 'worker-legacy')
 assert(typeof legacyPane === 'string' && legacyPane.length > 0, 'spawnInPane still works for legacy callers')
+assert(shellQuote("a'b") === `'a'\\''b'`, 'shellQuote escapes single quotes')
 
-console.log('ok - herdr spawn helpers auto-select herdr, resolve tab capacity, and give every worker a unique pane')
+console.log('ok - herdr spawn helpers use one named tab per worker')

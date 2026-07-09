@@ -22,6 +22,13 @@ case "$cmd" in
         done
         node "$HARNESS_TEST_HERDR_HELPER" tab-create "$state" "$workspace" "$label"
         ;;
+      rename)
+        node "$HARNESS_TEST_HERDR_HELPER" tab-rename "$state" "$2" "$3"
+        ;;
+      close)
+        printf 'tab-close %s\n' "$2" >>"$HARNESS_TEST_HERDR_LOG"
+        node "$HARNESS_TEST_HERDR_HELPER" tab-close "$state" "$2"
+        ;;
     esac
     ;;
   pane)
@@ -41,7 +48,8 @@ case "$cmd" in
         node "$HARNESS_TEST_HERDR_HELPER" pane-get "$state" "$2"
         ;;
       read)
-        printf 'worker output line\n'
+        paneId=$2
+        node "$HARNESS_TEST_HERDR_HELPER" pane-read "$state" "$paneId"
         ;;
       close)
         printf '%s\n' "$2" >>"$HARNESS_TEST_HERDR_LOG"

@@ -18,10 +18,10 @@ top-level), `CONTROL` this skill directory, and
 Herdr visibility is automatic when running inside a herdr workspace
 (`HERDR_ENV=1`) and the `herdr` CLI is installed; pass `--display background` to
 force background workers, or `--display herdr` to force herdr when available.
-Each admitted worker gets its own dedicated pane (never a shared or reused
-shell) on a `harness-workers` tab (max 4 panes per tab; additional tabs are
-created automatically) so it appears in the herdr agent sidebar (not just a
-silent background shell).
+Each admitted worker gets its own dedicated herdr **tab** (one pane per tab),
+named `{taskId} - {role} - {project} - r{retry}` (e.g. `WI-AC-025 - qa -
+public-docs - r1`). The tab renames when the orchestrator phase changes and
+closes when the worker finishes, so it appears clearly in the herdr sidebar.
 
 At a monorepo root, resolve one project through `.harness/projects.json` before
 starting. Each project has its own specification, queue, supervisor state, and
@@ -153,18 +153,37 @@ persisted `run_completed` event produced by mandatory Goal Review on the integra
 Herdr is not required. When you run inside a herdr workspace (`HERDR_ENV=1`) and
 the `herdr` CLI is installed, workers automatically get visible panes; otherwise
 they run in the background. Force one mode explicitly with `--display herdr` or
-`--display background`. Each admitted worker gets its own dedicated pane, named
-as an agent (`worker-<project>-<context>`), never a shared or reused shell.
+`--display background`. Each admitted worker gets its own dedicated tab, labeled
+`{taskId} - {role} - {project} - r{retry}`, with agent name
+`worker-<project>-<context>`.
 
 ```bash
 node "$CONTROL/scripts/harness-control.mjs" start --repo "$REPO" --host "$WORKER_HOST" --display herdr
 ```
 
 Use `herdr agent list`, `herdr pane read`, and `herdr wait agent-status` from the
-supervisor pane to observe workers. Harness reports `working` while the orchestrator
-runs; herdr `blocked` or an interactive prompt raises `input_required`. Herdr `idle`
-and merge-lock waits are normal between turns and do not stop workers. Herdr panes no longer flood with `BUSY` lines — the orchestrator prints a short status line at most every 10s while waiting. Workers close
-when Run State reaches a terminal status (complete/blocked/failed), when the pane
-exits, or when the orchestrator heartbeat goes stale. Pass `--display background`
-to force background workers even inside a herdr workspace.
+supervisor pane to observe workers. Each pane streams the live agent session
+(thinking, tool calls, verdicts) via a flushed PTY — not only orchestrator phase
+lines. Harness reports `working` while the orchestrator runs; herdr `blocked` or
+an interactive prompt raises `input_required`. Herdr `idle` and merge-lock waits
+are normal between turns and do not stop workers. Herdr panes no longer flood with
+`BUSY` lines — the orchestrator prints a short status line at most every 10s while
+waiting.
+
+**Monorepo (multiple supervisors):** every subproject runs its own supervisor with
+one named tab per worker. Tab/pane cleanup is scoped to `worker-<project>-*`
+agents only — a core supervisor must never close `worker-web-*` / `worker-relay-*`
+tabs (doing so leaves zombie workers: state lists pane IDs herdr no longer has).
+Finished workers close their **tab** immediately when Run State is terminal
+(`complete` / `blocked` / `failed`), the orchestrator/child exits, or the shell
+is idle after the job — finished agents must not linger.
+
+**Unattended Input Requests:** each tick auto-writes `retry` for pending context-scoped
+`input_required` events (worker exit, integration failure, claim-lease exhaustion, etc.)
+unless that context still has a live worker, is already in the retry queue, or hit the
+crash bound (5). Goal-scoped inputs still need a human.
+
+Workers close when Run State reaches a terminal status, when the pane exits, or when
+the orchestrator heartbeat goes stale. Pass `--display background` to force background
+workers even inside a herdr workspace.
 Remote access uses herdr's SSH and plugin transports.

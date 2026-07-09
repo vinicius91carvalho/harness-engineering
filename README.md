@@ -17,6 +17,9 @@
 curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh
 ```
 
+That URL only fetches the installer from `main`.
+The installer then clones the **latest GitHub Release tag** (or a pin — see [Install](#install)).
+
 **2–4. Then type these in your coding tool's chat** ([Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://developers.openai.com/codex/), [OpenCode](https://opencode.ai/), [Cursor Agent](https://cursor.com/docs/cli/overview), or [Pi](https://pi.dev/)) — not in a terminal:
 
 | Step | What you type | What happens |
@@ -37,6 +40,12 @@ The harness owns completion policy; [Claude Code](https://code.claude.com/docs/e
 Optional [herdr](https://herdr.dev/) shows workers in terminal panes, auto-selected inside a herdr workspace; optional `.harness/roles.json` routes phases to ordered tool/model candidates.
 
 **Done means evidence:** independent QA, integration on the plan branch, and a final Goal Review — not an empty task list.
+
+**Releases are what you install.**
+GitHub Releases (`vX.Y.Z`) are the stable plugin payload for remote installs.
+The curl one-liner points at `main` only to download `install.sh`; that script then stages the latest release tag (or `--version` / `VERSION` / `HARNESS_INSTALL_REF`).
+Without release tags, every remote install would track the moving `main` tip.
+A local checkout of this repo is different: `./install.sh` uses the working tree (dev mode).
 
 ## Framework
 
@@ -137,11 +146,16 @@ Retries: **3 Attempts** per Work Item (orchestrator), **5 resume tries** per blo
 Requires Git, Bash, **[Node.js 18 or newer](https://nodejs.org/)**, `jq`, and one authenticated tool.
 
 ```sh
+# latest release (default)
 curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh
+
+# pin a release
+curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh -s -- --version v2.1.0
+# or: VERSION=v2.1.0 curl -sSL …/main/install.sh | sh
 ```
 
-The one-liner fetches the installer script from `main`, then that script stages the **latest GitHub Release tag** (not the moving `main` tip).
-Override the tag with `VERSION=vX.Y.Z` or `--version vX.Y.Z` (also `HARNESS_INSTALL_REF`).
+`main` in the URL is only the installer bootstrap.
+The script resolves the latest `vX.Y.Z` release tag (or your pin via `--version`, `VERSION`, or `HARNESS_INSTALL_REF`) and clones that tag — not the moving `main` tip.
 A local checkout of this repository installs from the working tree instead (dev mode).
 
 Arrow-key checklist: keep `harness` checked; add MCP or extras if you want them.
@@ -279,6 +293,12 @@ bash "$GEN/claim.sh" list "$PROJECT"
 | Build says `blocked` | Review journal + evidence; resume with guidance: `bash "$GEN/claim.sh" resume "$PROJECT" "$CONTEXT" $$ force` |
 | Looks done but won't complete | The supervisor is still draining its retry queue (up to 5 attempts per context) — check `status` or answer pending Input Requests |
 | Worker crashed / stale lease | Auto-resume after `HARNESS_LEASE_TIMEOUT_SECONDS` (default 60s); `force` only if the owner process is truly dead |
+| No progress / workers idle with pending inputs | Context-scoped `input_required` events auto-retry each supervisor tick; if still stuck, check `pendingInputs` and worker logs |
+| `status` lists workers but herdr has no tabs | Monorepo bug if cleanup is not project-scoped — each supervisor must only close `worker-<project>-*` tabs |
+| Finished tab still open after worker ended | Supervisor closes the worker tab when the shell exits or run state is terminal; reattach live tabs after supervisor restart via `rehydrateHerdrWorkers` |
+| Supervisors dead but panes still show workers | Restart all four subproject supervisors; orchestrators survive in panes and `rehydrateHerdrWorkers` reattaches them. Supervisor exit no longer closes herdr panes. |
+| `supervisor lease was lost` / supervisors exit mid-run | Lease is re-acquired on the next heartbeat instead of fatal-exiting; tick errors are logged and the loop continues |
+| pi `Session terminated…killed` / high swap | Host memory pressure — dockerd + mintlify + parallel docker builds. Restart supervisors with `--max-workers 2 --memory-per-worker-mb 2048 --reserve-memory-mb 2048` |
 
 Full symptom list: [site troubleshooting](https://vinicius91carvalho.github.io/harness-engineering/#troubleshoot).
 
@@ -291,6 +311,10 @@ The example is open-source-first: OpenCode Go and NVIDIA NIM volume models first
 Pi stays available as a transport for those expensive rescue models; it is not the everyday coding host.
 
 [herdr](https://herdr.dev/) is optional terminal visibility. It's auto-selected when the supervisor starts inside a herdr workspace (`HERDR_ENV=1`) with `herdr` installed; pass `--display background` to force background, or `--display herdr` to force herdr when available.
+
+In herdr mode each worker gets its own tab named `{taskId} - {role} - {project} - r{retry}` and streams the live agent session (thinking, tool calls, verdicts) via a flushed PTY (`script -f`). For `pi`, the orchestrator uses `--mode json` and formats thinking/tool events in real time. Finished workers close their tabs immediately — you should not see idle shells after a job ends.
+
+Optional [Collie](https://github.com/AltanS/collie) is a herdr plugin for mobile access over Tailscale — watch panes and reply from your phone when the supervisor needs input.
 
 → [Routing guide](https://vinicius91carvalho.github.io/harness-engineering/#routing) · [Herdr visibility](https://vinicius91carvalho.github.io/harness-engineering/#herdr)
 

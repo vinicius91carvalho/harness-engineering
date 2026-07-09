@@ -11,6 +11,7 @@ import { parseObject, VERDICT_HINT, isProviderQuotaLimited, fallbackReason } fro
 import { writeWorkerResult } from './lib/worker-result.mjs'
 import { cleanupBrowserOrphans } from './lib/browser-cleanup.mjs'
 import { spawnHostAgent, hostSpawnVisible } from './lib/agent-spawn.mjs'
+import { createAgentStreamFormatter, withVisibleAgentMode } from './lib/agent-stream.mjs'
 import { integrateCheckpoint } from './lib/integrate-checkpoint.mjs'
 import { buildHostCommand, hostCommands, roleNames } from './adapters/hosts.mjs'
 import { featurePrompt as buildFeaturePrompt } from './prompts/feature.mjs'
@@ -124,7 +125,11 @@ process.on('SIGINT', () => writeInterruptedState('SIGINT'))
 process.on('SIGTERM', () => writeInterruptedState('SIGTERM'))
 
 function logVisible(message) {
-  if (hostSpawnVisible()) process.stderr.write(`orchestrator: ${message}\n`)
+  if (!hostSpawnVisible()) return
+  // Herdr panes are for agent work — keep orchestrator chatter to phase lines only.
+  if (/^(CODING|QA|INTEGRATION_QA|REPAIR_PLAN|MERGE|GOAL_REVIEW)\b/.test(message)) {
+    process.stderr.write(`\n── ${message} ──\n`)
+  }
 }
 
 async function isVerifyFirst(workdir = options.workdir) {
@@ -196,8 +201,10 @@ async function evidence(id, attempt, kind, detail, route = null) {
 
 async function spawnAgent(program, args, cwd) {
   const visible = hostSpawnVisible()
+  const spawnArgs = withVisibleAgentMode(program, args, visible)
+  const formatter = visible ? createAgentStreamFormatter() : null
   return await new Promise((resolveRun) => {
-    child = spawnHostAgent(program, args, {
+    child = spawnHostAgent(program, spawnArgs, {
       cwd,
       env: {
         PORT: String(options.port),
@@ -213,7 +220,9 @@ async function spawnAgent(program, args, cwd) {
       stdout = `${stdout}${data}`.slice(-1_000_000)
       if (visible) {
         const text = String(data)
-        if (!/^BUSY\n?$/.test(text.trim())) process.stdout.write(data)
+        if (/^BUSY\n?$/.test(text.trim())) return
+        const paneText = formatter ? formatter.push(text) : text
+        if (paneText) process.stdout.write(paneText)
       }
     })
     child.stderr?.on('data', (data) => {
@@ -224,12 +233,27 @@ async function spawnAgent(program, args, cwd) {
     child.on('close', async (code) => {
       clearTimeout(timeout)
       await registered
-      const detail = (stderr || stdout || '').trim()
-      finish({ ok: code === 0 && !timedOut, code, detail, stdout, stderr, parsed: parseObject(stdout || stderr), timedOut })
+      if (formatter) {
+        const rest = formatter.flush()
+        if (rest) process.stdout.write(rest)
+      }
+      const assistant = formatter?.assistantText()?.trim() || ''
+      const detail = (stderr || assistant || stdout || '').trim()
+      const parseSource = assistant || stdout || stderr
+      finish({
+        ok: code === 0 && !timedOut,
+        code,
+        detail,
+        stdout: assistant || stdout,
+        stderr,
+        parsed: parseObject(parseSource),
+        timedOut,
+      })
     })
     child.on('error', async (error) => {
       clearTimeout(timeout)
       await registered
+      if (formatter) formatter.flush()
       finish({ ok: false, detail: error.message, stdout, stderr, parsed: null, timedOut: false })
     })
   })
@@ -269,7 +293,7 @@ async function runAgent(kind, prompt, id, attempt, cwd = options.workdir) {
       ? hostCommands[candidate.harness](referencedPrompt)
       : buildHostCommand(candidate.harness, referencedPrompt, candidate.model)
     if (hostSpawnVisible()) {
-      process.stderr.write(`orchestrator: ${kind} → ${program} attempt ${attempt}\n`)
+      process.stderr.write(`\n── ${kind} → ${program} attempt ${attempt} ──\n`)
     }
     await writeState({ agentRoute: route, childPid: null })
     const result = await spawnAgent(program, args, cwd)
@@ -400,11 +424,6 @@ async function integrate(feature, attempt) {
 
 async function runWorkItems() {
   logVisible(`build context=${context} host=${options.host} port=${options.port} features=${wanted.join(',') || 'all'}`)
-  if (hostSpawnVisible()) {
-    process.stderr.write(
-      `orchestrator: workdir=${options.workdir}\n`,
-    )
-  }
   return runAttemptLoop({
     wanted,
     options,
@@ -467,7 +486,8 @@ async function runGoalReviewLocked() {
   heartbeatTimer = setInterval(() => writeState().catch(() => {}), 15_000)
   itemPlan = buildPlan(options.repo, await readRoles())
   const integrationBranch = integrationBranchName(options.repo)
-  const prompt = `You are the independent Goal Review agent. Read project_specs.xml, especially Project Goal and every stable Acceptance Check. On integrated ${integrationBranch} (never main/master for in-flight plans), exercise every check and cross-feature primary journeys through a real browser or real HTTP. Do not trust existing flags. Do not modify product code. Never commit to main/master. Return only JSON: {"goal":true|false,"summary":"...","acceptanceCheckIds":["AC-..."],"defects":["expected ...; observed ...; evidence ..."]}. ${VERDICT_HINT}`
+  const guidance = options.guidance ? `\nOperator guidance (follow this when deciding pass vs block):\n${options.guidance}\n` : ''
+  const prompt = `You are the independent Goal Review agent. Read project_specs.xml, especially Project Goal and every stable Acceptance Check. On integrated ${integrationBranch} (never main/master for in-flight plans), exercise every check and cross-feature primary journeys through a real browser or real HTTP. Do not trust existing flags. Do not modify product code. Never commit to main/master.${guidance}Return only JSON: {"goal":true|false,"summary":"...","acceptanceCheckIds":["AC-..."],"defects":["expected ...; observed ...; evidence ..."]}. ${VERDICT_HINT}`
   const reviewed = await runAgent('GOAL_REVIEW', prompt, 'goal', 1)
   const verdict = reviewed.parsed
   const dirtyAfter = git(['status', '--porcelain', '--', '.'], options.workdir).stdout.trim()

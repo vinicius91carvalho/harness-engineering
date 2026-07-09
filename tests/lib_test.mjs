@@ -18,6 +18,7 @@ import { planTickAdmission, goalReviewAdmissible } from '../skills/generator/lib
 import { mkey, strikeOf, buildPlan, buildCandidates, lastCoder } from '../skills/generator/lib/route-plan.mjs'
 import { planWorkerClosedActions } from '../skills/generator/lib/worker-lifecycle.mjs'
 import { pruneOrphanPendingInputs, isCrashBoundContext, liveClaimContexts } from '../skills/generator/lib/supervisor-claims.mjs'
+import { isAutoRetryableInput, planAutoRetryResponses } from '../skills/generator/lib/supervisor-auto-respond.mjs'
 import { createWorkflowState } from '../skills/generator/lib/workflow-state.mjs'
 import { readJson, atomicJson } from '../skills/generator/lib/fs-json.mjs'
 import { integrationBranchName, DEFAULT_INTEGRATION_BRANCH } from '../skills/generator/lib/integration-branch.mjs'
@@ -79,8 +80,16 @@ test('stuck threshold default', () => {
   assert.equal(stuckThresholdMs(), 600_000)
 })
 
-test('browser cleanup is a no-op on win32', () => {
+test('browser cleanup is a no-op on win32', { skip: process.platform !== 'win32' }, () => {
   assert.deepEqual(cleanupBrowserOrphans({ port: 5170, workdir: '/tmp/wt' }), { killed: 0 })
+})
+
+test('browser cleanup returns a killed count on unix', { skip: process.platform === 'win32' }, () => {
+  // Broad playwright patterns may match live browsers on a developer machine —
+  // only assert the return shape, not a zero kill count.
+  const result = cleanupBrowserOrphans({ port: 59999, workdir: '/tmp/harness-no-such-worktree-xyz' })
+  assert.equal(typeof result.killed, 'number')
+  assert.ok(result.killed >= 0)
 })
 
 test('merge lock does not spam BUSY on stdout in herdr panes', () => {
@@ -111,6 +120,41 @@ test('merge lock does not spam BUSY on stdout in herdr panes', () => {
 
 test('hostSpawnVisible respects herdr env', () => {
   assert.equal(hostSpawnVisible(), Boolean(process.env.HARNESS_HERDR_PANE === '1' || process.env.HARNESS_DISPLAY === 'herdr'))
+})
+
+test('visible herdr agent spawn flushes PTY output with script -f', async () => {
+  const { visibleScriptArgv } = await import('../skills/generator/lib/agent-spawn.mjs')
+  const [program, args] = visibleScriptArgv('pi', ['-p', 'hello'])
+  assert.equal(program, 'script')
+  assert.deepEqual(args.slice(0, 3), ['-q', '-e', '-f'])
+  assert.equal(args[3], '-c')
+  assert.match(args[4], /^'pi' '-p' 'hello'$/)
+  assert.equal(args[5], '/dev/null')
+})
+
+test('pi herdr stream uses --mode json and formats thinking/tools', async () => {
+  const { withVisibleAgentMode, createAgentStreamFormatter } = await import('../skills/generator/lib/agent-stream.mjs')
+  assert.deepEqual(
+    withVisibleAgentMode('pi', ['--model', 'x', '-p', 'hi'], true),
+    ['--model', 'x', '--mode', 'json', '-p', 'hi'],
+  )
+  assert.deepEqual(withVisibleAgentMode('pi', ['-p', 'hi'], false), ['-p', 'hi'])
+  assert.deepEqual(withVisibleAgentMode('codex', ['exec', 'hi'], true), ['exec', 'hi'])
+
+  const fmt = createAgentStreamFormatter()
+  const pane = [
+    fmt.push(`${JSON.stringify({ type: 'agent_start' })}\n`),
+    fmt.push(`${JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', delta: 'plan the next verification steps carefully ' } })}\n`),
+    fmt.push(`${JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'thinking_end', content: 'plan the next verification steps carefully then run tools' } })}\n`),
+    fmt.push(`${JSON.stringify({ type: 'tool_execution_start', toolName: 'bash' })}\n`),
+    fmt.push(`${JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '===HARNESS-VERDICT-BEGIN===\n{"ok":true}\n===HARNESS-VERDICT-END===\n' } })}\n`),
+    fmt.flush(),
+  ].join('')
+  assert.match(pane, /agent: working/)
+  assert.match(pane, /thinking: plan the next verification steps carefully then run tools/)
+  assert.match(pane, /tool → bash/)
+  assert.match(pane, /HARNESS-VERDICT-BEGIN/)
+  assert.match(fmt.assistantText(), /"ok":true/)
 })
 
 test('integration branch resolves from file and env', () => {
@@ -495,6 +539,43 @@ test('liveClaimContexts and crash bound skip', () => {
   assert.deepEqual([...liveClaimContexts(claims)].sort(), ['alpha', 'beta'])
   assert.equal(isCrashBoundContext('flaky', { flaky: 5 }), true)
   assert.equal(isCrashBoundContext('flaky', { flaky: 4 }), false)
+})
+
+test('planAutoRetryResponses queues retry for stalled context inputs only', () => {
+  const pending = {
+    10: { status: 'pending', scope: 'context', context: 'stale', reason: 'Worker exited with code 1' },
+    11: { status: 'pending', scope: 'context', context: 'live', reason: 'integration could not complete' },
+    12: { status: 'pending', scope: 'goal', context: null, reason: 'goal needs human' },
+    13: { status: 'pending', scope: 'context', context: 'exhausted', reason: 'coding agent failed three times' },
+  }
+  assert.equal(isAutoRetryableInput(pending[10]), true)
+  assert.equal(isAutoRetryableInput(pending[12]), false)
+  const goalReviewExit = {
+    status: 'pending',
+    scope: 'goal',
+    context: null,
+    reason: 'Worker exited with code 1',
+    detail: { log: '/tmp/goal-review-123.log' },
+  }
+  assert.equal(isAutoRetryableInput(goalReviewExit), true)
+  const planned = planAutoRetryResponses(pending, {
+    workers: new Set(['live']),
+    retryQueue: {},
+    crashCounts: { exhausted: 5 },
+  })
+  assert.deepEqual(planned.map((item) => item.eventId).sort(), [10])
+  assert.equal(planned[0].response.action, 'retry')
+  assert.equal(planned[0].response.auto, true)
+
+  const withQueued = planAutoRetryResponses({
+    20: { status: 'pending', scope: 'context', context: 'stale', reason: 'Worker exited with code 1' },
+  }, {
+    workers: new Set(),
+    retryQueue: { stale: { guidance: 'Custom operator guidance for AC-025', attempts: 0 } },
+    crashCounts: {},
+  })
+  // Already queued contexts are skipped entirely (resumeClaim will drain retryQueue).
+  assert.deepEqual(withQueued, [])
 })
 
 test('buildHostCommand passes model to pi and agent', async () => {

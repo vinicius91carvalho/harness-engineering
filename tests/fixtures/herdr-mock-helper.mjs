@@ -36,6 +36,26 @@ if (cmd === 'tab-create') {
   process.exit(0)
 }
 
+if (cmd === 'tab-rename') {
+  const [tabId, label] = rest
+  const tab = state.tabs.find((t) => t.tab_id === tabId)
+  if (tab) {
+    tab.label = label
+    save()
+  }
+  process.stdout.write(`${JSON.stringify({ result: { type: 'ok' } })}\n`)
+  process.exit(0)
+}
+
+if (cmd === 'tab-close') {
+  const [tabId] = rest
+  state.panes = state.panes.filter((p) => p.tab_id !== tabId)
+  state.tabs = state.tabs.filter((t) => t.tab_id !== tabId)
+  save()
+  process.stdout.write(`${JSON.stringify({ result: { type: 'ok' } })}\n`)
+  process.exit(0)
+}
+
 if (cmd === 'pane-list') {
   process.stdout.write(`${JSON.stringify({ result: { panes: state.panes } })}\n`)
   process.exit(0)
@@ -78,6 +98,13 @@ if (cmd === 'pane-close') {
     if (tab) tab.pane_count = Math.max(0, (tab.pane_count || 1) - 1)
   }
   save()
+  process.exit(0)
+}
+
+if (cmd === 'pane-read') {
+  const paneId = rest[0]
+  const tail = state.pane_tails?.[paneId] || 'worker output line\n'
+  process.stdout.write(tail.endsWith('\n') ? tail : `${tail}\n`)
   process.exit(0)
 }
 

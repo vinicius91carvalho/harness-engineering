@@ -2,7 +2,17 @@ import { mkdirSync, rmSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
+/** @deprecated Packed harness-workers tabs — kept for cleanup of legacy layouts. */
 const HARNESS_TAB_PREFIX = 'harness-workers'
+
+const ROLE_BY_PHASE = {
+  coding: 'code',
+  qa: 'qa',
+  integration_qa: 'integration-qa',
+  repair_plan: 'repair',
+  merge: 'merge',
+  goal_review: 'goal-review',
+}
 
 function commandExists(cmd) {
   return spawnSync('sh', ['-c', `command -v ${cmd}`], { stdio: 'ignore' }).status === 0
@@ -11,7 +21,7 @@ function commandExists(cmd) {
 /**
  * Resolve worker display mode.
  *
- * Auto-selects herdr panes when running inside a herdr workspace
+ * Auto-selects herdr when running inside a herdr workspace
  * (HERDR_ENV=1) and the herdr CLI is on PATH. `--display background` /
  * HARNESS_DISPLAY=background always forces background; `--display herdr` /
  * HARNESS_DISPLAY=herdr forces herdr when available, else falls back to
@@ -31,11 +41,6 @@ function herdr(args) {
     throw new Error((result.stderr || result.stdout || `herdr ${args.join(' ')} failed`).trim())
   }
   return result.stdout
-}
-
-function readMaxPanesPerTab() {
-  const value = Number(process.env.HARNESS_HERDR_MAX_PANES_PER_TAB || 4)
-  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 4
 }
 
 function withHerdrLayoutLock(lockDir, fn) {
@@ -77,32 +82,70 @@ export function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`
 }
 
-export function listHarnessWorkerTabs(workspaceId, tabPrefix = HARNESS_TAB_PREFIX) {
-  const tabs = JSON.parse(herdr(['tab', 'list', '--workspace', workspaceId])).result?.tabs || []
-  return tabs
-    .filter((tab) => String(tab.label || '').startsWith(tabPrefix))
-    .sort((a, b) => (a.number || 0) - (b.number || 0))
+/** Map orchestrator phase / kind to a short role label for the tab name. */
+export function roleFromPhase(phase) {
+  const key = String(phase || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
+  return ROLE_BY_PHASE[key] || 'orchestrator'
 }
 
+/**
+ * Tab label: `{taskId} - {role} - {project} - r{retry}`
+ * Example: `WI-AC-025 - qa - public-docs - r1`
+ */
+export function buildWorkerTabLabel({ taskId, role, project, retry = 1 } = {}) {
+  const task = String(taskId || 'task').replace(/\s+/g, '')
+  const agent = String(role || 'orchestrator').replace(/\s+/g, '-')
+  const proj = String(project || 'project').replace(/\s+/g, '-')
+  const n = Math.max(1, Number(retry) || 1)
+  return `${task} - ${agent} - ${proj} - r${n}`
+}
+
+/** @deprecated Prefer buildWorkerTabLabel — packed harness-workers overflow labels. */
 export function nextHarnessWorkerTabLabel(existingTabs, tabPrefix = HARNESS_TAB_PREFIX) {
   if (!existingTabs.length) return tabPrefix
   return `${tabPrefix}-${existingTabs.length + 1}`
 }
 
-/** Pick or create a harness-workers tab with fewer than maxPanesPerTab panes. */
-export function resolveHarnessWorkerTab(workspaceId, { maxPanes = readMaxPanesPerTab(), tabPrefix = HARNESS_TAB_PREFIX } = {}) {
-  const harnessTabs = listHarnessWorkerTabs(workspaceId, tabPrefix)
-  for (const tab of harnessTabs) {
-    if ((tab.pane_count ?? 0) < maxPanes) {
-      return { tabId: tab.tab_id, created: false }
-    }
-  }
-  const label = nextHarnessWorkerTabLabel(harnessTabs, tabPrefix)
+export function listHarnessWorkerTabs(workspaceId, tabPrefix = HARNESS_TAB_PREFIX) {
+  const tabs = JSON.parse(herdr(['tab', 'list', '--workspace', workspaceId])).result?.tabs || []
+  return tabs
+    .filter((tab) => {
+      const label = String(tab.label || '')
+      return label.startsWith(tabPrefix) || / - r\d+$/.test(label)
+    })
+    .sort((a, b) => (a.number || 0) - (b.number || 0))
+}
+
+/** Create a dedicated tab for one worker (one pane = one tab). */
+export function createWorkerTab(workspaceId, label) {
   const created = JSON.parse(herdr(['tab', 'create', '--workspace', workspaceId, '--label', label, '--no-focus']))
   const tabId = created.result?.tab?.tab_id
   const rootPaneId = created.result?.root_pane?.pane_id
   if (!tabId) throw new Error('herdr tab create did not return tab_id')
-  return { tabId, rootPaneId, created: true }
+  if (!rootPaneId) throw new Error('herdr tab create did not return root_pane')
+  return { tabId, rootPaneId, label }
+}
+
+export function renameWorkerTab(tabId, label) {
+  if (!tabId || !label) return
+  try { herdr(['tab', 'rename', tabId, label]) } catch {}
+}
+
+export function closeWorkerTab(tabId) {
+  if (!tabId) return
+  try { herdr(['tab', 'close', tabId]) } catch {}
+}
+
+/** @deprecated Packed-tab resolver — new spawns use createWorkerTab. */
+export function resolveHarnessWorkerTab(workspaceId, { tabPrefix = HARNESS_TAB_PREFIX } = {}) {
+  const label = buildWorkerTabLabel({
+    taskId: 'worker',
+    role: 'orchestrator',
+    project: tabPrefix,
+    retry: 1,
+  })
+  const created = createWorkerTab(workspaceId, label)
+  return { tabId: created.tabId, rootPaneId: created.rootPaneId, created: true }
 }
 
 export function listTabPanes(tabId) {
@@ -115,7 +158,7 @@ function isDanglingShell(pane) {
   return !pane.agent_status || ['unknown', 'idle'].includes(pane.agent_status)
 }
 
-/** Tab create and agent start both leave idle shells. Drop orphans. */
+/** Tab create leaves an idle shell if unused — drop orphans on a tab. */
 export function closeDanglingShellPanes(tabId, keepPaneIds = null) {
   const keep = keepPaneIds == null
     ? null
@@ -130,21 +173,39 @@ export function closeDanglingShellPanes(tabId, keepPaneIds = null) {
 }
 
 /**
- * Every new worker gets its own fresh pane — never reclaim a dangling shell,
- * since that can hand two workers the same pane. Clear dangling shells first,
- * then split off the last worker pane (or the tab's remaining root) so each
- * worker keeps a unique, dedicated pane.
+ * Close finished worker tabs/panes for one subproject only.
+ * Prefers closing the whole tab when it only holds that worker.
  */
-function pickWorkerPane(tabId) {
-  closeDanglingShellPanes(tabId)
+export function closeStaleHarnessPanesForProject(tabId, projectId, keepPaneIds) {
+  const keep = keepPaneIds instanceof Set ? keepPaneIds : new Set([keepPaneIds].filter(Boolean))
+  const slug = String(projectId || 'root').replace(/[^a-zA-Z0-9_-]/g, '_')
+  const prefix = `worker-${slug}-`
   const panes = listTabPanes(tabId)
-  const workers = panes.filter((pane) => !isDanglingShell(pane))
-  const source = workers[workers.length - 1]?.pane_id || panes[0]?.pane_id
-  if (!source) throw new Error(`no pane available in tab ${tabId}`)
-  const splitOut = JSON.parse(herdr(['pane', 'split', source, '--direction', 'right', '--no-focus']))
-  const paneId = splitOut.result?.pane?.pane_id
-  if (!paneId) throw new Error('herdr pane split did not return pane_id')
-  return paneId
+  let closedOwned = false
+  for (const pane of panes) {
+    if (keep.has(pane.pane_id)) continue
+    const agentName = String(pane.agent || pane.agent_name || pane.label || '')
+    const ownsPane = agentName.startsWith(prefix) || agentName.includes(`harness:${prefix}`)
+    if (!ownsPane && !isDanglingShell(pane)) continue
+    if (ownsPane) {
+      const tail = readPaneTail(pane.pane_id, 40)
+      if (['done', 'idle', 'gone', 'unknown'].includes(pane.agent_status)
+        || detectPaneOrchestratorExited(tail)
+        || paneShowsIdleShell(tail)) {
+        closePane(pane.pane_id)
+        closedOwned = true
+      }
+      continue
+    }
+    if (isDanglingShell(pane)) closePane(pane.pane_id)
+  }
+  if (closedOwned) {
+    const remaining = listTabPanes(tabId)
+    if (!remaining.length || remaining.every(isDanglingShell)) {
+      for (const pane of remaining) closePane(pane.pane_id)
+      closeWorkerTab(tabId)
+    }
+  }
 }
 
 function argvToCommand(commandArgv, { cwd, env = {} } = {}) {
@@ -170,29 +231,40 @@ const HARNESS_PANE_ENV = { HARNESS_DISPLAY: 'herdr', HARNESS_HERDR_PANE: '1' }
 /** Env injected into every harness worker pane (display flags + caller PATH). */
 export function harnessPaneEnv(extra = {}) {
   const env = { ...HARNESS_PANE_ENV, ...extra }
-  // Forward PATH so stub hosts / mise shims from the supervisor process win
-  // over whatever login shell the fresh herdr pane would otherwise use.
   if (process.env.PATH && env.PATH == null) env.PATH = process.env.PATH
   return env
 }
 
 /**
- * Start a named harness worker in herdr — one dedicated pane per worker via
- * pane run (never agent start split). The first worker on a freshly created
- * tab reuses that tab's root pane; every worker after that gets a freshly
- * split pane, never a shared or reclaimed dangling shell.
+ * Start a named harness worker in herdr — one dedicated tab per worker.
+ * Tab label: `{taskId} - {role} - {project} - r{retry}`.
  */
-export function spawnAgent(name, commandArgv, { cwd, layoutLockDir, env: extraEnv } = {}) {
+export function spawnAgent(name, commandArgv, {
+  cwd,
+  layoutLockDir,
+  env: extraEnv,
+  tabLabel,
+  taskId,
+  role = 'orchestrator',
+  project,
+  retry = 1,
+} = {}) {
   return withHerdrLayoutLock(layoutLockDir, () => {
     const workspaceId = getFocusedWorkspaceId()
-    const tab = resolveHarnessWorkerTab(workspaceId)
-    const paneId = tab.created && tab.rootPaneId ? tab.rootPaneId : pickWorkerPane(tab.tabId)
+    const label = tabLabel || buildWorkerTabLabel({
+      taskId: taskId || name,
+      role,
+      project: project || 'project',
+      retry,
+    })
+    const tab = createWorkerTab(workspaceId, label)
+    const paneId = tab.rootPaneId
     const command = argvToCommand(commandArgv, { cwd, env: harnessPaneEnv(extraEnv) })
-    const wrapped = `printf '%s\\n' 'harness: ${name} starting' >&2; ${command}`
+    const wrapped = `clear 2>/dev/null || true; printf '\\n%s\\n%s\\n\\n' '── ${name} ──' 'waiting for agent…'; ${command}`
     herdr(['pane', 'run', paneId, wrapped])
     closeDanglingShellPanes(tab.tabId, new Set([paneId]))
     reportHarnessAgent(paneId, name, 'working', 'starting')
-    return { paneId, tabId: tab.tabId, label: name }
+    return { paneId, tabId: tab.tabId, label, tabLabel: label }
   })
 }
 
@@ -208,6 +280,12 @@ export function spawnInPane(command, label, splitFrom = null) {
 
 export function closePane(paneId) {
   try { herdr(['pane', 'close', paneId]) } catch {}
+}
+
+/** Close the worker's pane and its dedicated tab. */
+export function closeWorkerDisplay(paneId, tabId) {
+  if (paneId) closePane(paneId)
+  if (tabId) closeWorkerTab(tabId)
 }
 
 export function getPaneAgentStatus(paneId) {
@@ -248,6 +326,53 @@ export function detectPaneWaiting(tail = '', paneStatus = 'unknown') {
   return null
 }
 
+/** Pane shell ended but herdr kept the pane open (common after pi/codex exit). */
+export function detectPaneOrchestratorExited(tail = '') {
+  if (!tail) return false
+  const recent = tail.trim().split('\n').filter(Boolean).slice(-6).join('\n')
+  if (/\borchestrator:\s+\S+/i.test(recent) && !/\bSession terminated, killing shell\b/i.test(recent.split('\n').at(-1) || '')) {
+    if (!/\bSession terminated, killing shell\b/i.test(recent)) return false
+    const lines = recent.split('\n')
+    const lastKill = lines.map((line, i) => (/\bSession terminated, killing shell\b/i.test(line) ? i : -1)).filter((i) => i >= 0).at(-1)
+    const lastOrch = lines.map((line, i) => (/\borchestrator:/i.test(line) ? i : -1)).filter((i) => i >= 0).at(-1)
+    if (lastOrch != null && lastKill != null && lastOrch > lastKill) return false
+  }
+  if (/\bSession terminated, killing shell\b/i.test(recent)) return true
+  if (/\.\.\.killed\.?\s*$/m.test(recent)) return true
+  return false
+}
+
+export function detectPaneMergeLockWait(tail = '') {
+  return /waiting for merge lock/i.test(tail)
+}
+
+/** Idle login shell with no live orchestrator/agent output on the final line. */
+export function paneShowsIdleShell(tail = '') {
+  if (!tail.trim()) return false
+  const lines = tail.trim().split('\n').filter(Boolean)
+  const last = lines[lines.length - 1] || ''
+  if (/\borchestrator:/i.test(last)) return false
+  if (/\bscript -q -e -c\b/.test(last)) return false
+  if (/\bHARNESS-VERDICT-(BEGIN|END)\b/.test(last)) return false
+  return /[❯›]\s*$/.test(last)
+}
+
+export function listProjectWorkerAgents(projectId) {
+  try {
+    const parsed = JSON.parse(herdr(['agent', 'list']))
+    const prefix = `worker-${String(projectId || 'root').replace(/[^a-zA-Z0-9_-]/g, '_')}-`
+    return (parsed.result?.agents || []).filter((agent) => String(agent.agent || '').startsWith(prefix))
+  } catch {
+    return []
+  }
+}
+
+export function contextFromWorkerAgent(agentName, projectId) {
+  const prefix = `worker-${String(projectId || 'root').replace(/[^a-zA-Z0-9_-]/g, '_')}-`
+  if (!String(agentName || '').startsWith(prefix)) return null
+  return agentName.slice(prefix.length) || null
+}
+
 export function reportHarnessAgent(paneId, agentName, state, message = '') {
   if (!agentName || !paneExists(paneId)) return
   const seq = (reportSeqByPane.get(paneId) || 0) + 1
@@ -263,7 +388,7 @@ export function reportHarnessAgent(paneId, agentName, state, message = '') {
   spawnSync('herdr', args, { stdio: 'ignore' })
 }
 
-/** Close every dangling shell on harness-worker tabs (one-shot layout cleanup). */
+/** Close dangling shells on harness worker tabs (legacy packed + named). */
 export function closeAllDanglingHarnessShells(workspaceId) {
   for (const tab of listHarnessWorkerTabs(workspaceId)) closeDanglingShellPanes(tab.tab_id)
 }

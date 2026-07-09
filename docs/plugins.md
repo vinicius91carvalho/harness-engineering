@@ -15,4 +15,5 @@ Everything below is a row in the installer's checklist. Toggle whatever you want
 
 Optional role routing uses `config/roles.example.json` copied to `.harness/roles.json`.
 Optional worker visibility uses [herdr](https://herdr.dev/), auto-selected when the supervisor starts inside a herdr workspace with `herdr` installed, or forced with `--display herdr`/`--display background`.
+Optional mobile access over Tailscale uses the [Collie](https://github.com/AltanS/collie) herdr plugin.
 See the [routing and herdr guide](../README.md#optional-role-routing-and-herdr).

@@ -353,9 +353,20 @@ pre {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel);
-  overflow-x: auto;
+  overflow: auto;
 }
-.mermaid-wrap pre.mermaid { margin: 0; border: 0; padding: 0; background: transparent; }
+.mermaid-wrap pre.mermaid {
+  margin: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  overflow: visible;
+}
+.mermaid-wrap svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
 
 .output {
   display: flex;

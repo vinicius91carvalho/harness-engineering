@@ -482,6 +482,19 @@ sequenceDiagram
           <h3>5. Attempt loop (coding → QA → integrate)</h3>
           <p><code>attempt-machine.mjs</code> runs up to <strong>3 Attempts</strong> per Work Item. Each Attempt: coding agent → QA agent → (if QA passed) merge + Integrated Verification. Operational failures (rate limits, crashes) backoff and retry without consuming the defect budget.</p>
 
+          <div class="mermaid-wrap">
+            <pre class="mermaid">
+flowchart TB
+  Coding[Coding] -->|"implementation"| QA[QA]
+  QA -->|"qa pass"| Integrate[Integrate]
+  QA -->|defect| Repair[Repair]
+  Integrate -->|"checks pass"| Passed([Work Item done])
+  Integrate -->|defect| Repair
+  Repair -->|"attempts remain"| Coding
+  Repair -->|"3 attempts"| Blocked([Needs guidance])
+            </pre>
+          </div>
+
           <h3>6. Repair</h3>
           <p>QA or integration defects produce a Defect Report (expected vs observed + evidence). Repair planning writes a bounded Repair Plan for the next coding Attempt. After 3 failed Attempts the context blocks for your guidance — it never auto-guesses.</p>
 
@@ -490,17 +503,12 @@ sequenceDiagram
 
           <div class="mermaid-wrap">
             <pre class="mermaid">
-stateDiagram-v2
-  [*] --> Coding
-  Coding --> QA: implementation true
-  QA --> Integrate: qa true
-  QA --> Repair: defect
-  Integrate --> Passed: checks pass
-  Integrate --> Repair: defect
-  Repair --> Coding: attempt lt 3
-  Repair --> Blocked: attempt eq 3
-  Passed --> [*]
-  Blocked --> [*]: user guidance
+flowchart LR
+  Integrated[All Work Items integrated] --> Review[Goal Review on plan branch]
+  Review -->|pass| Complete[Project Goal complete]
+  Review -->|defect| Reopen[Reopen linked Work Items]
+  Reopen --> Retry[Repair and re-integrate]
+  Retry --> Review
             </pre>
           </div>
         </section>
@@ -786,6 +794,8 @@ bash "$GEN/claim.sh" list "$PROJECT"</code></pre>
               <tr><td>Build says <code>blocked</code></td><td>Three failed coding → QA → integration Attempts always stop for input — the harness never guesses past that point, and a <code>blocked</code> context never resumes on its own. Review the journal and evidence above, then explicitly resume with guidance: <code>bash "$GEN/claim.sh" resume "$PROJECT" "$CONTEXT" $$ force</code>, then rerun the orchestrator with a concise <code>--guidance "..."</code> describing how to proceed.</td></tr>
               <tr><td>Looks done but won't complete</td><td>The supervisor is still draining its retry queue (up to 5 attempts per context) before it can declare the goal complete. Check <code>node "$CONTROL" status --repo "$PROJECT"</code> and wait, or answer any pending Input Request.</td></tr>
               <tr><td>Worker crashed / stale lease</td><td>Recovery reclaims a <code>stale</code> context automatically once its heartbeat passes the lease timeout (<code>HARNESS_LEASE_TIMEOUT_SECONDS</code>, default 60s) — including one owned by a different host. Force only once you're sure the owning process is actually dead: <code>bash "$GEN/claim.sh" resume "$PROJECT" "$CONTEXT" $$ force</code></td></tr>
+              <tr><td>No progress / pending inputs pile up</td><td>Context-scoped <code>input_required</code> events auto-retry each supervisor tick. If still stuck, inspect <code>pendingInputs</code> in <code>status</code> and the worker log under <code>.git/harness-control/&lt;project&gt;/logs/</code>.</td></tr>
+              <tr><td><code>status</code> lists workers but herdr has no tabs</td><td>In a monorepo, cleanup must be scoped per subproject (<code>worker-&lt;project&gt;-*</code>). Cross-closing sibling tabs leaves zombie pane IDs. Restart supervisors after upgrading harness; check <code>herdr agent list</code>.</td></tr>
             </tbody>
           </table>
           <p>To abandon a context instead of resuming it:</p>
@@ -878,7 +888,7 @@ cp config/roles.example.json .harness/roles.json</code></pre>
         <section class="topic" id="herdr">
           <p class="step"><span style="color:#e5c07b">Optional</span> visibility</p>
           <h2>Watch workers in <a href="https://herdr.dev/">herdr</a></h2>
-          <p>Herdr is optional and auto-detected: run inside a herdr workspace (<code>HERDR_ENV=1</code>) with the <code>herdr</code> CLI installed and the supervisor lists each admitted worker in the herdr agent sidebar automatically — no flag required. Force one mode explicitly with <code>--display background</code> or <code>--display herdr</code>. Every worker gets its own dedicated pane, never a shared or reused shell, on dedicated <code>harness-workers</code> tabs (max 4 panes per tab; overflow opens <code>harness-workers-2</code>, and so on) so your supervisor pane stays readable.</p>
+          <p>Herdr is optional and auto-detected: run inside a herdr workspace (<code>HERDR_ENV=1</code>) with the <code>herdr</code> CLI installed and the supervisor lists each admitted worker in the herdr agent sidebar automatically — no flag required. Force one mode explicitly with <code>--display background</code> or <code>--display herdr</code>. Every worker gets its own dedicated tab named <code>{taskId} - {role} - {project} - r{retry}</code> (for example <code>WI-AC-025 - qa - public-docs - r1</code>). The tab renames when the phase changes and closes when the worker finishes.</p>
           <pre><code># inside a herdr workspace: auto-selects herdr, no flag needed
 CONTROL=skills/supervisor   # or your installed plugin path
 node "$CONTROL/scripts/harness-control.mjs" start --repo "$PROJECT" --host codex
@@ -888,8 +898,16 @@ node "$CONTROL/scripts/harness-control.mjs" start --repo "$PROJECT" --host codex
 
 # force herdr panes outside a herdr workspace's auto-detection
 node "$CONTROL/scripts/harness-control.mjs" start --repo "$PROJECT" --host codex --display herdr</code></pre>
-          <p>Use <code>herdr agent list</code>, <code>herdr pane read</code>, and <code>herdr wait agent-status</code> to coordinate from the supervisor pane. Event relay (<code>events</code>, <code>ack</code>, <code>respond</code>) is unchanged for phone or plugin consumers.</p>
+          <p>Use <code>herdr agent list</code>, <code>herdr pane read</code>, and <code>herdr wait agent-status</code> to coordinate from the supervisor pane. Each tab streams the live agent session (thinking, tool calls, verdicts) via a flushed PTY. Finished workers close their tabs immediately. Event relay (<code>events</code>, <code>ack</code>, <code>respond</code>) is unchanged for phone or plugin consumers.</p>
+          <p><strong>Monorepo:</strong> multiple supervisors (e.g. four subprojects) each open named worker tabs. Finished tabs are closed per subproject only (<code>worker-&lt;project&gt;-*</code>) so one supervisor never kills another's live workers.</p>
           <p>For remote access, use herdr's SSH and plugin transports — see the <a href="https://herdr.dev/docs/">herdr documentation</a>.</p>
+
+          <h3>Mobile access with <a href="https://github.com/AltanS/collie">Collie</a></h3>
+          <p>Optional <a href="https://github.com/AltanS/collie">Collie</a> is a herdr plugin and PWA for watching agents and replying from your phone over a <a href="https://tailscale.com/">Tailscale</a> tailnet. Install on the host, start the bridge, then open the tailnet URL on your phone — useful when the supervisor raises <code>input_required</code> or you want pane mirrors without SSH.</p>
+          <pre><code>herdr plugin install AltanS/collie
+herdr plugin action invoke start --plugin herdr.collie
+# open the printed https://&lt;host&gt;.tail*.ts.net URL on your phone (Tailscale app connected)</code></pre>
+          <p>Supervisor event relay (<code>events</code>, <code>ack</code>, <code>respond</code>) is unchanged for phone consumers. Collie is remote shell access to your machine — use <code>tailscale serve</code> on your tailnet only (never <code>tailscale funnel</code>) and read the <a href="https://github.com/AltanS/collie#%EF%B8%8F-security--read-before-you-run-it">security notes</a> before enabling it.</p>
         </section>
 
         <section class="topic" id="maintenance">
