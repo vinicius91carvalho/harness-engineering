@@ -34,15 +34,15 @@ git -C "$TMP/quota-limit" config user.email test@example.invalid
 supervisor_common_write_feature_queue "$TMP/quota-limit/feature_list.json" false
 git -C "$TMP/quota-limit" add feature_list.json && git -C "$TMP/quota-limit" commit -qm reset
 rm -f "$TMP/quota-limit/.git/harness-control/state.json" "$TMP/quota-limit/.git/harness-control/events.jsonl"
-PATH="$SUPERVISOR_PATH" HARNESS_TEST_USAGE_LIMIT=1 HARNESS_RATE_LIMIT_BACKOFF_MS=100 HARNESS_RATE_LIMIT_JITTER_MS=0 \
+PATH="$SUPERVISOR_PATH" HARNESS_TEST_SUPERVISOR_QUOTA=1 HARNESS_RATE_LIMIT_BACKOFF_MS=100 HARNESS_RATE_LIMIT_JITTER_MS=0 \
   "$NODE" "$CONTROL" run \
   --repo "$TMP/quota-limit" --host claude --poll-ms 50 --quota-cooldown-seconds 60 \
   --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100 >/dev/null 2>&1 &
 quota_supervisor=$!
-deadline=$(( $(date +%s) + 45 ))
+deadline=$(( $(date +%s) + 20 ))
 while [ "$(date +%s)" -lt "$deadline" ]; do
   if [ -f "$TMP/quota-limit/.git/harness-control/events.jsonl" ] \
-    && jq -se 'any(.[]; .kind == "quota_wait")' "$TMP/quota-limit/.git/harness-control/events.jsonl" >/dev/null 2>&1; then
+    && [ "$(jq -s 'any(.[]; .kind == "quota_wait")' "$TMP/quota-limit/.git/harness-control/events.jsonl" 2>/dev/null)" = "true" ]; then
     break
   fi
   sleep 0.25
