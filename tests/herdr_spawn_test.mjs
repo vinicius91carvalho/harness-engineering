@@ -62,9 +62,13 @@ function assert(condition, message) {
   }
 }
 
-assert(resolveDisplayMode({}) === 'herdr', 'HERDR_ENV=1 should default to herdr display')
-assert(resolveDisplayMode({ display: 'background' }) === 'background', '--display background should override HERDR_ENV')
-assert(resolveDisplayMode({ display: 'herdr' }) === 'herdr', '--display herdr should force herdr mode')
+assert(resolveDisplayMode({}) === 'background', 'default display is background even inside herdr')
+assert(resolveDisplayMode({ display: 'background' }) === 'background', '--display background forces background mode')
+assert(resolveDisplayMode({ display: 'herdr' }) === 'herdr', '--display herdr opts into pane spawning when herdr is on PATH')
+delete process.env.PATH
+process.env.PATH = '/usr/bin:/bin'
+assert(resolveDisplayMode({ display: 'herdr' }) === 'background', '--display herdr without herdr on PATH falls back to background')
+process.env.PATH = env.PATH
 assert(shellQuote("it's fine") === "'it'\\''s fine'", 'shellQuote escapes single quotes')
 
 const { paneId } = spawnInPane('node -e "console.log(1)"', 'worker-test')

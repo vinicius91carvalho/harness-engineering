@@ -14,5 +14,5 @@ Everything below is a row in the installer's checklist. Toggle whatever you want
 | `playwright` | claude, opencode, codex | MCP server | [microsoft/playwright-mcp](https://github.com/microsoft/playwright-mcp) | Browser automation and E2E testing through Microsoft's MCP server. |
 
 Optional role routing uses `config/roles.example.json` copied to `.harness/roles.json`.
-Optional worker visibility uses [herdr](https://herdr.dev/) when the supervisor runs with `HERDR_ENV=1`.
+Optional worker visibility uses [herdr](https://herdr.dev/) when the supervisor is started with `--display herdr`.
 See the [routing and herdr guide](../README.md#optional-role-routing-and-herdr).

@@ -15,8 +15,8 @@ Let `REPO` be the selected harness project directory (which may be below the Git
 top-level), `CONTROL` this skill directory, and
 `WORKER_HOST` one authenticated CLI installed on the machine: `claude`, `codex`,
 `opencode`, or `agent`. Role routing is selected by project-local `.harness/roles.json`.
-When running inside herdr (`HERDR_ENV=1`), workers spawn in sibling panes automatically;
-use `--display background` to keep background processes instead.
+Herdr visibility is optional: pass `--display herdr` when running inside a herdr
+workspace; background workers are the default.
 
 At a monorepo root, resolve one project through `.harness/projects.json` before
 starting. Each project has its own specification, queue, supervisor state, and
@@ -144,15 +144,16 @@ Never infer completion from an empty queue or agent prose. Completion requires a
 persisted `run_completed` event produced by mandatory Goal Review on integrated
 `main`.
 
-## Herdr workflow
+## Herdr workflow (optional)
 
-When `HERDR_ENV=1`, start the supervisor inside a herdr workspace for the project.
-Each admitted worker opens in a sibling pane labeled `worker-<context>`.
+Herdr is not required. Background workers are the default. When you run inside a
+herdr workspace and want visible panes, pass `--display herdr`. Each admitted
+worker opens in a sibling pane labeled `worker-<context>`.
 
 ```bash
-node "$CONTROL/scripts/harness-control.mjs" start --repo "$REPO" --host "$WORKER_HOST"
+node "$CONTROL/scripts/harness-control.mjs" start --repo "$REPO" --host "$WORKER_HOST" --display herdr
 ```
 
 Use `herdr pane list`, `herdr pane read`, and `herdr wait agent-status` from the
-supervisor pane to observe workers. Force background workers with `--display background`.
+supervisor pane to observe workers. Omit `--display herdr` for background workers.
 Remote access uses herdr's SSH and plugin transports.

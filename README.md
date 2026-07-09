@@ -221,6 +221,8 @@ Role routing is not required to plan, generate, validate, integrate, or review w
 
 Copy [`config/roles.example.json`](config/roles.example.json) to `.harness/roles.json` to route coding, validation, repair planning, and Goal Review through ordered tool/model candidates.
 
+[herdr](https://herdr.dev/) is optional terminal visibility. Pass `--display herdr` when starting the supervisor inside a herdr workspace; otherwise workers run in the background.
+
 → [Routing guide](https://vinicius91carvalho.github.io/harness-engineering/#routing) · [Herdr visibility](https://vinicius91carvalho.github.io/harness-engineering/#herdr)
 
 To remove a prior Omnigent install from this machine:

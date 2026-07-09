@@ -837,13 +837,13 @@ cp config/roles.example.json .harness/roles.json</code></pre>
         <section class="topic" id="herdr">
           <p class="step"><span style="color:#e5c07b">Optional</span> visibility</p>
           <h2>Watch workers in <a href="https://herdr.dev/">herdr</a></h2>
-          <p>When the supervisor runs inside herdr (<code>HERDR_ENV=1</code>), each admitted worker opens in a sibling pane automatically. You see coding, QA, and Goal Review agents in the herdr sidebar without tailing log files.</p>
+          <p>Herdr is optional. The supervisor defaults to background workers. Pass <code>--display herdr</code> when you run inside a herdr workspace and want each admitted worker in a sibling pane. You see coding, QA, and Goal Review agents in the herdr sidebar without tailing log files.</p>
           <pre><code># inside a herdr workspace for your project
 CONTROL=skills/supervisor   # or your installed plugin path
-node "$CONTROL/scripts/harness-control.mjs" start --repo "$PROJECT" --host codex
+node "$CONTROL/scripts/harness-control.mjs" start --repo "$PROJECT" --host codex --display herdr
 
-# optional: force background workers instead of panes
-node "$CONTROL/scripts/harness-control.mjs" start --repo "$PROJECT" --host codex --display background</code></pre>
+# default: background workers (no herdr required)
+node "$CONTROL/scripts/harness-control.mjs" start --repo "$PROJECT" --host codex</code></pre>
           <p>Use <code>herdr pane list</code>, <code>herdr pane read</code>, and <code>herdr wait agent-status</code> to coordinate from the supervisor pane. Event relay (<code>events</code>, <code>ack</code>, <code>respond</code>) is unchanged for phone or plugin consumers.</p>
           <p>For remote access, use herdr's SSH and plugin transports — see the <a href="https://herdr.dev/docs/">herdr documentation</a>.</p>
         </section>

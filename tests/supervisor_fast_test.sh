@@ -145,7 +145,7 @@ PATH="$SUPERVISOR_PATH" HERDR_ENV=1 supervisor_common_run_once \
   --repo "$TMP/background" --host claude --once true --poll-ms 50 --display background \
   --quota-workers 1 --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100
 jq -e '.status == "complete"' "$TMP/background/.git/harness-control/state.json" >/dev/null
-echo 'ok - --display background preserves child-process spawn even when HERDR_ENV=1'
+echo 'ok - herdr is optional: default workers stay background even when HERDR_ENV=1'
 
 mkdir -p "$TMP/circuit"
 supervisor_common_init_git_repo "$TMP/circuit" false

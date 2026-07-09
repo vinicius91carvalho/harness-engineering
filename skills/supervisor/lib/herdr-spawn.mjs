@@ -4,12 +4,11 @@ function commandExists(cmd) {
   return spawnSync('sh', ['-c', `command -v ${cmd}`], { stdio: 'ignore' }).status === 0
 }
 
-/** Resolve worker display mode from CLI flag, env, or herdr context. */
+/** Resolve worker display mode. Herdr panes are opt-in via --display herdr or HARNESS_DISPLAY=herdr. */
 export function resolveDisplayMode(options = {}) {
   const explicit = options.display || process.env.HARNESS_DISPLAY
   if (explicit === 'background') return 'background'
-  if (explicit === 'herdr') return 'herdr'
-  if (process.env.HERDR_ENV === '1' && commandExists('herdr')) return 'herdr'
+  if (explicit === 'herdr') return commandExists('herdr') ? 'herdr' : 'background'
   return 'background'
 }
 
