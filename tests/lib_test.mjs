@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFile, writeFile as writeFileAsync, appendFile as appendFileAsync, mkdir as mkdirAsync } from 'node:fs/promises'
+import { join, dirname } from 'node:path'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { parseObject, isProviderQuotaLimited, VERDICT_BEGIN, VERDICT_END } from '../skills/generator/lib/verdict.mjs'
@@ -12,6 +13,10 @@ import { pickClaimCandidate, mergeDo, restoreDirtyRuntimeLogs } from '../skills/
 import { MARKER_PATTERN, hasMergeMarkers } from '../skills/generator/lib/integrate-checkpoint.mjs'
 import { interpretWorkerOutcome } from '../skills/generator/lib/worker-outcome.mjs'
 import { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } from '../skills/generator/lib/supervisor-tick.mjs'
+import { mkey, strikeOf, buildPlan, buildCandidates, lastCoder } from '../skills/generator/lib/route-plan.mjs'
+import { planWorkerClosedActions } from '../skills/generator/lib/worker-lifecycle.mjs'
+import { createWorkflowState } from '../skills/generator/lib/workflow-state.mjs'
+import { readJson, atomicJson } from '../skills/generator/lib/fs-json.mjs'
 
 test('parseObject reads delimited verdict', () => {
   const body = `${VERDICT_BEGIN}\n{"goal":true}\n${VERDICT_END}`
@@ -185,4 +190,126 @@ test('shouldFinalizePendingGoal waits for empty retry queue', () => {
   assert.equal(shouldFinalizePendingGoal({}, { goal: true }), true)
   assert.equal(shouldFinalizePendingGoal({ core: { guidance: 'x' } }, { goal: true }), false)
   assert.equal(shouldFinalizePendingGoal({}, null), false)
+})
+
+test('route-plan mkey and strikeOf', () => {
+  assert.equal(mkey('claude', 'opus'), 'claude|opus')
+  assert.equal(mkey('claude', null), 'claude|')
+  const strikes = { 'infra|claude|': 2, 'quality|coding|claude|': 1 }
+  assert.equal(strikeOf('coding', 'claude', null, strikes), 3)
+})
+
+test('route-plan buildPlan sorts by strikes', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'route-plan-'))
+  spawnSync('git', ['init', '-b', 'main'], { cwd: tmp, encoding: 'utf8' })
+  const roles = {
+    coding: [{ harness: 'claude' }, { harness: 'codex' }],
+    validation: [{ harness: 'claude' }],
+    repairPlanning: [{ harness: 'claude' }],
+    goalReview: [{ harness: 'claude' }],
+  }
+  const plan = buildPlan(tmp, roles)
+  assert.ok(plan.sortedRoles.coding.length === 2)
+})
+
+test('route-plan buildCandidates direct mode', () => {
+  const candidates = buildCandidates({
+    plan: null,
+    kind: 'CODING',
+    attempt: 1,
+    options: { host: 'claude' },
+    roleNames: { CODING: 'coding' },
+    codedBy: null,
+    state: {},
+  })
+  assert.deepEqual(candidates, [{ harness: 'claude' }])
+})
+
+test('route-plan lastCoder from route history', () => {
+  const state = {
+    routeHistory: [
+      { kind: 'CODING', outcome: 'selected', harness: 'codex', model: 'gpt' },
+    ],
+  }
+  assert.equal(lastCoder(state), 'codex|gpt')
+})
+
+test('planWorkerClosedActions quota retry', () => {
+  const plan = planWorkerClosedActions({
+    key: 'core',
+    exitCode: 1,
+    tail: '429 rate limit',
+    result: null,
+    rateLimited: true,
+    crashCount: 0,
+    harnessRepairs: {},
+    retryQueue: {},
+    autoRepair: false,
+    logFile: '/tmp/log',
+  })
+  assert.equal(plan.action, 'quota_retry')
+})
+
+test('planWorkerClosedActions release on success', () => {
+  const plan = planWorkerClosedActions({
+    key: 'core',
+    exitCode: 0,
+    tail: '',
+    result: { total: 1, passed: 1, stuck: [] },
+    rateLimited: false,
+    crashCount: 0,
+    harnessRepairs: {},
+    retryQueue: {},
+    autoRepair: false,
+    logFile: '/tmp/log',
+  })
+  assert.equal(plan.action, 'release')
+  assert.equal(plan.passed, 1)
+})
+
+test('planWorkerClosedActions blocked input', () => {
+  const plan = planWorkerClosedActions({
+    key: 'core',
+    exitCode: 0,
+    tail: '',
+    result: { blocked: true, summary: 'Attempt budget exhausted' },
+    rateLimited: false,
+    crashCount: 0,
+    harnessRepairs: {},
+    retryQueue: {},
+    autoRepair: false,
+    logFile: '/tmp/log',
+  })
+  assert.equal(plan.action, 'blocked_input')
+  assert.equal(plan.scope, 'context')
+})
+
+test('createWorkflowState journal and readFeatures', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'workflow-state-'))
+  const stateFile = join(tmp, 'state.json')
+  const queue = [{ id: 'WI-1', context: 'core', integration: false }]
+  writeFileSync(join(tmp, 'feature_list.json'), `${JSON.stringify(queue)}\n`)
+  const wf = createWorkflowState({
+    stateFile,
+    leaseToken: 'test-lease',
+    context: 'core',
+    readJson,
+    atomicJson,
+    hostname: () => 'testhost',
+    process,
+    fail: (msg) => { throw new Error(msg) },
+    dirname,
+    join,
+    mkdir: mkdirAsync,
+    appendFile: appendFileAsync,
+    writeFile: writeFileAsync,
+    readFile,
+    git: () => ({ status: 0, stdout: '' }),
+    workdir: tmp,
+    terminateChild: () => {},
+  })
+  const { list } = await wf.readFeatures(tmp)
+  assert.equal(list[0].id, 'WI-1')
+  const journalFile = await wf.journal(tmp, 'Test entry', { Outcome: 'ok' })
+  assert.ok(journalFile.endsWith('core.md'))
 })

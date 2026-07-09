@@ -1,5 +1,7 @@
 /** Integrated Verification checkpoint: merge to main, resolve conflicts, run integration QA. */
 
+import { mergeDo, mergeRelease } from './claim-lease.mjs'
+
 export const MARKER_PATTERN = /^(<{7} |={7}$|>{7} )/m
 
 export function hasMergeMarkers(content) {
@@ -19,10 +21,8 @@ export async function integrateCheckpoint(ctx) {
     attempt,
     workdir,
     repo,
-    claimScript,
     maxAttempts,
     git,
-    command,
     runAgent,
     featurePrompt,
     stopApp,
@@ -46,9 +46,9 @@ export async function integrateCheckpoint(ctx) {
   const preMergeSha = git(['rev-parse', 'HEAD'], integrationDir).stdout.trim()
   try {
     await writeState({ phase: 'merge', nextAction: 'merge', integrationDir })
-    const merged = command('bash', [claimScript, 'merge-do', repo, feature.context, integrationDir], repo, true)
-    if (merged.status === 2) {
-      const conflictedFiles = git(['diff', '--name-only', '--diff-filter=U'], integrationDir).stdout.trim().split('\n').filter(Boolean)
+    const merged = mergeDo(repo, feature.context, integrationDir)
+    if (merged.status === 'conflict') {
+      const conflictedFiles = merged.paths || []
       const resolved = await runAgent('MERGE', featurePrompt('MERGE', feature, attempt, null, integrationDir), feature.id, attempt, integrationDir)
       const unmerged = git(['diff', '--name-only', '--diff-filter=U'], integrationDir).stdout.trim()
       const stillMarked = stillMarkedConflictFiles(git, integrationDir, conflictedFiles)
@@ -62,8 +62,8 @@ export async function integrateCheckpoint(ctx) {
       }
       const mergeHead = git(['rev-parse', '-q', '--verify', 'MERGE_HEAD'], integrationDir, true)
       if (mergeHead.status === 0) git(['commit', '--no-edit'], integrationDir)
-    } else if (merged.status !== 0) {
-      return { passed: false, operational: true, defects: [merged.stderr.trim() || 'merge failed'] }
+    } else if (merged.status === 'error') {
+      return { passed: false, operational: true, defects: [merged.message || 'merge failed'] }
     }
     if (git(['merge-base', '--is-ancestor', checkpointSha, 'HEAD'], integrationDir, true).status !== 0) {
       git(['merge', '--abort'], integrationDir, true)
@@ -97,6 +97,6 @@ export async function integrateCheckpoint(ctx) {
     syncWorkdirWithMain(workdir)
     return { passed: false, defects, evidence: verified.artifact }
   } finally {
-    command('bash', [claimScript, 'merge-release', repo, String(process.pid)], repo, true)
+    mergeRelease(repo, process.pid)
   }
 }

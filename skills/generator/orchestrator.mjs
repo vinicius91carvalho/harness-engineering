@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { appendFile, mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises'
-import { mkdirSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
+import { appendFile, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
 import { spawn, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { homedir, hostname } from 'node:os'
@@ -13,6 +13,10 @@ import { cleanupBrowserOrphans } from './lib/browser-cleanup.mjs'
 import { integrateCheckpoint } from './lib/integrate-checkpoint.mjs'
 import { hostCommands, roleNames } from './adapters/hosts.mjs'
 import { featurePrompt as buildFeaturePrompt } from './prompts/feature.mjs'
+import { createWorkflowState } from './lib/workflow-state.mjs'
+import { buildPlan, buildCandidates, lastCoder, mkey, bumpStrike } from './lib/route-plan.mjs'
+import { blockClaim, mergeAcquire, mergeRelease } from './lib/claim-lease.mjs'
+import { runAttemptLoop } from './workflow/attempt-machine.mjs'
 
 function fail(message) {
   process.stderr.write(`orchestrator: ${message}\n`)
@@ -31,7 +35,6 @@ if (!options.workdir) fail('--workdir is required')
 
 options.workdir = realpathSync(resolve(options.workdir))
 options.repo = realpathSync(resolve(options.repo || options.workdir))
-const claimScript = options['claim-script'] || resolve(dirname(fileURLToPath(import.meta.url)), 'claim.sh')
 const wanted = (options.features || '').split(',').filter(Boolean)
 const reconcileScript = resolve(dirname(fileURLToPath(import.meta.url)), 'reconcile.mjs')
 const MAX_ATTEMPTS = 3
@@ -39,15 +42,12 @@ const MAX_OPERATIONAL_FAILURES = 3
 const RATE_LIMIT_BACKOFF_MS = Number(process.env.HARNESS_RATE_LIMIT_BACKOFF_MS || 75_000)
 const RATE_LIMIT_JITTER_MS = Number(process.env.HARNESS_RATE_LIMIT_JITTER_MS || 10_000)
 
-// ponytail: a 429 retried instantly just burns the same rate-limit window again --
-// this is what falsely exhausted MAX_OPERATIONAL_FAILURES on Work Items that were
-// never actually attempted. Back off once before the next attempt instead.
 async function backoffIfRateLimited(detail) {
   if (!isProviderQuotaLimited(detail)) return
   const hintSeconds = Number(detail.match(/retry_after_seconds"?\s*[:=]\s*"?(\d+(?:\.\d+)?)/)?.[1])
   const baseMs = hintSeconds > 0 ? Math.max(hintSeconds * 1000, RATE_LIMIT_BACKOFF_MS / 3) : RATE_LIMIT_BACKOFF_MS
   const jitterMs = Math.floor(Math.random() * Math.max(0, RATE_LIMIT_JITTER_MS))
-  await new Promise((resolve) => setTimeout(resolve, baseMs + jitterMs))
+  await new Promise((resolveWait) => setTimeout(resolveWait, baseMs + jitterMs))
 }
 
 function command(program, args, cwd = options.workdir, allowFailure = false) {
@@ -74,7 +74,6 @@ const stateContext = projectId ? `${projectId}--${context}` : context
 const stateFile = join(runDir, `${stateContext.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`)
 const leaseToken = randomUUID()
 let child = null
-let state = {}
 let itemPlan = null
 const verifyFirstCache = new Map()
 const codingHarnesses = new Map()
@@ -88,49 +87,39 @@ function terminateChild(signal = 'SIGTERM') {
   } catch { try { child.kill(signal) } catch {} }
 }
 
-async function writeState(change = {}) {
-  const current = await readJson(stateFile, {})
-  if (current.leaseToken && current.leaseToken !== leaseToken && current.ownerHost === hostname() && current.ownerPid && current.ownerPid !== process.pid) {
-    try { process.kill(current.ownerPid, 0); fail(`Claim Lease for ${context} is owned by live pid ${current.ownerPid}`) } catch {}
-  }
-  const nextStatus = change.status || state.status
-  state = {
-    ...state,
-    ...change,
-    context,
-    leaseToken,
-    ownerHost: hostname(),
-    ownerPid: nextStatus === 'blocked' || nextStatus === 'complete' ? null : process.pid,
-    heartbeat: new Date().toISOString(),
-    heartbeatEpoch: Math.floor(Date.now() / 1000),
-  }
-  await atomicJson(stateFile, state)
-}
+const workflow = createWorkflowState({
+  stateFile,
+  leaseToken,
+  context,
+  readJson,
+  atomicJson,
+  hostname,
+  process,
+  fail,
+  dirname,
+  join,
+  mkdir,
+  appendFile,
+  writeFile,
+  readFile,
+  git,
+  workdir: options.workdir,
+  terminateChild,
+})
 
-function writeInterruptedState(signal) {
-  try {
-    terminateChild()
-    const value = {
-      ...state, context, leaseToken, ownerHost: hostname(), ownerPid: null, childPid: null,
-      status: 'interrupted', lastResult: `orchestrator received ${signal}`,
-      heartbeat: new Date().toISOString(), heartbeatEpoch: Math.floor(Date.now() / 1000),
-    }
-    const temporary = `${stateFile}.tmp.${process.pid}.${randomUUID()}`
-    mkdirSync(dirname(stateFile), { recursive: true })
-    writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`)
-    renameSync(temporary, stateFile)
-  } finally { process.exit(130) }
-}
+const {
+  writeState,
+  writeInterruptedState,
+  readFeatures,
+  updateFeature,
+  journal,
+  commitPaths,
+  getState,
+  setState,
+} = workflow
+
 process.on('SIGINT', () => writeInterruptedState('SIGINT'))
 process.on('SIGTERM', () => writeInterruptedState('SIGTERM'))
-
-async function readFeatures(workdir = options.workdir) {
-  const file = join(workdir, 'feature_list.json')
-  let parsed
-  try { parsed = JSON.parse(await readFile(file, 'utf8')) } catch (error) { fail(`cannot read ${file}: ${error.message}`) }
-  if (!Array.isArray(parsed)) fail('feature_list.json must be an array')
-  return { file, parsed, list: parsed }
-}
 
 async function isVerifyFirst(workdir = options.workdir) {
   try {
@@ -161,51 +150,17 @@ async function readRoles(workdir = options.workdir) {
     if (!Array.isArray(roles[role]) || !roles[role].length) fail(`${file}: ${role} must be a non-empty array`)
     normalized[role] = roles[role].map((value) => normalizeCandidate(role, value))
   }
-  // Optional free/no-credits tier: validated like the five roles (claude/codex/opencode/pi/agent, optional model). Absent/empty is fine.
   if (Array.isArray(roles.noCredits)) normalized.noCredits = roles.noCredits.map((value) => normalizeCandidate('noCredits', value))
   return normalized
 }
 
-// Route history stores model as `model||null`; coerce null/undefined to '' so keys never split (infra|h| vs infra|h|undefined).
-function mkey(harness, model) { return `${harness}|${model || ''}` }
-
-// Best-effort read of the per-run strike scoreboard via claim.sh. Never aborts the run; {} on any failure/empty.
-function readStrikes() {
-  const result = command('bash', [claimScript, 'strikes', options.repo], options.repo, true)
-  if (result.status !== 0) return {}
-  try { return JSON.parse(result.stdout) || {} } catch { return {} }
-}
-
-function strikeOf(role, harness, model, strikes) {
-  return (strikes[`infra|${mkey(harness, model)}`] || 0) + (strikes[`quality|${role}|${mkey(harness, model)}`] || 0)
-}
-
-// scope documents intent; the key already carries its scope prefix. Best-effort — a failure here must never abort the run.
-function bumpStrike(scope, key, delta) {
-  command('bash', [claimScript, 'strike', options.repo, key, String(delta)], options.repo, true)
-}
-
-// Read strikes ONCE per Work Item and pre-sort every role list, so order stays stable within an item (only the
-// attempt-driven coder offset shifts it). Direct mode (no roles.json) → null: no strikes, no sort.
-function buildPlan(roles) {
-  if (!roles) return null
-  const strikes = readStrikes()
-  const sortedRoles = {}
-  for (const role of ['coding', 'validation', 'repairPlanning', 'goalReview']) {
-    sortedRoles[role] = [...roles[role]].sort((a, b) =>
-      strikeOf(role, a.harness, a.model, strikes) - strikeOf(role, b.harness, b.model, strikes))
-  }
-  return { roles, sortedRoles, strikes }
-}
-
-// The (harness, model) of the most recent selected coder, for quality-strike bookkeeping. Route carries model.
-function lastCoder() {
-  const route = [...(state.routeHistory || [])].reverse().find((r) => r.kind === 'CODING' && r.outcome === 'selected')
-  return route ? mkey(route.harness, route.model) : null
+function bumpStrikeScoped(scope, key, delta) {
+  bumpStrike(options.repo, key, delta)
 }
 
 async function recentCodingHarness(id) {
   if (codingHarnesses.has(String(id))) return codingHarnesses.get(String(id))
+  const state = getState()
   const entries = []
   try {
     for (const file of await readdir(runDir)) {
@@ -222,15 +177,6 @@ async function recentCodingHarness(id) {
   } catch {}
   entries.sort((a, b) => a.heartbeat.localeCompare(b.heartbeat))
   return entries.at(-1)?.harness
-}
-
-async function updateFeature(workdir, id, changes) {
-  const { file, parsed, list } = await readFeatures(workdir)
-  const feature = list.find((item) => String(item.id) === String(id))
-  if (!feature) fail(`unknown Work Item ${id}`)
-  Object.assign(feature, changes)
-  await atomicJson(file, parsed)
-  return feature
 }
 
 async function evidence(id, attempt, kind, detail, route = null) {
@@ -283,27 +229,18 @@ async function runAgent(kind, prompt, id, attempt, cwd = options.workdir) {
   const plan = itemPlan
   const roles = plan?.roles
   const direct = !roles
-  const role = roleNames[kind]
-  const strikes = plan?.strikes || {}
+  const state = getState()
   const codedBy = await recentCodingHarness(id) || [...(state.routeHistory || [])].reverse()
     .find((entry) => entry.kind === 'CODING' && String(entry.id) === String(id) && entry.outcome === 'selected')?.harness
-  let candidates
-  if (direct) {
-    candidates = [{ harness: options.host }]
-  } else {
-    // Base order = item-start strike-sorted role list (stable); do NOT re-read/re-sort strikes per attempt.
-    const roleList = [...plan.sortedRoles[role]]
-    if (['QA', 'INTEGRATION_QA', 'GOAL_REVIEW'].includes(kind)) {
-      const avoid = codedBy || roles.coding[0].harness
-      roleList.sort((a, b) => (Number(a.harness === avoid) - Number(b.harness === avoid))
-        || (strikeOf(role, a.harness, a.model, strikes) - strikeOf(role, b.harness, b.model, strikes)))
-    }
-    // ponytail: integration-QA defects also bump `attempt`, so they advance the coder offset too (accepted simplification).
-    const repairBudget = Number(process.env.HARNESS_REPAIR_BUDGET || 2)
-    const pool = [...roleList, ...(roles.noCredits || [])]
-    const offset = kind === 'CODING' ? Math.min(Math.floor((attempt - 1) / repairBudget) + (plan.coderDeclines || 0), pool.length - 1) : 0
-    candidates = pool.slice(offset)
-  }
+  const candidates = buildCandidates({
+    plan,
+    kind,
+    attempt,
+    options,
+    roleNames,
+    codedBy,
+    state,
+  })
   const failures = []
   for (const candidate of candidates) {
     const independence = direct ? 'direct-host' : ['QA', 'INTEGRATION_QA', 'GOAL_REVIEW'].includes(kind)
@@ -320,20 +257,22 @@ async function runAgent(kind, prompt, id, attempt, cwd = options.workdir) {
     await writeState({ agentRoute: route, childPid: null })
     const result = await spawnAgent(program, args, direct ? cwd : gitTopLevel(cwd))
     const reason = !direct && !result.ok ? fallbackReason(result) : null
-    if (reason) bumpStrike('infra', `infra|${mkey(candidate.harness, candidate.model)}`, 1)
+    if (reason) bumpStrikeScoped('infra', `infra|${mkey(candidate.harness, candidate.model)}`, 1)
     if (!direct && !result.ok && candidates.indexOf(candidate) < candidates.length - 1) {
       failures.push({ harness: candidate.harness, model: candidate.model || null, reason, detail: result.detail.slice(-1000) })
-      state.routeHistory = [...(state.routeHistory || []), { ...route, outcome: 'fallback', fallbackReason: reason }]
-      await writeState({ routeHistory: state.routeHistory, lastResult: `${candidate.harness}: ${reason}`, childPid: null })
+      const nextHistory = [...(getState().routeHistory || []), { ...route, outcome: 'fallback', fallbackReason: reason }]
+      setState({ ...getState(), routeHistory: nextHistory })
+      await writeState({ routeHistory: nextHistory, lastResult: `${candidate.harness}: ${reason}`, childPid: null })
       continue
     }
     const selected = { ...route, outcome: result.ok ? 'selected' : 'failed' }
-    state.routeHistory = [...(state.routeHistory || []), selected]
+    const routeHistory = [...(getState().routeHistory || []), selected]
+    setState({ ...getState(), routeHistory })
     if (kind === 'CODING' && result.ok) codingHarnesses.set(String(id), candidate.harness)
-    if (!direct && result.ok) bumpStrike('infra', `infra|${mkey(candidate.harness, candidate.model)}`, -1)
+    if (!direct && result.ok) bumpStrikeScoped('infra', `infra|${mkey(candidate.harness, candidate.model)}`, -1)
     const diagnostic = `${failures.length ? `fallbacks=${JSON.stringify(failures)}\n` : ''}${result.parsed ? `${JSON.stringify(result.parsed, null, 2)}\n` : `${result.stdout}${result.stderr ? `\n--- stderr ---\n${result.stderr}` : ''}`.slice(-16_000)}`
     const artifact = await evidence(id, attempt, kind, diagnostic, selected)
-    await writeState({ childPid: null, evidence: artifact, agentRoute: selected, routeHistory: state.routeHistory })
+    await writeState({ childPid: null, evidence: artifact, agentRoute: selected, routeHistory })
     return { ...result, artifact, route: selected }
   }
 }
@@ -348,34 +287,11 @@ async function appPid(workdir) {
 async function stopApp(workdir) {
   const pidFile = join(workdir, '.harness', 'app.pid')
   const pid = await appPid(workdir)
-  if (!pid) { if (state.appPid) await writeState({ appPid: null }); return }
+  if (!pid) { if (getState().appPid) await writeState({ appPid: null }); return }
   try { process.kill(pid, 'SIGTERM') } catch {}
   try { await unlink(pidFile) } catch {}
   cleanupBrowserOrphans({ port: options.port })
   await writeState({ appPid: null })
-}
-
-function journalPath(workdir = options.workdir, name = context) {
-  return join(workdir, 'harness-progress', `${name}.md`)
-}
-
-async function journal(workdir, title, fields, name = context) {
-  const file = journalPath(workdir, name)
-  await mkdir(dirname(file), { recursive: true })
-  let exists = true
-  try { await readFile(file) } catch { exists = false }
-  if (!exists) await writeFile(file, `# ${name} workflow journal\n`)
-  const lines = Object.entries(fields).filter(([, value]) => value !== undefined && value !== '')
-    .map(([key, value]) => `- ${key}: ${Array.isArray(value) ? value.join('; ') : value}`)
-  await appendFile(file, `\n## ${new Date().toISOString()} — ${title}\n\n${lines.join('\n')}\n`)
-  return file
-}
-
-function commitPaths(workdir, paths, message) {
-  const relative = paths.map((path) => path.replace(`${workdir}/`, ''))
-  git(['add', '--', ...relative], workdir)
-  const staged = git(['diff', '--cached', '--quiet'], workdir, true)
-  if (staged.status !== 0) git(['commit', '-m', message], workdir)
 }
 
 function featurePrompt(kind, feature, attempt, repairPlan = null, workdir = options.workdir) {
@@ -396,7 +312,7 @@ async function block(feature, attempt, reason, defects = []) {
   })
   commitPaths(options.workdir, [file, join(options.workdir, 'feature_list.json')], `chore(harness): block ${feature.id}`)
   await writeState({ status: 'blocked', phase: 'blocked', currentFeatureId: feature.id, attempt, lastResult: reason, nextAction: 'user-guidance', childPid: null })
-  command('bash', [claimScript, 'block', options.repo, feature.context], options.repo)
+  blockClaim(options.repo, feature.context)
   return { id: queue.id, status: 'blocked', reason, defects }
 }
 
@@ -417,25 +333,15 @@ async function planRepair(feature, attempt, defectReport) {
 }
 
 async function acquireMergeLock() {
-  // The merge lock is monorepo-wide (git-common-dir), not per-subproject, so
-  // running several subprojects' orchestrators concurrently against one repo
-  // means every worker across all of them serializes through this one lock.
-  // Default budget is generous enough for that; override for slower hosts.
   const tryBudget = Number(process.env.HARNESS_MERGE_LOCK_TRIES || 3600)
   for (let tries = 0; tries < tryBudget; tries++) {
-    const result = command('bash', [claimScript, 'merge-acquire', options.repo, String(process.pid)], options.repo, true)
-    const output = result.stdout.trim()
-    if (result.status === 0 && output && output !== 'BUSY') return output
+    const result = mergeAcquire(options.repo, process.pid)
+    if (!result.busy && result.integDir) return result.integDir
     await new Promise((resolveWait) => setTimeout(resolveWait, 500))
   }
   fail('timed out waiting for merge lock')
 }
 
-// Best-effort: keep the worker's own worktree in sync with the main it just
-// helped advance, so its next claim in this context starts from a fresh base.
-// This is not the conflict-resolution-critical path (that's the shared
-// integrationDir merge above) -- a conflict here must not crash the whole
-// worker and abandon a Work Item that already integrated successfully.
 function syncWorkdirWithMain(workdir) {
   const result = git(['merge', '--no-edit', 'main'], workdir, true)
   if (result.status !== 0) git(['merge', '--abort'], workdir, true)
@@ -447,10 +353,8 @@ async function integrate(feature, attempt) {
     attempt,
     workdir: options.workdir,
     repo: options.repo,
-    claimScript,
     maxAttempts: MAX_ATTEMPTS,
     git,
-    command,
     runAgent,
     featurePrompt,
     stopApp,
@@ -466,138 +370,44 @@ async function integrate(feature, attempt) {
 }
 
 async function runWorkItems() {
-  if (!wanted.length) fail('--features is required outside goal-review mode')
-  command(process.execPath, [reconcileScript, options.workdir, '--check'], options.workdir)
-  const initialState = await readJson(stateFile, {})
-  state = initialState
-  if (initialState.status === 'blocked' && !options.guidance) fail('blocked work requires --guidance for explicit Resume')
-  if (initialState.status === 'blocked') {
-    const id = initialState.currentFeatureId || wanted[0]
-    await updateFeature(options.workdir, id, { implementation: false, qa: false, integration: false, retries: 0 })
-    const file = await journal(options.workdir, 'Explicit Resume', {
-      WorkItem: id, Outcome: 'user authorized a new Attempt cycle', Guidance: options.guidance, NextAction: 'Coding Attempt 1',
-    })
-    commitPaths(options.workdir, [file, join(options.workdir, 'feature_list.json')], `chore(harness): resume ${id} with guidance`)
-    state = {
-      ...initialState, phase: 'resume', attempt: 1, nextAction: 'coding',
-      repairPlan: { summary: 'User guidance', rootCause: 'user-directed', actions: [options.guidance], validation: [] },
-    }
-  } else if (initialState.status === 'resuming' || initialState.status === 'interrupted') {
-    const file = await journal(options.workdir, 'Resumed', {
-      WorkItem: initialState.currentFeatureId || wanted[0], PreviousPhase: initialState.previousPhase || initialState.phase,
-      Attempt: initialState.attempt, NextAction: initialState.nextAction,
-    })
-    commitPaths(options.workdir, [file], `chore(harness): resume ${context}`)
-  }
-  await writeState({ status: 'running', phase: state.phase || 'starting', nextAction: state.nextAction || 'coding', featureIds: wanted })
-  heartbeatTimer = setInterval(() => writeState().catch(() => {}), 15_000)
-  verifyFirstCache.set(options.workdir, await isVerifyFirst(options.workdir))
-  const initial = await readFeatures()
-  const selected = wanted.map((id) => initial.list.find((feature) => String(feature.id) === id))
-  if (selected.some((feature) => !feature)) fail(`unknown Work Item id in --features: ${wanted.join(',')}`)
-  const results = []
-
-  for (const original of selected) {
-    let current = (await readFeatures()).list.find((item) => String(item.id) === String(original.id))
-    if (current.integration === true) { results.push({ id: current.id, status: 'passed' }); continue }
-    // Read strikes and sort candidate lists ONCE per Work Item — stable within the item so only the attempt offset switches coders.
-    itemPlan = buildPlan(await readRoles())
-    const resumingCurrent = String(state.currentFeatureId) === String(current.id)
-    let attempt = resumingCurrent ? Number(state.attempt || current.retries + 1 || 1) : Number(current.retries || 0) + 1
-    let repairPlan = resumingCurrent ? state.repairPlan : null
-    let operationalFailures = 0
-
-    if (attempt > MAX_ATTEMPTS) { results.push(await block(current, MAX_ATTEMPTS, 'Attempt budget already exhausted')); break }
-    if (resumingCurrent && state.nextAction === 'repair-plan' && state.defectReport) {
-      repairPlan = await planRepair(current, attempt, state.defectReport)
-      attempt++
-    }
-    while (attempt <= MAX_ATTEMPTS) {
-      current = (await readFeatures()).list.find((item) => String(item.id) === String(original.id))
-      if (current.implementation !== true) {
-        await writeState({ currentFeatureId: current.id, attempt, nextAction: 'coding', repairPlan })
-        const coded = await runAgent('CODING', featurePrompt('CODING', current, attempt, repairPlan), current.id, attempt)
-        if (coded.ok && coded.parsed?.implementation === true) {
-          await updateFeature(options.workdir, current.id, { implementation: true })
-          commitPaths(options.workdir, [join(options.workdir, 'feature_list.json')], `chore(harness): record coding ${current.id}`)
-        }
-        current = (await readFeatures()).list.find((item) => String(item.id) === String(original.id))
-        // An explicit decline (agent ran fine, said implementation:false) is not an operational failure and
-        // does not consume an Attempt: it advances the coder offset so the next candidate is asked instead.
-        if (coded.ok && coded.parsed?.implementation === false) {
-          const declineEvidence = [coded.parsed.notes || coded.detail]
-          if (!itemPlan) { results.push(await block(current, attempt, 'coding agent declined the Work Item', declineEvidence)); break }
-          itemPlan.coderDeclines = (itemPlan.coderDeclines || 0) + 1
-          const poolSize = itemPlan.sortedRoles.coding.length + (itemPlan.roles.noCredits?.length || 0)
-          if (Math.floor((attempt - 1) / Number(process.env.HARNESS_REPAIR_BUDGET || 2)) + itemPlan.coderDeclines >= poolSize) {
-            results.push(await block(current, attempt, 'every coding candidate declined the Work Item', declineEvidence)); break
-          }
-          continue
-        }
-        if (!coded.ok || current.implementation !== true) {
-          operationalFailures++
-          if (operationalFailures >= MAX_OPERATIONAL_FAILURES) { results.push(await block(current, attempt, 'coding agent failed three times', [coded.detail])); break }
-          await backoffIfRateLimited(coded.detail)
-          continue
-        }
-        operationalFailures = 0
-        await writeState({ appPid: await appPid(options.workdir) })
-      }
-
-      if (current.qa !== true) {
-        await writeState({ nextAction: 'qa', phase: 'qa' })
-        const checked = await runAgent('QA', featurePrompt('QA', current, attempt), current.id, attempt)
-        if (checked.ok && checked.parsed?.implementation === true && checked.parsed?.qa === true) {
-          await updateFeature(options.workdir, current.id, { implementation: true, qa: true })
-          commitPaths(options.workdir, [join(options.workdir, 'feature_list.json')], `chore(harness): record QA ${current.id}`)
-          const coder = itemPlan && lastCoder()
-          if (coder) bumpStrike('quality', `quality|coding|${coder}`, -1)
-        }
-        current = (await readFeatures()).list.find((item) => String(item.id) === String(original.id))
-        if (!checked.ok && !checked.parsed) {
-          operationalFailures++
-          if (operationalFailures >= MAX_OPERATIONAL_FAILURES) { results.push(await block(current, attempt, 'QA agent failed three times', [checked.detail])); break }
-          await backoffIfRateLimited(checked.detail)
-          continue
-        }
-        operationalFailures = 0
-        await writeState({ appPid: await appPid(options.workdir) })
-        if (current.implementation !== true || current.qa !== true) {
-          const defectReport = {
-            defects: checked.parsed?.defects?.length ? checked.parsed.defects : [checked.detail.slice(-2000) || 'QA failed'],
-            evidence: checked.artifact,
-          }
-          await writeState({ phase: 'qa-defect', nextAction: 'repair-plan', defectReport, attempt })
-          if (attempt >= MAX_ATTEMPTS) { results.push(await block(current, attempt, 'QA failed after Attempt 3', defectReport.defects)); break }
-          const coder = itemPlan && lastCoder()
-          if (coder) bumpStrike('quality', `quality|coding|${coder}`, 1)
-          repairPlan = await planRepair(current, attempt, defectReport)
-          attempt++
-          continue
-        }
-      }
-
-      const integrated = await integrate(current, attempt)
-      if (integrated.passed) { results.push({ id: current.id, status: 'passed' }); break }
-      if (integrated.operational) {
-        results.push(await block(current, attempt, 'integration could not complete', integrated.defects)); break
-      }
-      await writeState({
-        phase: 'integration-defect', nextAction: 'repair-plan',
-        defectReport: { defects: integrated.defects, evidence: integrated.evidence }, attempt,
-      })
-      if (attempt >= MAX_ATTEMPTS) { results.push(await block(current, attempt, 'Integrated Verification failed after Attempt 3', integrated.defects)); break }
-      repairPlan = await planRepair(current, attempt, { defects: integrated.defects, evidence: integrated.evidence })
-      attempt++
-    }
-    if (results.at(-1)?.status === 'blocked') break
-  }
-
-  await stopApp(options.workdir)
-  clearInterval(heartbeatTimer)
-  const stuck = results.filter((result) => result.status === 'blocked')
-  await writeState({ status: stuck.length ? 'blocked' : 'complete', phase: stuck.length ? 'blocked' : 'complete', nextAction: stuck.length ? 'user-guidance' : 'release-claim', childPid: null })
-  return { total: selected.length, passed: results.filter((result) => result.status === 'passed').length, stuck, results }
+  return runAttemptLoop({
+    wanted,
+    options,
+    getState,
+    setState,
+    stateFile,
+    reconcileScript,
+    MAX_ATTEMPTS,
+    MAX_OPERATIONAL_FAILURES,
+    fail,
+    command,
+    readJson,
+    readFeatures,
+    updateFeature,
+    journal,
+    commitPaths,
+    writeState,
+    verifyFirstCache,
+    isVerifyFirst,
+    buildPlan: (roles) => buildPlan(options.repo, roles),
+    readRoles,
+    block,
+    planRepair,
+    integrate,
+    runAgent,
+    featurePrompt,
+    stopApp,
+    join,
+    context,
+    setHeartbeatTimer: (timer) => { heartbeatTimer = timer },
+    getHeartbeatTimer: () => heartbeatTimer,
+    setItemPlan: (plan) => { itemPlan = plan },
+    getItemPlan: () => itemPlan,
+    lastCoder: () => lastCoder(getState()),
+    bumpStrike: bumpStrikeScoped,
+    backoffIfRateLimited,
+    appPid,
+  })
 }
 
 async function runGoalReviewLocked() {
@@ -605,16 +415,17 @@ async function runGoalReviewLocked() {
   const { list } = await readFeatures()
   const incomplete = list.filter((item) => item.integration !== true)
   if (incomplete.length) fail(`Goal Review requires every Work Item integrated; incomplete: ${incomplete.map((item) => item.id).join(', ')}`)
-  state = await readJson(stateFile, {})
+  setState(await readJson(stateFile, {}))
   const dirtyBefore = git(['status', '--porcelain', '--', '.'], options.workdir).stdout.trim()
   if (dirtyBefore) fail('Goal Review requires a clean integrated main checkout')
   const headBefore = git(['rev-parse', 'HEAD'], options.workdir).stdout.trim()
+  const state = getState()
   if (state.status === 'complete' && state.phase === 'complete' && state.reviewedHead === headBefore) {
     return { goal: true, reused: true, summary: state.lastResult, defects: [] }
   }
   await writeState({ status: 'running', phase: 'goal-review', nextAction: 'goal-review', attempt: 1 })
   heartbeatTimer = setInterval(() => writeState().catch(() => {}), 15_000)
-  itemPlan = buildPlan(await readRoles())
+  itemPlan = buildPlan(options.repo, await readRoles())
   const prompt = `You are the independent Goal Review agent. Read project_specs.xml, especially Project Goal and every stable Acceptance Check. On integrated main, exercise every check and cross-feature primary journeys through a real browser or real HTTP. Do not trust existing flags. Do not modify product code. Return only JSON: {"goal":true|false,"summary":"...","acceptanceCheckIds":["AC-..."],"defects":["expected ...; observed ...; evidence ..."]}. ${VERDICT_HINT}`
   const reviewed = await runAgent('GOAL_REVIEW', prompt, 'goal', 1)
   const verdict = reviewed.parsed
@@ -673,13 +484,13 @@ async function runGoalReview() {
   const canonicalLockedMain = realpathSync(lockedMain)
   const canonicalWorkdir = realpathSync(options.workdir)
   if (canonicalLockedMain !== canonicalWorkdir) {
-    command('bash', [claimScript, 'merge-release', options.repo, String(process.pid)], options.repo, true)
+    mergeRelease(options.repo, process.pid)
     fail(`Goal Review must run in the locked main checkout: ${canonicalLockedMain}`)
   }
   try {
     return await runGoalReviewLocked()
   } finally {
-    command('bash', [claimScript, 'merge-release', options.repo, String(process.pid)], options.repo, true)
+    mergeRelease(options.repo, process.pid)
   }
 }
 

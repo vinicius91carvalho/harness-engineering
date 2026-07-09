@@ -3,243 +3,538 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Install, run, verify, and maintain the Harness Engineering workflow with Claude Code, Codex, OpenCode, Pi, and optional Omnigent routing.">
-  <meta name="theme-color" content="#0d1117">
-  <title>Harness Engineering — complete guide</title>
+  <meta name="description" content="Harness Engineering — open-source spec→build→QA→Goal Review workflow for long AI coding runs with Claude Code, Codex, OpenCode, Cursor Agent, and Pi.">
+  <meta name="theme-color" content="#0a0e14">
+  <title>Harness Engineering — documentation</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <a class="skip" href="#main">Skip to guide</a>
-  <header>
+  <a class="skip" href="#main">Skip to documentation</a>
+
+  <header class="topbar">
+    <button type="button" class="sidebar-toggle" aria-expanded="false" aria-controls="sidebar">Menu</button>
     <a class="wordmark" href="#top">Harness Engineering</a>
-    <nav aria-label="Primary navigation">
-      <a href="#architecture">Architecture</a>
-      <a href="#language">Language</a>
-      <a href="#install">Install</a>
-      <a href="#start">Run</a>
-      <a href="#add-feature">Add a feature</a>
-      <a href="#operate">Monitor</a>
-      <a href="#troubleshoot">Troubleshoot</a>
-      <a href="#advanced">Advanced</a>
-      <a href="https://github.com/vinicius91carvalho/harness-engineering">GitHub ↗</a>
-    </nav>
+    <span class="tagline">Spec → build → QA → Goal Review</span>
+    <div class="topbar-actions">
+      <a href="https://github.com/vinicius91carvalho/harness-engineering">GitHub</a>
+      <a class="cta" href="#install">Get started</a>
+    </div>
   </header>
 
-  <main id="main">
-    <section class="hero" id="top">
-      <img src="https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/assets/banner.svg" alt="Harness Engineering, with pixel-art Gandalf">
-      <div>
-        <p class="kicker">Spec → build → QA → Goal Review</p>
-        <h1>Checked delivery for long AI coding runs.</h1>
-        <p>You describe a goal. The harness keeps the contract, splits coding from QA, merges safely, and proves completion on <code>main</code> — even if you close the chat.</p>
-        <a class="button" href="#install">Install in four steps</a>
+  <div class="shell">
+    <aside class="sidebar" id="sidebar" aria-label="Documentation navigation">
+      <div class="sidebar-inner">
+        <div class="nav-group">
+          <p class="nav-group-title">Overview</p>
+          <nav>
+            <a href="#top">Introduction</a>
+            <a href="#why">Why this exists</a>
+            <a href="#architecture">Architecture</a>
+            <a href="#language">Skills &amp; agents</a>
+          </nav>
+        </div>
+        <div class="nav-group">
+          <p class="nav-group-title">Getting started</p>
+          <nav>
+            <a href="#prerequisites">Prerequisites</a>
+            <a href="#install">Install</a>
+            <a href="#commands">Commands by tool</a>
+            <a href="#start">Choose your path</a>
+          </nav>
+        </div>
+        <div class="nav-group">
+          <p class="nav-group-title">From zero to done</p>
+          <nav>
+            <a href="#journey">The full journey</a>
+            <a href="#delegate">Delegating work</a>
+            <a href="#workflow">Seven stages</a>
+            <a href="#phases">Each phase explained</a>
+          </nav>
+        </div>
+        <div class="nav-group">
+          <p class="nav-group-title">Files &amp; formats</p>
+          <nav>
+            <a href="#files">File index</a>
+            <a href="#spec-format">project_specs.xml</a>
+            <a href="#queue-format">feature_list.json</a>
+            <a href="#runtime-state">Runtime state</a>
+          </nav>
+        </div>
+        <div class="nav-group">
+          <p class="nav-group-title">Examples</p>
+          <nav>
+            <a href="#worked-example">Audit one behavior</a>
+            <a href="#add-feature">Add a feature later</a>
+            <a href="#monorepo">Monorepos</a>
+          </nav>
+        </div>
+        <div class="nav-group">
+          <p class="nav-group-title">Operations</p>
+          <nav>
+            <a href="#operate">Monitor &amp; verify</a>
+            <a href="#troubleshoot">Troubleshooting</a>
+            <a href="#maintenance">Maintenance</a>
+          </nav>
+        </div>
+        <div class="nav-group">
+          <p class="nav-group-title">Advanced</p>
+          <nav>
+            <a href="#advanced">Overview</a>
+            <a href="#omnigent">Omnigent</a>
+            <a href="#routing">Tool routing</a>
+            <a href="#run-omnigent">Run via Omnigent</a>
+            <a href="#mobile">Phone access</a>
+            <a href="#help">More docs</a>
+          </nav>
+        </div>
       </div>
-    </section>
+    </aside>
 
-    <section class="topic" id="why">
-      <p class="step">Why</p>
-      <h2>Completion needs evidence, not confidence</h2>
-      <p>Short coding tasks fit in one conversation. Long work does not. Context resets, parallel edits, retries, and self-approved implementations make chat state an unreliable source of truth.</p>
-      <div class="roles benefits">
-        <article><strong>Stable contract</strong><span>Observable Acceptance Checks decide what done means.</span></article>
-        <article><strong>Independent QA</strong><span>The coding tool does not approve its own work when another tool is available.</span></article>
-        <article><strong>Integrated proof</strong><span>Checks run again after merging into current <code>main</code>.</span></article>
-        <article><strong>Durable state</strong><span>Claims, attempts, evidence, repairs, and input requests survive sessions.</span></article>
-      </div>
-    </section>
+    <main class="content" id="main">
+      <div class="content-inner">
 
-    <section class="topic" id="architecture">
-      <p class="step">Framework</p>
-      <h2>One workflow, replaceable tools</h2>
-      <div class="roles">
-        <article><strong>Harness</strong><span>The specification, scheduler, QA loop, integration policy, durable state, and Goal Review.</span></article>
-        <article><strong><a href="https://code.claude.com/docs/en/overview">Claude Code</a> / <a href="https://developers.openai.com/codex/">Codex</a> / <a href="https://opencode.ai/">OpenCode</a> / <a href="https://cursor.com/docs/cli/overview">Cursor Agent</a> / Pi</strong><span>Tools that plan, code, test, and review through the same workflow.</span></article>
-        <article><strong><a href="https://omnigent.ai/">Omnigent</a></strong><span>An optional control surface and tool/model router. It is not another scheduler.</span></article>
-        <article><strong><a href="https://tailscale.com/">Tailscale</a></strong><span>An optional private transport for reaching Omnigent from another device.</span></article>
-      </div>
-      <h3>Bounded contexts</h3>
-      <p>Only the pipeline is required. Everything else is optional packaging or control.</p>
-      <pre class="mermaid">
+        <section class="hero" id="top">
+          <div>
+            <p class="kicker">Open-source harness for AI coding</p>
+            <h1>Checked delivery for long runs.</h1>
+            <p class="lead">You describe a goal once. The harness keeps the contract, splits coding from QA, merges safely, and proves completion on <code>main</code> — even if you close the chat overnight.</p>
+            <p class="lead">Think of it as hiring a project manager (deterministic orchestrator) who delegates to specialists (agents) while you stay the product owner (skills in chat).</p>
+          </div>
+          <img src="https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/assets/banner.svg" alt="Harness Engineering banner">
+        </section>
+
+        <section class="topic" id="why">
+          <p class="step">Why</p>
+          <h2>Completion needs evidence, not confidence</h2>
+          <p>Short coding tasks fit in one conversation. Long work does not. Context resets, parallel edits, retries, and self-approved implementations make chat state an unreliable source of truth.</p>
+          <p>The harness externalizes truth into files you can inspect: a specification, a queue, journals, and machine-readable run state under <code>.git/</code>.</p>
+          <div class="card-grid benefits">
+            <article><strong>Stable contract</strong><span>Observable Acceptance Checks decide what done means — not vibes.</span></article>
+            <article><strong>Independent QA</strong><span>The coding tool does not approve its own work when another tool is available.</span></article>
+            <article><strong>Integrated proof</strong><span>Checks run again after merging into current <code>main</code>.</span></article>
+            <article><strong>Durable state</strong><span>Claims, attempts, evidence, repairs, and input requests survive sessions.</span></article>
+          </div>
+        </section>
+
+        <section class="topic" id="architecture">
+          <p class="step">Framework</p>
+          <h2>One workflow, replaceable tools</h2>
+          <p>Only the <strong>workflow pipeline</strong> is required. Everything else is optional packaging or control.</p>
+          <div class="card-grid">
+            <article><strong>Harness</strong><span>Specification, scheduler, QA loop, integration policy, durable state, and Goal Review.</span></article>
+            <article><strong><a href="https://code.claude.com/docs/en/overview">Claude Code</a> / <a href="https://developers.openai.com/codex/">Codex</a> / <a href="https://opencode.ai/">OpenCode</a> / <a href="https://cursor.com/docs/cli/overview">Cursor Agent</a> / Pi</strong><span>Hosts that plan, code, test, and review through the same workflow.</span></article>
+            <article><strong><a href="https://omnigent.ai/">Omnigent</a></strong><span>Optional control surface and tool/model router — not another scheduler.</span></article>
+            <article><strong><a href="https://tailscale.com/">Tailscale</a></strong><span>Optional private transport for reaching Omnigent from another device.</span></article>
+          </div>
+
+          <h3>Bounded contexts</h3>
+          <div class="mermaid-wrap">
+            <pre class="mermaid">
 flowchart TB
-  subgraph MKT["Plugin marketplace — optional except install"]
+  subgraph MKT["Plugin marketplace"]
     INS[install.sh / manifests]
   end
-  subgraph PIPE["Workflow pipeline — the harness"]
+  subgraph PIPE["Workflow pipeline"]
     SPEC[project_specs.xml]
     QUEUE[feature_list.json]
     ORCH[orchestrator.mjs]
-    CLAIM[claim.sh]
+    ATT[attempt-machine.mjs]
+    CLAIM[claim-lease.mjs]
   end
-  subgraph SUP["Supervisor control — long runs"]
+  subgraph SUP["Supervisor control"]
     HC[harness-control.mjs]
   end
   subgraph RT["Optional routing"]
     OMNI[Omnigent + roles.json]
-    MCP[MCP servers]
   end
   INS --> PIPE
   HC --> ORCH
+  ORCH --> ATT
+  ORCH --> CLAIM
+  HC --> CLAIM
   OMNI -.-> ORCH
-      </pre>
-      <pre class="mermaid">
-sequenceDiagram
-  participant U as You
-  participant SK as Skill
-  participant OR as Orchestrator
-  participant CA as coding-agent
-  participant QA as qa-agent
-  U->>SK: /harness:planner goal
-  SK->>OR: reconcile + claim
-  OR->>CA: implement Work Item
-  CA->>QA: isolated QA
-  alt defect
-    QA-->>OR: Defect Report
-    OR->>CA: Repair Plan + retry
-  else pass
-    QA->>OR: Checkpoint
-    OR->>OR: merge + Integrated Verification
+            </pre>
+          </div>
+
+          <h3>Who does what</h3>
+          <div class="mermaid-wrap">
+            <pre class="mermaid">
+flowchart LR
+  subgraph You["You"]
+    SK[Skills in chat]
   end
-  OR->>QA: Goal Review on main
-      </pre>
-    </section>
+  subgraph Engine["Deterministic engine"]
+    HC[harness-control]
+    OR[orchestrator]
+  end
+  subgraph Workers["LLM workers"]
+    C[coding-agent]
+    Q[qa-agent]
+    I[initializer]
+  end
+  SK -->|writes spec| SPEC[(project_specs.xml)]
+  SK --> HC
+  SK --> OR
+  HC --> OR
+  OR --> C
+  OR --> Q
+  OR -.-> I
+            </pre>
+          </div>
+          <p class="note">The orchestrator has no LLM. It sequences phases, owns retries, and spawns agents. The supervisor admits parallel workers and relays progress — it does not own Attempt policy.</p>
+        </section>
 
-    <section class="topic" id="language">
-      <p class="step">Ubiquitous language</p>
-      <h2>Skills vs agents</h2>
-      <p><strong>Skills</strong> are chat commands you type (<code>/harness:planner</code>, <code>/harness:generator</code>, …).
-      They live under <code>skills/</code> and prepare specs or start runs.
-      <strong>Agents</strong> are workers the orchestrator spawns per phase (<code>coding-agent</code>, <code>qa-agent</code>, <code>initializer</code>).
-      You never invoke agents directly.</p>
-      <table>
-        <thead><tr><th>You want to…</th><th>Skill</th><th>Agent (automatic)</th></tr></thead>
-        <tbody>
-          <tr><td>Describe observable behavior</td><td><code>/harness:planner</code></td><td>—</td></tr>
-          <tr><td>Map an existing repo</td><td><code>/harness:setup</code></td><td>initializer (scaffold only)</td></tr>
-          <tr><td>Build or resume work</td><td><code>/harness:generator</code></td><td>coding-agent → qa-agent</td></tr>
-          <tr><td>Run overnight with progress every ~20 min</td><td><code>/harness:supervisor</code></td><td>orchestrator workers via harness-control</td></tr>
-          <tr><td>Re-audit integrated main</td><td><code>/harness:evaluator</code></td><td>Goal Review agent</td></tr>
-        </tbody>
-      </table>
-      <h3>Core terms</h3>
-      <div class="roles" aria-label="Core terms">
-        <article><strong>Project Goal</strong><span>What “done” means — written in <code>project_specs.xml</code>.</span></article>
-        <article><strong>Acceptance Check</strong><span>One observable behavior with an ID (e.g. <code>AC-001</code>).</span></article>
-        <article><strong>Work Item</strong><span>Executable queue entry in <code>feature_list.json</code>.</span></article>
-        <article><strong>Context</strong><span>Work Items built together in one branch/worktree.</span></article>
-        <article><strong>Claim Lease</strong><span>Proof that only one worker owns a context.</span></article>
-        <article><strong>Attempt</strong><span>One code → QA → (maybe) integrate cycle.</span></article>
-        <article><strong>Repair Plan</strong><span>Diagnosis + instructions after a QA defect.</span></article>
-        <article><strong>Goal Review</strong><span>Final independent audit of the whole spec on <code>main</code>.</span></article>
-        <article><strong>Input Request</strong><span>Durable “need your decision” with evidence and choices.</span></article>
-      </div>
-      <p class="files">Full glossary: <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/CONTEXT.md">CONTEXT.md</a> on GitHub.</p>
-    </section>
+        <section class="topic" id="language">
+          <p class="step">Ubiquitous language</p>
+          <h2>Skills vs agents</h2>
+          <p><strong>Skills</strong> are chat commands you type (<code>/harness:planner</code>, <code>/harness:generator</code>, …).
+          They live under <code>skills/</code> and prepare specs or start runs.
+          <strong>Agents</strong> are workers the orchestrator spawns per phase (<code>coding-agent</code>, <code>qa-agent</code>, <code>initializer</code>).
+          You never invoke agents directly.</p>
+          <table>
+            <thead><tr><th>You want to…</th><th>Skill</th><th>Agent (automatic)</th></tr></thead>
+            <tbody>
+              <tr><td>Describe observable behavior</td><td><code>/harness:planner</code></td><td>—</td></tr>
+              <tr><td>Map an existing repo</td><td><code>/harness:setup</code></td><td>initializer (scaffold only)</td></tr>
+              <tr><td>Build or resume work</td><td><code>/harness:generator</code></td><td>coding-agent → qa-agent</td></tr>
+              <tr><td>Run overnight with progress every ~20 min</td><td><code>/harness:supervisor</code></td><td>orchestrator workers via harness-control</td></tr>
+              <tr><td>Re-audit integrated main</td><td><code>/harness:evaluator</code></td><td>Goal Review agent</td></tr>
+            </tbody>
+          </table>
+          <h3>Core terms</h3>
+          <div class="card-grid" aria-label="Core terms">
+            <article><strong>Project Goal</strong><span>What “done” means — written in <code>project_specs.xml</code>.</span></article>
+            <article><strong>Acceptance Check</strong><span>One observable behavior with an ID (e.g. <code>AC-001</code>).</span></article>
+            <article><strong>Work Item</strong><span>Executable queue entry in <code>feature_list.json</code>.</span></article>
+            <article><strong>Context</strong><span>Work Items built together in one branch/worktree.</span></article>
+            <article><strong>Claim Lease</strong><span>Proof that only one worker owns a context.</span></article>
+            <article><strong>Attempt</strong><span>One code → QA → (maybe) integrate cycle.</span></article>
+            <article><strong>Repair Plan</strong><span>Diagnosis + instructions after a QA defect.</span></article>
+            <article><strong>Goal Review</strong><span>Final independent audit of the whole spec on <code>main</code>.</span></article>
+            <article><strong>Input Request</strong><span>Durable “need your decision” with evidence and choices.</span></article>
+          </div>
+          <p class="files">Full glossary: <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/CONTEXT.md">CONTEXT.md</a> on GitHub.</p>
+        </section>
 
-    <section class="topic" id="workflow">
-      <p class="step">How the workflow runs</p>
-      <h2>Seven stages, idea to reviewed</h2>
-      <ol>
-        <li><strong>Specify:</strong> planner or setup writes the Project Goal and observable Acceptance Checks.</li>
-        <li><strong>Reconcile:</strong> generator maps every check into an append-only Work Item.</li>
-        <li><strong>Claim:</strong> a ready context receives a lease, its own Git branch and worktree, a port (so parallel dev servers don't clash), and Run State.</li>
-        <li><strong>Build and inspect:</strong> coding implements; independent QA exercises a real boundary.</li>
-        <li><strong>Repair:</strong> failures produce evidence and a Repair Plan before a bounded retry.</li>
-        <li><strong>Integrate:</strong> passing work merges, then its checks run again on current <code>main</code>.</li>
-        <li><strong>Review the goal:</strong> an independent Goal Review verifies the complete specification.</li>
-      </ol>
-      <p class="note">Multiple sessions may claim independent contexts. Closing a session does not erase work: the next generator resumes durable state.</p>
-      <p class="files">Terminology: see <a href="#language">Skills vs agents</a> and <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/CONTEXT.md">CONTEXT.md</a>.</p>
-    </section>
-
-    <section class="topic" id="prerequisites">
-      <p class="step">Before installation</p>
-      <h2>Install the runtime and one coding tool</h2>
-      <p>The repository machine needs <a href="https://git-scm.com/">Git</a>, <a href="https://www.gnu.org/software/bash/">Bash</a>, <strong><a href="https://nodejs.org/">Node.js 18 or newer</a></strong>, and one authenticated tool: <a href="https://code.claude.com/docs/en/overview">Claude Code</a>, <a href="https://developers.openai.com/codex/">Codex</a>, <a href="https://opencode.ai/">OpenCode</a>, or Pi. Node.js runs setup inventory, reconciliation, orchestration, and supervisor commands.</p>
-      <pre><code>git --version
+        <section class="topic" id="prerequisites">
+          <p class="step">Before installation</p>
+          <h2>Install the runtime and one coding tool</h2>
+          <p>The repository machine needs <a href="https://git-scm.com/">Git</a>, <a href="https://www.gnu.org/software/bash/">Bash</a>, <strong><a href="https://nodejs.org/">Node.js 18 or newer</a></strong>, and one authenticated tool: <a href="https://code.claude.com/docs/en/overview">Claude Code</a>, <a href="https://developers.openai.com/codex/">Codex</a>, <a href="https://opencode.ai/">OpenCode</a>, or Pi. Node.js runs setup inventory, reconciliation, orchestration, and supervisor commands.</p>
+          <pre><code>git --version
 bash --version
 node --version
 claude --version  # or: codex --version / opencode --version / pi --version</code></pre>
-      <p class="files"><strong>Optional:</strong> <a href="https://omnigent.ai/">Omnigent</a> for control and routing; <a href="https://tailscale.com/">Tailscale</a> for private phone access. The installer adds <code>jq</code> when needed.</p>
-    </section>
+          <p class="files"><strong>Optional:</strong> <a href="https://omnigent.ai/">Omnigent</a> for control and routing; <a href="https://tailscale.com/">Tailscale</a> for private phone access. The installer adds <code>jq</code> when needed.</p>
+        </section>
 
-    <section class="topic" id="install">
-      <p class="step">Step 1</p>
-      <h2>Install the harness</h2>
-      <p>Run once on the machine that holds the Git repository. The checklist keeps <code>harness</code> selected by default.</p>
-      <pre><code>curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh</code></pre>
-      <p>Native Windows users can run <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/install.ps1"><code>install.ps1</code></a>. Re-running either installer refreshes installed content safely.</p>
-      <div class="output"><strong>Verify</strong><code>node --version</code><code>claude --version</code><code>codex --version</code><code>opencode --version</code><code>pi --version</code></div>
-    </section>
+        <section class="topic" id="install">
+          <p class="step">Step 1</p>
+          <h2>Install the harness</h2>
+          <p>Run once on the machine that holds the Git repository. The checklist keeps <code>harness</code> selected by default.</p>
+          <pre><code>curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh</code></pre>
+          <p>Native Windows users can run <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/install.ps1"><code>install.ps1</code></a>. Re-running either installer refreshes installed content safely.</p>
+          <div class="output"><strong>Verify</strong><code>node --version</code><code>claude --version</code><code>codex --version</code><code>opencode --version</code><code>pi --version</code></div>
+        </section>
 
-    <section class="topic compact-table" id="commands">
-      <p class="step">Step 2</p>
-      <h2>Use the command name for your tool</h2>
-      <p>Claude Code and Codex use the plugin's colon form. OpenCode and Cursor Agent use hyphenated names. Pi registers each skill's own name as a <code>/skill:</code> command.</p>
-      <table>
-        <thead><tr><th>Task</th><th>Claude Code / Codex</th><th>OpenCode</th><th>Cursor Agent</th><th>Pi</th></tr></thead>
-        <tbody>
-          <tr><td>Set up existing code</td><td><code>/harness:setup</code></td><td><code>/harness-setup</code></td><td><code>/harness-setup</code></td><td><code>/skill:setup</code></td></tr>
-          <tr><td>Plan a new goal</td><td><code>/harness:planner</code></td><td><code>/harness-planner</code></td><td><code>/harness-planner</code></td><td><code>/skill:planner</code></td></tr>
-          <tr><td>Build or resume</td><td><code>/harness:generator</code></td><td><code>/harness-generator</code></td><td><code>/harness-generator</code></td><td><code>/skill:generator</code></td></tr>
-          <tr><td>Review the goal</td><td><code>/harness:evaluator</code></td><td><code>/harness-evaluator</code></td><td><code>/harness-evaluator</code></td><td><code>/skill:evaluator</code></td></tr>
-          <tr><td>Operate supervisor</td><td><code>/harness:supervisor</code></td><td><code>/harness-supervisor</code></td><td><code>/harness-supervisor</code></td><td><code>/skill:supervisor</code></td></tr>
-          <tr><td>Capture lessons</td><td><code>/harness:learning-loop</code></td><td><code>/harness-learning-loop</code></td><td><code>/harness-learning-loop</code></td><td><code>/skill:learning-loop</code></td></tr>
-          <tr><td>Back up configuration</td><td><code>/harness:update-project</code></td><td><code>/harness-update-project</code></td><td><code>/harness-update-project</code></td><td><code>/skill:update-project</code></td></tr>
-        </tbody>
-      </table>
-      <p class="files"><strong>Grilling:</strong> planner uses the grilling skill internally; it is not a separate harness workflow command. A user can still activate an installed grilling skill directly by asking “grill me.”</p>
-    </section>
+        <section class="topic compact-table" id="commands">
+          <p class="step">Step 2</p>
+          <h2>Use the command name for your tool</h2>
+          <p>Claude Code and Codex use the plugin's colon form. OpenCode and Cursor Agent use hyphenated names. Pi registers each skill's own name as a <code>/skill:</code> command.</p>
+          <table>
+            <thead><tr><th>Task</th><th>Claude Code / Codex</th><th>OpenCode</th><th>Cursor Agent</th><th>Pi</th></tr></thead>
+            <tbody>
+              <tr><td>Set up existing code</td><td><code>/harness:setup</code></td><td><code>/harness-setup</code></td><td><code>/harness-setup</code></td><td><code>/skill:setup</code></td></tr>
+              <tr><td>Plan a new goal</td><td><code>/harness:planner</code></td><td><code>/harness-planner</code></td><td><code>/harness-planner</code></td><td><code>/skill:planner</code></td></tr>
+              <tr><td>Build or resume</td><td><code>/harness:generator</code></td><td><code>/harness-generator</code></td><td><code>/harness-generator</code></td><td><code>/skill:generator</code></td></tr>
+              <tr><td>Review the goal</td><td><code>/harness:evaluator</code></td><td><code>/harness-evaluator</code></td><td><code>/harness-evaluator</code></td><td><code>/skill:evaluator</code></td></tr>
+              <tr><td>Operate supervisor</td><td><code>/harness:supervisor</code></td><td><code>/harness-supervisor</code></td><td><code>/harness-supervisor</code></td><td><code>/skill:supervisor</code></td></tr>
+              <tr><td>Capture lessons</td><td><code>/harness:learning-loop</code></td><td><code>/harness-learning-loop</code></td><td><code>/harness-learning-loop</code></td><td><code>/skill:learning-loop</code></td></tr>
+              <tr><td>Back up configuration</td><td><code>/harness:update-project</code></td><td><code>/harness-update-project</code></td><td><code>/harness-update-project</code></td><td><code>/skill:update-project</code></td></tr>
+            </tbody>
+          </table>
+          <p class="files"><strong>Grilling:</strong> planner uses the grilling skill internally; it is not a separate harness workflow command. A user can still activate an installed grilling skill directly by asking “grill me.”</p>
+        </section>
 
-    <section class="topic" id="start">
-      <p class="step">Step 3</p>
-      <h2>Choose the new-project or existing-code path</h2>
-      <table>
-        <thead><tr><th>You have…</th><th>Start with</th></tr></thead>
-        <tbody>
-          <tr><td>A new idea / new product goal</td><td><code>/harness:planner &lt;goal&gt;</code></td></tr>
-          <tr><td>An existing repo + a new goal to build</td><td><code>/harness:planner &lt;goal&gt;</code> (existing-codebase mode)</td></tr>
-          <tr><td>An existing working app, just adopting the harness (no new goal)</td><td><code>/harness:setup</code> (no args)</td></tr>
-          <tr><td>A reviewed <code>project_specs.xml</code>, ready to build/resume</td><td><code>/harness:generator</code></td></tr>
-          <tr><td>A long unattended run with monitoring/pause/resume</td><td><code>/harness:supervisor</code></td></tr>
-          <tr><td>To independently re-audit an already-integrated main</td><td><code>/harness:evaluator</code></td></tr>
-        </tbody>
-      </table>
-      <p>Type each <code>/harness:...</code> command below into your coding tool's chat session, not a terminal.</p>
-      <div class="paths">
-        <article>
-          <h3>New project or new goal</h3>
-          <p>Give the planner behavior that can be observed and tested.</p>
-          <pre><code>/harness:planner Build a notes app where a user can publish a note and find it after reloading.</code></pre>
-          <p>Review the specification, then build it:</p>
-          <pre><code>/harness:generator</code></pre>
-          <p>Generator asks whether to build <strong>1 task</strong>, <strong>a set</strong>, or <strong>All</strong> — answer <strong>All</strong> for a new project. It is done when the Goal Review passes and every check is marked complete.</p>
-        </article>
-        <article>
-          <h3>Existing codebase</h3>
-          <p>Run setup from the Git root with no goal, feature, scope, or other text. It derives scope from the repository and never changes application code.</p>
-          <pre><code>/harness:setup</code></pre>
-          <p>Review the specification. Setup is complete; it does not validate every feature. To request an audit, run generator and select one task, a set, or all.</p>
-          <pre><code>/harness:generator</code></pre>
-        </article>
-      </div>
-      <p>Setup inventories technologies, reports code/docs contradictions, creates the execution queue, and stops before implementation. An optional audit uses verify-first mode for only the selected work, so passing checks are recorded without a rewrite.</p>
-      <p class="files"><strong>OpenCode / Cursor:</strong> substitute <code>/harness-planner</code>, <code>/harness-setup</code>, or <code>/harness-generator</code> using the command table above. <strong>Pi:</strong> substitute <code>/skill:planner</code>, <code>/skill:setup</code>, or <code>/skill:generator</code>.</p>
-    </section>
+        <section class="topic" id="start">
+          <p class="step">Step 3</p>
+          <h2>Choose the new-project or existing-code path</h2>
+          <table>
+            <thead><tr><th>You have…</th><th>Start with</th></tr></thead>
+            <tbody>
+              <tr><td>A new idea / new product goal</td><td><code>/harness:planner &lt;goal&gt;</code></td></tr>
+              <tr><td>An existing repo + a new goal to build</td><td><code>/harness:planner &lt;goal&gt;</code> (existing-codebase mode)</td></tr>
+              <tr><td>An existing working app, just adopting the harness (no new goal)</td><td><code>/harness:setup</code> (no args)</td></tr>
+              <tr><td>A reviewed <code>project_specs.xml</code>, ready to build/resume</td><td><code>/harness:generator</code></td></tr>
+              <tr><td>A long unattended run with monitoring/pause/resume</td><td><code>/harness:supervisor</code></td></tr>
+              <tr><td>To independently re-audit an already-integrated main</td><td><code>/harness:evaluator</code></td></tr>
+            </tbody>
+          </table>
+          <p>Type each <code>/harness:...</code> command below into your coding tool's chat session, not a terminal.</p>
+          <div class="paths">
+            <article>
+              <h3>New project or new goal</h3>
+              <p>Give the planner behavior that can be observed and tested.</p>
+              <pre><code>/harness:planner Build a notes app where a user can publish a note and find it after reloading.</code></pre>
+              <p>Review the specification, then build it:</p>
+              <pre><code>/harness:generator</code></pre>
+              <p>Generator asks whether to build <strong>1 task</strong>, <strong>a set</strong>, or <strong>All</strong> — answer <strong>All</strong> for a new project. It is done when the Goal Review passes and every check is marked complete.</p>
+            </article>
+            <article>
+              <h3>Existing codebase</h3>
+              <p>Run setup from the Git root with no goal, feature, scope, or other text. It derives scope from the repository and never changes application code.</p>
+              <pre><code>/harness:setup</code></pre>
+              <p>Review the specification. Setup is complete; it does not validate every feature. To request an audit, run generator and select one task, a set, or all.</p>
+              <pre><code>/harness:generator</code></pre>
+            </article>
+          </div>
+          <p>Setup inventories technologies, reports code/docs contradictions, creates the execution queue, and stops before implementation. An optional audit uses verify-first mode for only the selected work, so passing checks are recorded without a rewrite.</p>
+          <p class="files"><strong>OpenCode / Cursor:</strong> substitute <code>/harness-planner</code>, <code>/harness-setup</code>, or <code>/harness-generator</code> using the command table above. <strong>Pi:</strong> substitute <code>/skill:planner</code>, <code>/skill:setup</code>, or <code>/skill:generator</code>.</p>
+        </section>
 
-    <section class="topic" id="worked-example">
-      <p class="step">Worked example</p>
-      <h2>Audit one behavior in an existing notes application</h2>
-      <p>Assume the repository already contains a notes application. Users can publish notes, but you want the harness mapped before deciding whether any existing behavior needs verification.</p>
+        <!-- NEW: full journey -->
+        <section class="topic" id="journey">
+          <p class="step">From zero</p>
+          <h2>Create a project and delegate the entire build</h2>
+          <p class="lead">This is the story of a brand-new notes app — the same path works for any greenfield goal. You make product decisions; the harness handles scheduling, isolation, and proof.</p>
 
-      <h3>1. Setup maps the repository without testing every feature</h3>
-      <pre><code>cd /work/notes
-/harness:setup</code></pre>
-      <p>Setup reads the application, tests, manifests, configuration, and documentation. It produces the completion contract and queue, then stops. No coding tool launches and no Acceptance Check runs.</p>
+          <ol class="journey">
+            <li>
+              <strong>Install the plugin marketplace</strong>
+              <p><span class="you">You</span> run the installer once on the machine that holds Git.</p>
+              <p><span class="harness">Harness</span> registers skills for your coding tool. No project files yet.</p>
+            </li>
+            <li>
+              <strong>Create or open a Git repository</strong>
+              <p><span class="you">You</span> <code>git init</code> a folder (or clone an existing repo).</p>
+            </li>
+            <li>
+              <strong>Describe the product goal</strong>
+              <p><span class="you">You</span> type <code>/harness:planner Build a notes app where…</code></p>
+              <p><span class="harness">Planner skill</span> interviews you (grilling), then writes <code>project_specs.xml</code> — the append-only contract.</p>
+            </li>
+            <li>
+              <strong>Review the specification</strong>
+              <p><span class="you">You</span> read Acceptance Checks. Each one must be observable in a browser or via real HTTP.</p>
+              <p>Edits happen in chat (“change AC-002 to…”) until you are satisfied.</p>
+            </li>
+            <li>
+              <strong>Start the build</strong>
+              <p><span class="you">You</span> type <code>/harness:generator</code> and choose <strong>All</strong> contexts.</p>
+              <p><span class="agent">Initializer agent</span> maps checks → <code>feature_list.json</code>, creates <code>init.sh</code>, scaffolds the repo, commits to <code>main</code>. It never implements features.</p>
+            </li>
+            <li>
+              <strong>Claim isolated workspaces</strong>
+              <p><span class="harness">Claim lease</span> gives each context its own branch, worktree, port, and Run State file.</p>
+              <p>Parallel contexts do not step on each other.</p>
+            </li>
+            <li>
+              <strong>Delegate implementation</strong>
+              <p><span class="harness">Orchestrator</span> spawns <span class="agent">coding-agent</span> per Work Item (up to 3 Attempts).</p>
+              <p>Coding happens in the worktree — not on <code>main</code> directly.</p>
+            </li>
+            <li>
+              <strong>Independent QA</strong>
+              <p><span class="agent">qa-agent</span> exercises the same Acceptance Checks at a real boundary.</p>
+              <p>On defect: Defect Report → Repair Plan → next Attempt. On pass: ready to integrate.</p>
+            </li>
+            <li>
+              <strong>Integrate on main</strong>
+              <p><span class="harness">Orchestrator</span> merges the worktree branch and reruns checks on integrated <code>main</code> (Integrated Verification).</p>
+            </li>
+            <li>
+              <strong>Goal Review</strong>
+              <p>When every Work Item is integrated, <span class="agent">Goal Review agent</span> audits the whole Project Goal on <code>main</code>.</p>
+              <p><span class="you">You</span> get a durable completion record — or defects reopen specific items.</p>
+            </li>
+          </ol>
 
-      <div class="paths">
-        <article>
-          <h3>Specification excerpt</h3>
-          <pre><code>&lt;project_specification&gt;
+          <div class="mermaid-wrap">
+            <pre class="mermaid">
+sequenceDiagram
+  participant U as You
+  participant P as planner skill
+  participant G as generator skill
+  participant I as initializer
+  participant O as orchestrator
+  participant C as coding-agent
+  participant Q as qa-agent
+  U->>P: /harness:planner goal
+  P->>P: write project_specs.xml
+  U->>G: /harness:generator All
+  G->>I: scaffold (once)
+  I->>I: feature_list.json + init.sh
+  loop each Work Item, up to 3 Attempts
+    O->>C: implement in worktree
+    C->>Q: isolated QA
+    alt defect
+      Q-->>O: Repair Plan
+    else pass
+      O->>O: merge + Integrated Verification
+    end
+  end
+  O->>Q: Goal Review on main
+            </pre>
+          </div>
+        </section>
+
+        <section class="topic" id="delegate">
+          <p class="step">Delegation model</p>
+          <h2>You stay the product owner; the harness manages execution</h2>
+          <p>You never micromanage agents. You issue intent through skills; the deterministic engine decides when each specialist runs.</p>
+
+          <div class="phases">
+            <div class="phase">
+              <div class="phase-num">1</div>
+              <div>
+                <h3>You → Planner skill</h3>
+                <p>Natural-language goal becomes stable Acceptance Checks. Planner may grill one decision at a time.</p>
+                <p class="who"><em>You</em> decide product behavior · <strong>Planner</strong> writes <code>project_specs.xml</code></p>
+              </div>
+            </div>
+            <div class="phase">
+              <div class="phase-num">2</div>
+              <div>
+                <h3>You → Generator skill</h3>
+                <p>You pick scope: one task, a set, or all contexts. Generator reconciles spec ↔ queue and starts orchestrator workers.</p>
+                <p class="who"><em>You</em> choose scope · <strong>Initializer</strong> scaffolds once · <strong>Orchestrator</strong> schedules work</p>
+              </div>
+            </div>
+            <div class="phase">
+              <div class="phase-num">3</div>
+              <div>
+                <h3>Orchestrator → Coding agent</h3>
+                <p>Each Attempt sends a bounded prompt with Work Item steps, Repair Plan (if any), and evidence paths. Coding agent returns structured JSON verdict.</p>
+                <p class="who"><strong>Orchestrator</strong> owns retries · <strong>Coding agent</strong> implements in worktree only</p>
+              </div>
+            </div>
+            <div class="phase">
+              <div class="phase-num">4</div>
+              <div>
+                <h3>Orchestrator → QA agent</h3>
+                <p>QA never shares the coding session. It reruns Acceptance Checks independently and files Defect Reports with evidence.</p>
+                <p class="who"><strong>QA agent</strong> approves or rejects · <strong>Repair planning</strong> diagnoses root cause</p>
+              </div>
+            </div>
+            <div class="phase">
+              <div class="phase-num">5</div>
+              <div>
+                <h3>Orchestrator → Merge + Goal Review</h3>
+                <p>Integration merges to <code>main</code> and reruns checks. Goal Review is a separate mandatory pass over the whole spec.</p>
+                <p class="who"><em>You</em> answer Input Requests when blocked · <strong>Supervisor</strong> runs overnight with progress events</p>
+              </div>
+            </div>
+          </div>
+
+          <p class="note">For long runs, <code>/harness:supervisor</code> wraps the same orchestrator workers with a Resource Governor (memory, quota, concurrency) and durable Control Events every ~20 minutes.</p>
+        </section>
+
+        <section class="topic" id="workflow">
+          <p class="step">How the workflow runs</p>
+          <h2>Seven stages, idea to reviewed</h2>
+          <ol>
+            <li><strong>Specify:</strong> planner or setup writes the Project Goal and observable Acceptance Checks.</li>
+            <li><strong>Reconcile:</strong> generator maps every check into an append-only Work Item.</li>
+            <li><strong>Claim:</strong> a ready context receives a lease, its own Git branch and worktree, a port (so parallel dev servers don't clash), and Run State.</li>
+            <li><strong>Build and inspect:</strong> coding implements; independent QA exercises a real boundary.</li>
+            <li><strong>Repair:</strong> failures produce evidence and a Repair Plan before a bounded retry.</li>
+            <li><strong>Integrate:</strong> passing work merges, then its checks run again on current <code>main</code>.</li>
+            <li><strong>Review the goal:</strong> an independent Goal Review verifies the complete specification.</li>
+          </ol>
+          <p class="note">Multiple sessions may claim independent contexts. Closing a session does not erase work: the next generator resumes durable state.</p>
+          <p class="files">Terminology: see <a href="#language">Skills vs agents</a> and <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/CONTEXT.md">CONTEXT.md</a>.</p>
+        </section>
+
+        <section class="topic" id="phases">
+          <p class="step">Deep dive</p>
+          <h2>Each phase explained</h2>
+
+          <h3>1. Specify (planner / setup)</h3>
+          <p><strong>Planner</strong> turns your goal into <code>project_specs.xml</code>: Project Goal, technology stack, core features, and stable Acceptance Check IDs (<code>AC-001</code>, …). The file is append-only after first build — new work adds checks; old IDs never change.</p>
+          <p><strong>Setup</strong> does the same for an existing codebase: inventories tech, records contradictions, sets <code>&lt;mode&gt;existing-codebase&lt;/mode&gt;</code> for verify-first audits. Setup does not require a generator run and does not validate every feature.</p>
+
+          <h3>2. Reconcile</h3>
+          <p><code>reconcile.mjs</code> verifies every Acceptance Check maps to at least one Work Item and dependency order is acyclic. Reconciliation runs before every orchestrator start — a missing mapping blocks execution immediately.</p>
+
+          <h3>3. Scaffold (initializer, once)</h3>
+          <p>If <code>feature_list.json</code> is empty, the initializer creates the queue, <code>init.sh</code> (PORT-parameterized dev server), and project structure, then commits. Idempotent: a second run skips scaffolding.</p>
+
+          <h3>4. Claim lease</h3>
+          <p><code>claim-lease.mjs</code> atomically assigns a context: dedicated branch (<code>gen/&lt;context&gt;</code>), git worktree, free port, heartbeat, and <code>.git/harness-runs/&lt;context&gt;.json</code>. Only one live owner per context.</p>
+
+          <h3>5. Attempt loop (coding → QA → integrate)</h3>
+          <p><code>attempt-machine.mjs</code> runs up to <strong>3 Attempts</strong> per Work Item. Each Attempt: coding agent → QA agent → (if QA passed) merge + Integrated Verification. Operational failures (rate limits, crashes) backoff and retry without consuming the defect budget.</p>
+
+          <h3>6. Repair</h3>
+          <p>QA or integration defects produce a Defect Report (expected vs observed + evidence). Repair planning writes a bounded Repair Plan for the next coding Attempt. After 3 failed Attempts the context blocks for your guidance — it never auto-guesses.</p>
+
+          <h3>7. Goal Review</h3>
+          <p>After all Work Items show <code>integration: true</code>, Goal Review exercises every Acceptance Check and primary user journeys on integrated <code>main</code>. Defects can reopen linked Work Items (up to 2 reopenings per item).</p>
+
+          <div class="mermaid-wrap">
+            <pre class="mermaid">
+stateDiagram-v2
+  [*] --> Coding
+  Coding --> QA: implementation true
+  QA --> Integrate: qa true
+  QA --> Repair: defect
+  Integrate --> Passed: checks pass
+  Integrate --> Repair: defect
+  Repair --> Coding: attempt lt 3
+  Repair --> Blocked: attempt eq 3
+  Passed --> [*]
+  Blocked --> [*]: user guidance
+            </pre>
+          </div>
+        </section>
+
+        <section class="topic compact-table" id="files">
+          <p class="step">Files delivered</p>
+          <h2>State you can inspect and resume</h2>
+          <p>Every artifact has a job. Together they let a stranger (or future you) continue exactly where the run stopped.</p>
+          <table>
+            <thead><tr><th>Path</th><th>Purpose</th><th>Who writes it</th></tr></thead>
+            <tbody>
+              <tr><td><code>project_specs.xml</code></td><td>Project Goal, direction, stable Acceptance Checks.</td><td>Planner / setup</td></tr>
+              <tr><td><code>.harness-technology-inventory.json</code></td><td>Setup evidence for material technologies and contradictions.</td><td>Setup</td></tr>
+              <tr><td><code>feature_list.json</code></td><td>Dependency-aware queue and implementation, QA, integration proofs.</td><td>Initializer + orchestrator updates</td></tr>
+              <tr><td><code>init.sh</code></td><td>PORT-parameterized dev server startup for QA.</td><td>Initializer</td></tr>
+              <tr><td><code>harness-progress/</code></td><td>Human-readable journals by work context.</td><td>Orchestrator</td></tr>
+              <tr><td><code>.git/harness-runs/</code></td><td>Run State, routes, evidence per context.</td><td>Orchestrator</td></tr>
+              <tr><td><code>.git/generator-claims.json</code></td><td>Live Claim Leases for all contexts.</td><td>claim-lease.mjs</td></tr>
+              <tr><td><code>.git/harness-control/</code></td><td>Supervisor state, pending input, ordered events.</td><td>harness-control.mjs</td></tr>
+              <tr><td><code>.harness/roles.json</code></td><td>Optional Omnigent tool/model routing.</td><td>You (optional)</td></tr>
+              <tr><td><code>.harness/projects.json</code></td><td>Optional monorepo project registry.</td><td>Setup</td></tr>
+            </tbody>
+          </table>
+          <p>The queue flags are separate proofs:</p>
+          <ul>
+            <li><code>implementation</code> means coding completed.</li>
+            <li><code>qa</code> means isolated QA passed.</li>
+            <li><code>integration</code> means the behavior passed after merging.</li>
+          </ul>
+          <p class="files">This table is state written inside a project you ran the harness on. Running <code>/harness:update-project</code> on <em>this</em> repository instead writes <code>config/settings.json</code>, <code>config/mcp.json</code>, and <code>config/home/</code> — see <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/docs/backup-sync.md">Backup</a> for their format.</p>
+        </section>
+
+        <section class="topic" id="spec-format">
+          <p class="step">Format</p>
+          <h2>project_specs.xml — the completion contract</h2>
+          <p>The specification is the source of truth for <em>what</em> done means. Work Items are derived from it; they never replace it.</p>
+
+          <h3>Key sections</h3>
+          <table>
+            <thead><tr><th>Element</th><th>Role</th></tr></thead>
+            <tbody>
+              <tr><td><code>&lt;project_goal&gt;</code></td><td>One observable system-level outcome Goal Review evaluates directly.</td></tr>
+              <tr><td><code>&lt;mode&gt;</code></td><td><code>existing-codebase</code> enables verify-first audits; omit for greenfield.</td></tr>
+              <tr><td><code>&lt;core_features&gt;</code></td><td>Named areas — each area name becomes a <code>context</code> for parallel builds.</td></tr>
+              <tr><td><code>&lt;acceptance_checks&gt;</code></td><td>Stable IDs, observable descriptions, <code>depends_on</code> graph.</td></tr>
+              <tr><td><code>&lt;technology_stack&gt;</code></td><td>Ports, frameworks, conventions agents must follow.</td></tr>
+            </tbody>
+          </table>
+
+          <div class="format-block">
+            <header><strong>Minimal example</strong><span>— notes app excerpt</span></header>
+            <pre><code>&lt;project_specification&gt;
   &lt;project_name&gt;Notes&lt;/project_name&gt;
   &lt;mode&gt;existing-codebase&lt;/mode&gt;
   &lt;project_goal&gt;
@@ -257,10 +552,131 @@ claude --version  # or: codex --version / opencode --version / pi --version</cod
     &lt;/acceptance_check&gt;
   &lt;/acceptance_checks&gt;
 &lt;/project_specification&gt;</code></pre>
-        </article>
-        <article>
-          <h3>Queue excerpt</h3>
-          <pre><code>[
+          </div>
+          <p class="note"><strong>Append-only rule:</strong> after the first build, never edit or delete existing Acceptance Check IDs. Add new checks for new features; generator maps only the delta.</p>
+        </section>
+
+        <section class="topic" id="queue-format">
+          <p class="step">Format</p>
+          <h2>feature_list.json — the execution queue</h2>
+          <p>A flat JSON array. Each entry is a <strong>Work Item</strong>: the smallest vertical slice that can be coded, QA'd, and integrated independently.</p>
+
+          <div class="format-block">
+            <header><strong>Work Item shape</strong></header>
+            <pre><code>[
+  {
+    "id": "WI-AC-001",
+    "context": "notes",
+    "category": "functional",
+    "description": "Publish a note and find it after reload",
+    "steps": [
+      "Start app via init.sh",
+      "Publish a note with title and body",
+      "Reload the page",
+      "Confirm the same title and body appear"
+    ],
+    "acceptance_checks": ["AC-001"],
+    "depends_on": [],
+    "verify_first": true,
+    "implementation": false,
+    "qa": false,
+    "integration": false,
+    "retries": 0
+  }
+]</code></pre>
+          </div>
+
+          <h3>Field guide</h3>
+          <table>
+            <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
+            <tbody>
+              <tr><td><code>context</code></td><td>Build boundary — items in the same context share one worktree.</td></tr>
+              <tr><td><code>acceptance_checks</code></td><td>Which spec IDs this item proves.</td></tr>
+              <tr><td><code>depends_on</code></td><td>Other Work Item IDs that must be integrated first.</td></tr>
+              <tr><td><code>verify_first</code></td><td>Audit existing code before changing it (existing-codebase mode).</td></tr>
+              <tr><td><code>implementation</code> / <code>qa</code> / <code>integration</code></td><td>Three separate proofs — see <a href="#files">file index</a>.</td></tr>
+              <tr><td><code>retries</code></td><td>Goal Review reopen count for this item (not Attempt count).</td></tr>
+            </tbody>
+          </table>
+          <p class="files"><strong>Important:</strong> false queue flags mean “not yet proved,” not “the application is broken.” Setup records what could be audited; it does not schedule the audit.</p>
+        </section>
+
+        <section class="topic" id="runtime-state">
+          <p class="step">Runtime</p>
+          <h2>Durable state under .git/</h2>
+          <p>Machine-readable files survive chat loss. Human journals mirror the important transitions.</p>
+
+          <h3>Run State — <code>.git/harness-runs/&lt;context&gt;.json</code></h3>
+          <div class="format-block">
+            <header><strong>Typical fields</strong></header>
+            <pre><code>{
+  "status": "running",
+  "phase": "qa",
+  "attempt": 2,
+  "nextAction": "qa",
+  "currentFeatureId": "WI-AC-001",
+  "ownerPid": 12345,
+  "heartbeatEpoch": 1710000000,
+  "repairPlan": { "summary": "...", "actions": ["..."] }
+}</code></pre>
+          </div>
+          <p><code>status</code> may be <code>running</code>, <code>blocked</code>, <code>complete</code>, or <code>interrupted</code>. <code>nextAction</code> tells the next session exactly where to resume.</p>
+
+          <h3>Claim registry — <code>.git/generator-claims.json</code></h3>
+          <p>One object keyed by <code>&lt;projectId&gt;--&lt;context&gt;</code>. Tracks port, worktree path, owner PID, heartbeat, and blocked/stale status.</p>
+
+          <h3>Workflow journal — <code>harness-progress/&lt;context&gt;.md</code></h3>
+          <p>Append-only human log: Attempt outcomes, Defect Reports, Repair Plans, explicit Resumes. Read this first when something looks stuck.</p>
+
+          <h3>Evidence — <code>.git/harness-runs/evidence/&lt;context&gt;/</code></h3>
+          <p>Screenshots, HTTP captures, and agent logs referenced by journals and Defect Reports.</p>
+
+          <h3>Supervisor — <code>.git/harness-control/</code></h3>
+          <table>
+            <thead><tr><th>File</th><th>Contents</th></tr></thead>
+            <tbody>
+              <tr><td><code>state.json</code></td><td>Supervisor lease, active workers, retry queue, crash counts.</td></tr>
+              <tr><td><code>events.jsonl</code></td><td>Ordered Control Events (<code>run_completed</code>, progress, input_required).</td></tr>
+              <tr><td><code>responses/</code></td><td>Your answers to Input Requests (idempotent ack).</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section class="topic" id="worked-example">
+          <p class="step">Worked example</p>
+          <h2>Audit one behavior in an existing notes application</h2>
+          <p>Assume the repository already contains a notes application. Users can publish notes, but you want the harness mapped before deciding whether any existing behavior needs verification.</p>
+
+          <h3>1. Setup maps the repository without testing every feature</h3>
+          <pre><code>cd /work/notes
+/harness:setup</code></pre>
+          <p>Setup reads the application, tests, manifests, configuration, and documentation. It produces the completion contract and queue, then stops. No coding tool launches and no Acceptance Check runs.</p>
+
+          <div class="paths">
+            <article>
+              <h3>Specification excerpt</h3>
+              <pre><code>&lt;project_specification&gt;
+  &lt;project_name&gt;Notes&lt;/project_name&gt;
+  &lt;mode&gt;existing-codebase&lt;/mode&gt;
+  &lt;project_goal&gt;
+    Published notes remain available after reload.
+  &lt;/project_goal&gt;
+  &lt;acceptance_checks&gt;
+    &lt;acceptance_check
+      id="AC-001"
+      context="notes"
+      category="functional"
+      depends_on=""&gt;
+      &lt;description&gt;
+        Publish a note, reload, and observe the same title and text.
+      &lt;/description&gt;
+    &lt;/acceptance_check&gt;
+  &lt;/acceptance_checks&gt;
+&lt;/project_specification&gt;</code></pre>
+            </article>
+            <article>
+              <h3>Queue excerpt</h3>
+              <pre><code>[
   {
     "id": "WI-AC-001",
     "context": "notes",
@@ -272,79 +688,53 @@ claude --version  # or: codex --version / opencode --version / pi --version</cod
     "retries": 0
   }
 ]</code></pre>
-        </article>
-      </div>
-      <p class="files"><strong>Important:</strong> false queue flags mean “not yet proved,” not “the application is broken.” Setup records what could be audited; it does not schedule the audit.</p>
+            </article>
+          </div>
 
-      <h3>2. The user opts into one scoped audit</h3>
-      <pre><code>/harness:generator</code></pre>
-      <p>When generator asks for scope, choose <strong>1 task</strong> and select <code>WI-AC-001</code>. Verify-first mode exercises only that selected behavior before deciding whether code must change.</p>
-      <div class="checks">
-        <article><span>A</span><div><strong>If the note survives reload</strong><p>Coding records the existing implementation as proved without editing it. Independent QA repeats the journey, integration verification repeats it on <code>main</code>, and the three queue flags become true.</p></div></article>
-        <article><span>B</span><div><strong>If the note disappears</strong><p>QA records the expected note, the missing result, and evidence. Repair planning identifies the persistence failure; coding fixes that root cause, then QA and integrated verification rerun the same Acceptance Check.</p></div></article>
-      </div>
-      <p>The journal at <code>harness-progress/notes.md</code> explains the attempt. Machine-readable Run State and evidence remain under <code>.git/harness-runs/</code>. Other mapped Work Items stay untouched.</p>
+          <h3>2. The user opts into one scoped audit</h3>
+          <pre><code>/harness:generator</code></pre>
+          <p>When generator asks for scope, choose <strong>1 task</strong> and select <code>WI-AC-001</code>. Verify-first mode exercises only that selected behavior before deciding whether code must change.</p>
+          <div class="checks">
+            <article><span>A</span><div><strong>If the note survives reload</strong><p>Coding records the existing implementation as proved without editing it. Independent QA repeats the journey, integration verification repeats it on <code>main</code>, and the three queue flags become true.</p></div></article>
+            <article><span>B</span><div><strong>If the note disappears</strong><p>QA records the expected note, the missing result, and evidence. Repair planning identifies the persistence failure; coding fixes that root cause, then QA and integrated verification rerun the same Acceptance Check.</p></div></article>
+          </div>
+          <p>The journal at <code>harness-progress/notes.md</code> explains the attempt. Machine-readable Run State and evidence remain under <code>.git/harness-runs/</code>. Other mapped Work Items stay untouched.</p>
 
-      <h3>3. New work still starts with planner</h3>
-      <pre><code>/harness:planner Add reversible note archiving.</code></pre>
-      <p>Planner loads grilling internally and may ask one decision at a time—for example, whether archived notes disappear from the default list and whether restoring them preserves their original URL. The resulting Acceptance Checks are appended; generator then builds only the new context you select.</p>
-    </section>
+          <h3>3. New work still starts with planner</h3>
+          <pre><code>/harness:planner Add reversible note archiving.</code></pre>
+          <p>Planner loads grilling internally and may ask one decision at a time—for example, whether archived notes disappear from the default list and whether restoring them preserves their original URL. The resulting Acceptance Checks are appended; generator then builds only the new context you select.</p>
+        </section>
 
-    <section class="topic" id="add-feature">
-      <p class="step">Add a feature</p>
-      <h2>Describe it to planner, then build only the new context</h2>
-      <p>Planner appends new Acceptance Checks to <code>project_specs.xml</code>; existing ones are never rewritten.</p>
-      <pre><code>/harness:planner Add reversible note archiving.</code></pre>
-      <p>Review the new Acceptance Checks, then build them:</p>
-      <pre><code>/harness:generator</code></pre>
-      <p>Generator lists every unbuilt context, including the new one — select it to build only the feature you just described. Existing, already-integrated contexts stay untouched.</p>
-    </section>
+        <section class="topic" id="add-feature">
+          <p class="step">Add a feature</p>
+          <h2>Describe it to planner, then build only the new context</h2>
+          <p>Planner appends new Acceptance Checks to <code>project_specs.xml</code>; existing ones are never rewritten.</p>
+          <pre><code>/harness:planner Add reversible note archiving.</code></pre>
+          <p>Review the new Acceptance Checks, then build them:</p>
+          <pre><code>/harness:generator</code></pre>
+          <p>Generator lists every unbuilt context, including the new one — select it to build only the feature you just described. Existing, already-integrated contexts stay untouched.</p>
+        </section>
 
-    <section class="topic compact-table" id="files">
-      <p class="step">Files delivered</p>
-      <h2>State you can inspect and resume</h2>
-      <table>
-        <thead><tr><th>Path</th><th>Purpose</th></tr></thead>
-        <tbody>
-          <tr><td><code>project_specs.xml</code></td><td>Project Goal, direction, and stable Acceptance Checks.</td></tr>
-          <tr><td><code>.harness-technology-inventory.json</code></td><td>Setup evidence for material technologies and contradictions.</td></tr>
-          <tr><td><code>feature_list.json</code></td><td>Dependency-aware queue and implementation, QA, and integration proofs.</td></tr>
-          <tr><td><code>harness-progress/</code></td><td>Human-readable journals by work context.</td></tr>
-          <tr><td><code>.git/harness-runs/</code></td><td>Attempts, Run State, routes, and evidence.</td></tr>
-          <tr><td><code>.git/harness-control/</code></td><td>Supervisor state, pending input, and ordered events.</td></tr>
-          <tr><td><code>.harness/roles.json</code></td><td>Optional Omnigent tool/model routing.</td></tr>
-          <tr><td><code>.harness/projects.json</code></td><td>Optional monorepo project registry.</td></tr>
-        </tbody>
-      </table>
-      <p>The queue flags are separate proofs:</p>
-      <ul>
-        <li><code>implementation</code> means coding completed.</li>
-        <li><code>qa</code> means isolated QA passed.</li>
-        <li><code>integration</code> means the behavior passed after merging.</li>
-      </ul>
-      <p class="files">This table is state written inside a project you ran the harness on. Running <code>/harness:update-project</code> on <em>this</em> repository instead writes <code>config/settings.json</code>, <code>config/mcp.json</code>, and <code>config/home/</code> — see <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/docs/backup-sync.md">Backup</a> for their format.</p>
-    </section>
-
-    <section class="topic" id="monorepo">
-      <p class="step">Monorepos</p>
-      <h2>Setup handles project boundaries automatically</h2>
-      <p>Run argument-free setup once from the Git root. It detects independently runnable or deployable projects, writes <code>.harness/projects.json</code>, asks which projects to initialize, and gives each selected project separate specifications, queues, journals, and Run State. Run later commands from the selected project directory; Git coordination stays repository-wide.</p>
-      <p>Advanced users may maintain the same registry manually before running setup:</p>
-      <pre><code>{
+        <section class="topic" id="monorepo">
+          <p class="step">Monorepos</p>
+          <h2>Setup handles project boundaries automatically</h2>
+          <p>Run argument-free setup once from the Git root. It detects independently runnable or deployable projects, writes <code>.harness/projects.json</code>, asks which projects to initialize, and gives each selected project separate specifications, queues, journals, and Run State. Run later commands from the selected project directory; Git coordination stays repository-wide.</p>
+          <p>Advanced users may maintain the same registry manually before running setup:</p>
+          <pre><code>{
   "projects": [
     {"id": "web", "path": "apps/web", "description": "Customer application"},
     {"id": "api", "path": "services/api", "description": "HTTP API"}
   ]
 }</code></pre>
-      <p class="files">Shared packages need no entry unless they run or deploy independently.</p>
-    </section>
+          <p class="files">Shared packages need no entry unless they run or deploy independently.</p>
+        </section>
 
-    <section class="topic" id="operate">
-      <p class="step">Monitor</p>
-      <h2>Watch, pause, resume, and verify a run</h2>
-      <p>From inside Claude Code, Codex, or OpenCode chat, run <code>/harness:supervisor</code> (<code>/harness-supervisor</code> on OpenCode) to drive the same operations without leaving the session.</p>
-      <p class="files">The script below is OpenCode's namespaced skill install — it exists only if OpenCode is installed, not for a Claude Code– or Codex–only machine.</p>
-      <pre><code>CONTROL=~/.config/opencode/skills/harness-supervisor/scripts/harness-control.mjs
+        <section class="topic" id="operate">
+          <p class="step">Monitor</p>
+          <h2>Watch, pause, resume, and verify a run</h2>
+          <p>From inside Claude Code, Codex, or OpenCode chat, run <code>/harness:supervisor</code> (<code>/harness-supervisor</code> on OpenCode) to drive the same operations without leaving the session.</p>
+          <p class="files">The script below is OpenCode's namespaced skill install — it exists only if OpenCode is installed, not for a Claude Code– or Codex–only machine.</p>
+          <pre><code>CONTROL=~/.config/opencode/skills/harness-supervisor/scripts/harness-control.mjs
 PROJECT=/absolute/path/to/project
 
 node "$CONTROL" status   --repo "$PROJECT"
@@ -353,66 +743,66 @@ node "$CONTROL" pause    --repo "$PROJECT"
 node "$CONTROL" resume   --repo "$PROJECT"
 node "$CONTROL" stop     --repo "$PROJECT"
 node "$CONTROL" events   --repo "$PROJECT" --consumer manual-check</code></pre>
-      <p>If work blocks, answer the exact Input Request through Omnigent or the supervisor's explicit response/resume path. Branches, worktrees, evidence, and Repair Plans remain available.</p>
-      <div class="checks">
-        <article><span>1</span><div><strong>Supervisor finished</strong><p><code>status: complete</code> and <code>supervisorPid: null</code>.</p></div></article>
-        <article><span>2</span><div><strong>Queue integrated</strong><p>Every item has <code>implementation</code>, <code>qa</code>, and <code>integration</code> set to true.</p></div></article>
-        <article><span>3</span><div><strong>Goal reviewed</strong><p>Goal Review has <code>status: complete</code> and <code>phase: complete</code>.</p></div></article>
-        <article><span>4</span><div><strong>Completion persisted</strong><p>Control events contain <code>kind: run_completed</code>.</p></div></article>
-      </div>
-      <pre><code>node ~/.config/opencode/skills/harness-generator/reconcile.mjs "$PROJECT" --check
+          <p>If work blocks, answer the exact Input Request through Omnigent or the supervisor's explicit response/resume path. Branches, worktrees, evidence, and Repair Plans remain available.</p>
+          <div class="checks">
+            <article><span>1</span><div><strong>Supervisor finished</strong><p><code>status: complete</code> and <code>supervisorPid: null</code>.</p></div></article>
+            <article><span>2</span><div><strong>Queue integrated</strong><p>Every item has <code>implementation</code>, <code>qa</code>, and <code>integration</code> set to true.</p></div></article>
+            <article><span>3</span><div><strong>Goal reviewed</strong><p>Goal Review has <code>status: complete</code> and <code>phase: complete</code>.</p></div></article>
+            <article><span>4</span><div><strong>Completion persisted</strong><p>Control events contain <code>kind: run_completed</code>.</p></div></article>
+          </div>
+          <pre><code>node ~/.config/opencode/skills/harness-generator/reconcile.mjs "$PROJECT" --check
 jq 'all(.[]; .implementation and .qa and .integration)' "$PROJECT/feature_list.json"
 node "$CONTROL" events --repo "$PROJECT" --consumer manual-check</code></pre>
-    </section>
+        </section>
 
-    <section class="topic" id="troubleshoot">
-      <p class="step">Troubleshooting</p>
-      <h2>Fix strange behavior</h2>
-      <p>Start with the live claims view, from the generator skill directory. As with <a href="#operate">monitoring</a>, this path assumes OpenCode is installed; it is not the same directory Claude Code or Codex install their plugin into.</p>
-      <pre><code>GEN=~/.config/opencode/skills/harness-generator
+        <section class="topic" id="troubleshoot">
+          <p class="step">Troubleshooting</p>
+          <h2>Fix strange behavior</h2>
+          <p>Start with the live claims view, from the generator skill directory. As with <a href="#operate">monitoring</a>, this path assumes OpenCode is installed; it is not the same directory Claude Code or Codex install their plugin into.</p>
+          <pre><code>GEN=~/.config/opencode/skills/harness-generator
 bash "$GEN/claim.sh" list "$PROJECT"</code></pre>
-      <p>Each line reports a context's tasks, port, status, worktree, phase, attempt, next action, owner/child process, and heartbeat. For any context that looks stuck, read <code>harness-progress/&lt;context&gt;.md</code> (journal), <code>.git/harness-runs/&lt;context&gt;.json</code> (Run State), and <code>.git/harness-runs/evidence/&lt;context&gt;/</code> (Evidence Artifacts).</p>
-      <table>
-        <thead><tr><th>Symptom</th><th>Action</th></tr></thead>
-        <tbody>
-          <tr><td>Build says <code>blocked</code></td><td>Three failed coding → QA → integration Attempts always stop for input — the harness never guesses past that point, and a <code>blocked</code> context never resumes on its own. Review the journal and evidence above, then explicitly resume with guidance: <code>bash "$GEN/claim.sh" resume "$PROJECT" "$CONTEXT" $$ force</code>, then rerun the orchestrator with a concise <code>--guidance "..."</code> describing how to proceed.</td></tr>
-          <tr><td>Looks done but won't complete</td><td>The supervisor is still draining its retry queue (up to 5 attempts per context) before it can declare the goal complete. Check <code>node "$CONTROL" status --repo "$PROJECT"</code> and wait, or answer any pending Input Request.</td></tr>
-          <tr><td>Worker crashed / stale lease</td><td>Recovery reclaims a <code>stale</code> context automatically once its heartbeat passes the lease timeout (<code>HARNESS_LEASE_TIMEOUT_SECONDS</code>, default 60s) — including one owned by a different host. Force only once you're sure the owning process is actually dead: <code>bash "$GEN/claim.sh" resume "$PROJECT" "$CONTEXT" $$ force</code></td></tr>
-        </tbody>
-      </table>
-      <p>To abandon a context instead of resuming it:</p>
-      <pre><code>bash "$GEN/claim.sh" release "$PROJECT" "$CONTEXT"</code></pre>
-    </section>
+          <p>Each line reports a context's tasks, port, status, worktree, phase, attempt, next action, owner/child process, and heartbeat. For any context that looks stuck, read <code>harness-progress/&lt;context&gt;.md</code> (journal), <code>.git/harness-runs/&lt;context&gt;.json</code> (Run State), and <code>.git/harness-runs/evidence/&lt;context&gt;/</code> (Evidence Artifacts).</p>
+          <table>
+            <thead><tr><th>Symptom</th><th>Action</th></tr></thead>
+            <tbody>
+              <tr><td>Build says <code>blocked</code></td><td>Three failed coding → QA → integration Attempts always stop for input — the harness never guesses past that point, and a <code>blocked</code> context never resumes on its own. Review the journal and evidence above, then explicitly resume with guidance: <code>bash "$GEN/claim.sh" resume "$PROJECT" "$CONTEXT" $$ force</code>, then rerun the orchestrator with a concise <code>--guidance "..."</code> describing how to proceed.</td></tr>
+              <tr><td>Looks done but won't complete</td><td>The supervisor is still draining its retry queue (up to 5 attempts per context) before it can declare the goal complete. Check <code>node "$CONTROL" status --repo "$PROJECT"</code> and wait, or answer any pending Input Request.</td></tr>
+              <tr><td>Worker crashed / stale lease</td><td>Recovery reclaims a <code>stale</code> context automatically once its heartbeat passes the lease timeout (<code>HARNESS_LEASE_TIMEOUT_SECONDS</code>, default 60s) — including one owned by a different host. Force only once you're sure the owning process is actually dead: <code>bash "$GEN/claim.sh" resume "$PROJECT" "$CONTEXT" $$ force</code></td></tr>
+            </tbody>
+          </table>
+          <p>To abandon a context instead of resuming it:</p>
+          <pre><code>bash "$GEN/claim.sh" release "$PROJECT" "$CONTEXT"</code></pre>
+        </section>
 
-    <section class="topic" id="advanced">
-      <p class="step">Advanced</p>
-      <h2>Optional: Omnigent control and routing</h2>
-      <p>Nothing below is required to plan, generate, validate, integrate, or review work — the harness runs completely without Omnigent. The following sections cover its control surface, tool/model routing, and private phone access.</p>
-    </section>
+        <section class="topic" id="advanced">
+          <p class="step">Advanced</p>
+          <h2>Optional: Omnigent control and routing</h2>
+          <p>Nothing below is required to plan, generate, validate, integrate, or review work — the harness runs completely without Omnigent. The following sections cover its control surface, tool/model routing, and private phone access.</p>
+        </section>
 
-    <section class="topic" id="omnigent">
-      <p class="step">Optional tool</p>
-      <h2>What <a href="https://omnigent.ai/">Omnigent</a> adds</h2>
-      <p>The harness runs directly through Claude Code, Codex, OpenCode, or Pi without Omnigent. When selected in the installer, Omnigent can:</p>
-      <ul>
-        <li>provide a local web/mobile control surface;</li>
-        <li>start and observe the detached supervisor;</li>
-        <li><strong>route coding, validation, repair planning, and Goal Review to ordered tool/model candidates;</strong></li>
-        <li>relay durable Input Requests.</li>
-      </ul>
-      <p>It does not own claims, retries, merges, QA policy, or Goal Review.</p>
-      <p>A project-local <code>.harness/roles.json</code> enables routing. Removing it returns to direct tool execution. The schema's existing <code>harness</code> key selects a Claude Code, Codex, OpenCode, or Pi adapter for each ordered candidate; the complete workflow remains the harness.</p>
-    </section>
+        <section class="topic" id="omnigent">
+          <p class="step">Optional tool</p>
+          <h2>What <a href="https://omnigent.ai/">Omnigent</a> adds</h2>
+          <p>The harness runs directly through Claude Code, Codex, OpenCode, or Pi without Omnigent. When selected in the installer, Omnigent can:</p>
+          <ul>
+            <li>provide a local web/mobile control surface;</li>
+            <li>start and observe the detached supervisor;</li>
+            <li><strong>route coding, validation, repair planning, and Goal Review to ordered tool/model candidates;</strong></li>
+            <li>relay durable Input Requests.</li>
+          </ul>
+          <p>It does not own claims, retries, merges, QA policy, or Goal Review.</p>
+          <p>A project-local <code>.harness/roles.json</code> enables routing. Removing it returns to direct tool execution. The schema's existing <code>harness</code> key selects a Claude Code, Codex, OpenCode, or Pi adapter for each ordered candidate; the complete workflow remains the harness.</p>
+        </section>
 
-    <section class="topic" id="routing">
-      <p class="step">Routing priority</p>
-      <h2>Ordered candidates with bounded fallback</h2>
-      <p>Each array runs from highest to lowest priority. The engine advances only after a rate limit, authentication failure, unavailable model, launch failure, or timeout. A successful QA response that finds a product defect enters the Repair Plan loop instead of trying another model.</p>
-      <p>Validation, integrated QA, and Goal Review first prefer a tool different from the actual coding tool. Configured order remains stable within the independent and same-tool groups. Every route and fallback reason is persisted.</p>
-      <p>A model that fails from an infra error or a repeated QA rejection is demoted to the back of its role list for the rest of the run, so the run self-heals instead of retrying the same broken candidate, and a coder that declines a Work Item falls through to the next candidate. The optional <code>noCredits</code> array is a free-tier fallback tried only once paid options are exhausted by infra/credit errors. Repair retries are bounded by <code>HARNESS_REPAIR_BUDGET</code> (default <code>2</code>).</p>
-      <p class="source"><strong>Full source:</strong> <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/omnigent/harness-engineering/roles.example.json">https://github.com/vinicius91carvalho/harness-engineering/blob/main/omnigent/harness-engineering/roles.example.json</a></p>
-      <p><strong>Why open-source models lead:</strong> DeepSeek, Kimi, GLM, and Qwen are cheap enough to run every coding, validation, and repair-planning attempt without rationing calls. The tradeoff is inconsistent quality on hard tasks, so Claude and Codex sit at the back of each list as a fallback: a failing open-weight candidate is demoted and the run falls through to a proprietary model rather than retrying the same one. Delete the open-weight entries to use only proprietary models; add an entry with its <code>harness</code>/<code>model</code> pair to add another open-weight one.</p>
-      <pre><code>{
+        <section class="topic" id="routing">
+          <p class="step">Routing priority</p>
+          <h2>Ordered candidates with bounded fallback</h2>
+          <p>Each array runs from highest to lowest priority. The engine advances only after a rate limit, authentication failure, unavailable model, launch failure, or timeout. A successful QA response that finds a product defect enters the Repair Plan loop instead of trying another model.</p>
+          <p>Validation, integrated QA, and Goal Review first prefer a tool different from the actual coding tool. Configured order remains stable within the independent and same-tool groups. Every route and fallback reason is persisted.</p>
+          <p>A model that fails from an infra error or a repeated QA rejection is demoted to the back of its role list for the rest of the run, so the run self-heals instead of retrying the same broken candidate, and a coder that declines a Work Item falls through to the next candidate. The optional <code>noCredits</code> array is a free-tier fallback tried only once paid options are exhausted by infra/credit errors. Repair retries are bounded by <code>HARNESS_REPAIR_BUDGET</code> (default <code>2</code>).</p>
+          <p class="source"><strong>Full source:</strong> <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/omnigent/harness-engineering/roles.example.json">https://github.com/vinicius91carvalho/harness-engineering/blob/main/omnigent/harness-engineering/roles.example.json</a></p>
+          <p><strong>Why open-source models lead:</strong> DeepSeek, Kimi, GLM, and Qwen are cheap enough to run every coding, validation, and repair-planning attempt without rationing calls. The tradeoff is inconsistent quality on hard tasks, so Claude and Codex sit at the back of each list as a fallback: a failing open-weight candidate is demoted and the run falls through to a proprietary model rather than retrying the same one. Delete the open-weight entries to use only proprietary models; add an entry with its <code>harness</code>/<code>model</code> pair to add another open-weight one.</p>
+          <pre><code>{
   "coding": [
     { "harness": "opencode", "model": "opencode-go/deepseek-v4-flash" },
     { "harness": "opencode", "model": "openrouter/moonshotai/kimi-k2.7-code" },
@@ -452,31 +842,31 @@ bash "$GEN/claim.sh" list "$PROJECT"</code></pre>
     { "harness": "opencode", "model": "openrouter/free" }
   ]
 }</code></pre>
-      <pre><code>mkdir -p .harness
+          <pre><code>mkdir -p .harness
 cp ~/.omnigent/agents/harness-engineering/roles.example.json .harness/roles.json</code></pre>
-      <p class="files">Copy this file only when using Omnigent. Configure or remove every listed provider/model before execution.</p>
-    </section>
+          <p class="files">Copy this file only when using Omnigent. Configure or remove every listed provider/model before execution.</p>
+        </section>
 
-    <section class="topic" id="run-omnigent">
-      <p class="step"><span style="color:#e5c07b">Optional</span> execution</p>
-      <h2>Start or resume through Omnigent</h2>
-      <pre><code>cd /path/to/git-root
+        <section class="topic" id="run-omnigent">
+          <p class="step"><span style="color:#e5c07b">Optional</span> execution</p>
+          <h2>Start or resume through Omnigent</h2>
+          <pre><code>cd /path/to/git-root
 omni run ~/.omnigent/agents/harness-engineering --harness codex</code></pre>
-      <pre><code>Act as the Supervisor for /absolute/path/to/project.
+          <pre><code>Act as the Supervisor for /absolute/path/to/project.
 Start or resume the harness. Use the project role file.
 Continue until input is needed or a persisted run_completed event exists.</code></pre>
-      <p>Start from the Git root and name the exact project directory, especially in a monorepo.</p>
-      <p class="warning"><strong><span style="color:#e5c07b">Limitation:</span></strong> the agent bundle only loads under a <strong>headless</strong> harness such as <code>codex</code>, <code>claude</code>, or <code>pi</code>. <code>--harness opencode</code> launches the interactive OpenCode TUI and ignores the AGENT spec, so Omnigent rejects the combination (<code>omni run &lt;agent&gt; --harness opencode</code> errors). OpenCode still runs as a <strong>worker route</strong> per <code>.harness/roles.json</code> — the supervisor spawns <code>opencode run</code> per phase — it just can't be the Supervisor. To use OpenCode as the host, run <code>opencode</code> directly and invoke the <a href="#start">harness skills</a> (attached, no Omnigent relay). Tracked upstream at <a href="https://github.com/omnigent-ai/omnigent/issues/1816">omnigent-ai/omnigent#1816</a>.</p>
-    </section>
+          <p>Start from the Git root and name the exact project directory, especially in a monorepo.</p>
+          <p class="warning"><strong><span style="color:#e5c07b">Limitation:</span></strong> the agent bundle only loads under a <strong>headless</strong> harness such as <code>codex</code>, <code>claude</code>, or <code>pi</code>. <code>--harness opencode</code> launches the interactive OpenCode TUI and ignores the AGENT spec, so Omnigent rejects the combination (<code>omni run &lt;agent&gt; --harness opencode</code> errors). OpenCode still runs as a <strong>worker route</strong> per <code>.harness/roles.json</code> — the supervisor spawns <code>opencode run</code> per phase — it just can't be the Supervisor. To use OpenCode as the host, run <code>opencode</code> directly and invoke the <a href="#start">harness skills</a> (attached, no Omnigent relay). Tracked upstream at <a href="https://github.com/omnigent-ai/omnigent/issues/1816">omnigent-ai/omnigent#1816</a>.</p>
+        </section>
 
-    <section class="topic" id="mobile">
-      <p class="step"><span style="color:#e5c07b">Optional</span> private phone access</p>
-      <h2>Reach Omnigent from a phone with <a href="https://tailscale.com/">Tailscale</a></h2>
-      <p>You do not need Tailscale to watch a run. Local observation uses the <a href="#operate">control script</a> directly: <code>status</code>, <code>events</code>, <code>pause</code>, <code>resume</code>, <code>stop</code>. The steps below add a web/mobile control surface only — for reaching the project machine from a phone over a private tailnet. If you only work from the same machine, skip this section.</p>
+        <section class="topic" id="mobile">
+          <p class="step"><span style="color:#e5c07b">Optional</span> private phone access</p>
+          <h2>Reach Omnigent from a phone with <a href="https://tailscale.com/">Tailscale</a></h2>
+          <p>You do not need Tailscale to watch a run. Local observation uses the <a href="#operate">control script</a> directly: <code>status</code>, <code>events</code>, <code>pause</code>, <code>resume</code>, <code>stop</code>. The steps below add a web/mobile control surface only — for reaching the project machine from a phone over a private tailnet. If you only work from the same machine, skip this section.</p>
 
-      <h3>Full setup: supervisor, web UI, and phone</h3>
-      <p>Run these from the project machine. <code>omni run</code> starts the Supervisor <em>and</em> the embedded Omnigent web UI together — there is no separate <code>omni server start</code> or <code>omni host</code> to run. (A standalone <code>omni server start</code> only collides: it prints <em>"Background server already running"</em> and leaves the old one up.)</p>
-      <pre><code># 1. Install Tailscale on the project machine AND your phone, sign both
+          <h3>Full setup: supervisor, web UI, and phone</h3>
+          <p>Run these from the project machine. <code>omni run</code> starts the Supervisor <em>and</em> the embedded Omnigent web UI together — there is no separate <code>omni server start</code> or <code>omni host</code> to run. (A standalone <code>omni server start</code> only collides: it prints <em>"Background server already running"</em> and leaves the old one up.)</p>
+          <pre><code># 1. Install Tailscale on the project machine AND your phone, sign both
 #    into the same tailnet (https://login.tailscale.com/admin/machines).
 
 # 2. Find the project machine's Tailscale hostname:
@@ -497,45 +887,73 @@ OMNIGENT_ACCOUNTS_BASE_URL=https://YOUR-MACHINE.ts.net \
 
 # 5. In a second terminal, expose the daemon's port to the tailnet over HTTPS:
 sudo tailscale serve --bg http://localhost:6767</code></pre>
-      <p>Then open <code>https://YOUR-MACHINE.ts.net</code> from the phone. The Supervisor and its web UI both run in step 4 (the daemon owns the runner in-process, so no <code>omni host</code>); step 5 just proxies the phone's HTTPS to the daemon's local port. <code>tailscale serve</code> must target <code>localhost:6767</code> — the native daemon's port — <em>not</em> 8000 (that's the Docker-Compose container port from Omnigent's Tailscale guide, which doesn't apply to <code>omni run</code>). The <code>--bg</code> flag runs the proxy persistently in the background; HTTPS is the default frontend, so the phone reaches <code>https://YOUR-MACHINE.ts.net</code>. (Tailscale 1.52+ uses the single-URL form above; older three-argument syntax is obsolete.)</p>
+          <p>Then open <code>https://YOUR-MACHINE.ts.net</code> from the phone. The Supervisor and its web UI both run in step 4 (the daemon owns the runner in-process, so no <code>omni host</code>); step 5 just proxies the phone's HTTPS to the daemon's local port. <code>tailscale serve</code> must target <code>localhost:6767</code> — the native daemon's port — <em>not</em> 8000 (that's the Docker-Compose container port from Omnigent's Tailscale guide, which doesn't apply to <code>omni run</code>). The <code>--bg</code> flag runs the proxy persistently in the background; HTTPS is the default frontend, so the phone reaches <code>https://YOUR-MACHINE.ts.net</code>. (Tailscale 1.52+ uses the single-URL form above; older three-argument syntax is obsolete.)</p>
 
-      <h3>What is <code>YOUR-MACHINE</code>?</h3>
-      <p>It is the <strong>Tailscale Magic DNS hostname of the project machine</strong>, <em>not</em> <code>127.0.0.1</code> or <code>localhost</code>. Tailscale assigns every device on your tailnet a name like <code>mybox</code>, reachable as <code>mybox.ts.net</code> (or your tailnet's custom domain). Find it with <code>tailscale status</code> or in the <a href="https://login.tailscale.com/admin/machines">Tailscale admin console</a>. The phone can't reach the machine's loopback (<code>127.0.0.1</code>), so the phone-side URL must be the tailnet name; only the <code>tailscale serve</code> backend uses <code>localhost:6767</code> because that proxy runs on the project machine itself.</p>
+          <h3>What is <code>YOUR-MACHINE</code>?</h3>
+          <p>It is the <strong>Tailscale Magic DNS hostname of the project machine</strong>, <em>not</em> <code>127.0.0.1</code> or <code>localhost</code>. Tailscale assigns every device on your tailnet a name like <code>mybox</code>, reachable as <code>mybox.ts.net</code> (or your tailnet's custom domain). Find it with <code>tailscale status</code> or in the <a href="https://login.tailscale.com/admin/machines">Tailscale admin console</a>. The phone can't reach the machine's loopback (<code>127.0.0.1</code>), so the phone-side URL must be the tailnet name; only the <code>tailscale serve</code> backend uses <code>localhost:6767</code> because that proxy runs on the project machine itself.</p>
 
-      <p class="warning"><strong><span style="color:#e5c07b">Limitation:</span></strong> step 4 accepts a <strong>headless</strong> harness such as <code>codex</code>, <code>claude</code>, or <code>pi</code>. <code>--harness opencode</code> launches the OpenCode TUI and ignores the agent bundle, so it can't drive the Supervisor from the phone. To run the supervisor while you watch it on mobile, pick a headless harness; OpenCode remains available as a worker route via <code>.harness/roles.json</code>. Use <code>tailscale serve</code>, not Funnel, for tailnet-only access. The project machine must remain awake.</p>
-    </section>
+          <p class="warning"><strong><span style="color:#e5c07b">Limitation:</span></strong> step 4 accepts a <strong>headless</strong> harness such as <code>codex</code>, <code>claude</code>, or <code>pi</code>. <code>--harness opencode</code> launches the OpenCode TUI and ignores the agent bundle, so it can't drive the Supervisor from the phone. To run the supervisor while you watch it on mobile, pick a headless harness; OpenCode remains available as a worker route via <code>.harness/roles.json</code>. Use <code>tailscale serve</code>, not Funnel, for tailnet-only access. The project machine must remain awake.</p>
+        </section>
 
-    <section class="topic" id="maintenance">
-      <p class="step">Maintenance</p>
-      <h2>Keep the workflow current and recoverable</h2>
-      <ul>
-        <li><strong>Update:</strong> rerun the installer to refresh plugins and the optional Omnigent bundle.</li>
-        <li><strong>Inspect:</strong> use status/events plus <code>harness-progress/</code>, <code>.git/harness-runs/</code>, and <code>.git/harness-control/</code>.</li>
-        <li><strong>Pause safely:</strong> use supervisor operations so it and child processes stay consistent.</li>
-        <li><strong>Back up configuration:</strong> run <code>/harness:update-project</code>; credentials, caches, and sessions are excluded.</li>
-        <li><strong>Capture useful lessons:</strong> run <code>/harness:learning-loop</code> after substantial or repetitive work.</li>
-      </ul>
-    </section>
+        <section class="topic" id="maintenance">
+          <p class="step">Maintenance</p>
+          <h2>Keep the workflow current and recoverable</h2>
+          <ul>
+            <li><strong>Update:</strong> rerun the installer to refresh plugins and the optional Omnigent bundle.</li>
+            <li><strong>Inspect:</strong> use status/events plus <code>harness-progress/</code>, <code>.git/harness-runs/</code>, and <code>.git/harness-control/</code>.</li>
+            <li><strong>Pause safely:</strong> use supervisor operations so it and child processes stay consistent.</li>
+            <li><strong>Back up configuration:</strong> run <code>/harness:update-project</code>; credentials, caches, and sessions are excluded.</li>
+            <li><strong>Capture useful lessons:</strong> run <code>/harness:learning-loop</code> after substantial or repetitive work.</li>
+          </ul>
+        </section>
 
-    <section class="topic compact" id="help">
-      <p class="step">Further help</p>
-      <h2>Reference documentation</h2>
-      <div class="links">
-        <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/docs/installer/README.md"><strong>Installer</strong><span>Flags, host selection, scopes, and dry runs.</span></a>
-        <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/docs/plugins.md"><strong>Plugins</strong><span>Optional integrations and compatibility.</span></a>
-        <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/docs/backup-sync.md"><strong>Backup</strong><span>Sanitized configuration backup and restore.</span></a>
-        <a href="https://github.com/vinicius91carvalho/harness-engineering/tree/main/docs/adr"><strong>Decisions</strong><span>Why the durable workflow is designed this way.</span></a>
+        <section class="topic" id="help">
+          <p class="step">Further help</p>
+          <h2>Reference documentation</h2>
+          <div class="links">
+            <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/docs/installer/README.md"><strong>Installer</strong><span>Flags, host selection, scopes, and dry runs.</span></a>
+            <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/docs/plugins.md"><strong>Plugins</strong><span>Optional integrations and compatibility.</span></a>
+            <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/docs/backup-sync.md"><strong>Backup</strong><span>Sanitized configuration backup and restore.</span></a>
+            <a href="https://github.com/vinicius91carvalho/harness-engineering/tree/main/docs/adr"><strong>Decisions</strong><span>Why the durable workflow is designed this way.</span></a>
+          </div>
+        </section>
+
       </div>
-    </section>
-  </main>
+    </main>
+  </div>
 
-  <footer>
-    <p>Harness Engineering</p>
+  <footer class="site-footer">
+    <p>Harness Engineering — open source</p>
     <a href="https://github.com/vinicius91carvalho/harness-engineering">Source and releases ↗</a>
   </footer>
+
   <script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
     mermaid.initialize({ startOnLoad: true, theme: 'dark' });
+  </script>
+  <script>
+    (function () {
+      const toggle = document.querySelector('.sidebar-toggle');
+      const sidebar = document.getElementById('sidebar');
+      const links = sidebar.querySelectorAll('a[href^="#"]');
+      const setActive = () => {
+        let current = '';
+        document.querySelectorAll('.topic, .hero').forEach((section) => {
+          const top = section.offsetTop - 120;
+          if (window.scrollY >= top) current = section.id;
+        });
+        links.forEach((a) => {
+          a.classList.toggle('active', a.getAttribute('href') === '#' + current);
+        });
+      };
+      toggle?.addEventListener('click', () => {
+        const open = sidebar.classList.toggle('open');
+        toggle.setAttribute('aria-expanded', open);
+      });
+      links.forEach((a) => a.addEventListener('click', () => sidebar.classList.remove('open')));
+      window.addEventListener('scroll', setActive, { passive: true });
+      setActive();
+    })();
   </script>
 </body>
 </html>

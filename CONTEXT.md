@@ -10,7 +10,7 @@ Only the **workflow pipeline** is required to deliver software; the others are o
 | Context | What lives here | You interact through |
 | --- | --- | --- |
 | **Plugin marketplace** | `install.sh`, manifests, host configuration | Installer checklist |
-| **Workflow pipeline** | `project_specs.xml`, `feature_list.json`, `orchestrator.mjs`, `claim.sh`, Goal Review policy | Skills below + files in your repo |
+| **Workflow pipeline** | `project_specs.xml`, `feature_list.json`, `orchestrator.mjs`, `workflow/attempt-machine.mjs`, `lib/claim-lease.mjs` (CLI: `claim.sh` / `claim.ps1`), Goal Review policy | Skills below + files in your repo |
 | **Supervisor control** | `harness-control.mjs`, Resource Governor, Control Events, Input Requests | `/harness:supervisor` or Omnigent relay |
 | **Optional routing** | Omnigent bundle, `.harness/roles.json`, MCP servers | Installer + `roles.json` |
 
@@ -45,6 +45,20 @@ flowchart LR
   OR --> C
   OR --> Q
   G -.->|scaffold once| I
+```
+
+### Generator modules (deterministic, no LLM)
+
+Orchestrator owns host adapters and Goal Review; the Attempt loop and shared policy live in libraries so supervisor and orchestrator stay aligned without duplicating execution rules.
+
+```mermaid
+flowchart TD
+  orchestrator[orchestrator.mjs] --> attempt[attempt-machine.mjs]
+  orchestrator --> workflowState[workflow-state.mjs]
+  orchestrator --> routePlan[route-plan.mjs]
+  orchestrator --> claimLease[claim-lease.mjs]
+  harnessControl[harness-control.mjs] --> workerLifecycle[worker-lifecycle.mjs]
+  harnessControl --> claimLease
 ```
 
 ## Language
@@ -138,7 +152,7 @@ The single long-lived control loop per project (`harness-control.mjs`) that admi
 _Avoid_: worker, scheduler, generator skill
 
 **Orchestrator**:
-The deterministic per-Work-Item state machine (`orchestrator.mjs`, no LLM) that sequences Code → QA → integrate → Goal Review and owns `roles.json` routing and Demotion.
+The deterministic entry point (`orchestrator.mjs`, no LLM) that delegates the Attempt loop to `attempt-machine.mjs`, runs Goal Review, and owns host adapters plus `roles.json` routing and Demotion.
 _Avoid_: Supervisor, LLM planner
 
 **Input Request**:

@@ -50,7 +50,18 @@ The harness owns completion policy; [Claude Code](https://code.claude.com/docs/e
 Planner uses grilling internally; activate it by asking “grill me.”
 Generator bundles `worktree-git-recovery` for narrow git-only fixes in a worktree.
 
-Shared generator libraries live under `skills/generator/lib/` (`claim-lease`, `integrate-checkpoint`, `worker-outcome`, `supervisor-tick`, and helpers such as `verdict`, `ready-work-items`, `project-keys`).
+Shared generator libraries live under `skills/generator/lib/` (`claim-lease`, `integrate-checkpoint`, `worker-outcome`, `supervisor-tick`, `workflow-state`, `route-plan`, `worker-lifecycle`, and helpers such as `verdict`, `ready-work-items`, `project-keys`).
+The Attempt loop lives in `skills/generator/workflow/attempt-machine.mjs` (orchestrator delegates; supervisor does not own Attempt policy).
+
+```mermaid
+flowchart TD
+  orchestrator[orchestrator.mjs] --> attempt[attempt-machine.mjs]
+  orchestrator --> workflowState[workflow-state.mjs]
+  orchestrator --> routePlan[route-plan.mjs]
+  orchestrator --> claimLease[claim-lease.mjs]
+  harnessControl[harness-control.mjs] --> workerLifecycle[worker-lifecycle.mjs]
+  harnessControl --> claimLease
+```
 
 ### Agents (what the orchestrator spawns)
 

@@ -28,15 +28,16 @@ async function importLib(name) {
   return import(pathToFileURL(join(libDir, name)).href)
 }
 const { readJson, atomicJson } = await importLib('fs-json.mjs')
-const { parseObject, isProviderQuotaLimited } = await importLib('verdict.mjs')
+const { isProviderQuotaLimited } = await importLib('verdict.mjs')
 const { computeCapacity } = await importLib('capacity.mjs')
 const { scopeClaims, runStateFile: runStatePath } = await importLib('project-keys.mjs')
 const { readWorkerResult } = await importLib('worker-result.mjs')
 const { cleanupBrowserOrphans } = await importLib('browser-cleanup.mjs')
-const { isWorkerStuck, isHarnessInfrastructureError, stuckThresholdMs } = await importLib('stuck-worker.mjs')
+const { isWorkerStuck, stuckThresholdMs } = await importLib('stuck-worker.mjs')
 const { interpretWorkerOutcome } = await importLib('worker-outcome.mjs')
+const { planWorkerClosedActions } = await importLib('worker-lifecycle.mjs')
 const { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } = await importLib('supervisor-tick.mjs')
-const claimScript = join(generatorDir, 'claim.sh')
+const { selectClaim, resumeClaim, releaseClaim } = await importLib('claim-lease.mjs')
 const orchestrator = join(generatorDir, 'orchestrator.mjs')
 const reconciler = join(generatorDir, 'reconcile.mjs')
 
@@ -355,23 +356,20 @@ class Supervisor {
   }
 
   async resumeClaim(context, force = 'auto', guidance = '') {
-    const resumed = exec('bash', [claimScript, 'resume', repo, context, String(process.pid), force], repo, true)
-    const claim = parseObject(resumed.stdout)
+    const claim = resumeClaim(repo, context, process.pid, force)
     if (claim) await this.spawnWorker(claim, guidance)
     return Boolean(claim)
   }
 
   async claim() {
-    const result = exec('bash', [claimScript, 'select-claim', repo, 'all', '', String(process.pid)], repo, true)
-    return result.status === 0 ? parseObject(result.stdout) : null
+    return selectClaim(repo, 'all', '', process.pid)
   }
 
   async spawnWorker(claim, guidance = '') {
     const key = claim.context
     if (this.workers.has(key)) return
     const args = [orchestrator, '--host', this.config.host, '--repo', repo, '--workdir', claim.worktree,
-      '--context', claim.context, '--port', String(claim.port), '--features', claim.featureIds.join(','),
-      '--claim-script', claimScript]
+      '--context', claim.context, '--port', String(claim.port), '--features', claim.featureIds.join(',')]
     if (guidance) args.push('--guidance', guidance)
     const child = spawn(process.execPath, args, { cwd: claim.worktree, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] })
     const logFile = join(logDir, `${key.replace(/[^a-zA-Z0-9_-]/g, '_')}-${Date.now()}-${child.pid}.log`)
@@ -426,60 +424,77 @@ class Supervisor {
       featureIds: worker.featureIds,
       queue,
     })
-    const rateLimited = isProviderQuotaLimited(tail)
-    if (rateLimited) {
-      const pauseUntil = Math.floor(Date.now() / 1000) + this.config.quotaCooldownSeconds
-      const quota = await readJson(quotaFile, {})
-      await atomicJson(quotaFile, { ...quota, pauseUntil, reason: 'worker reported provider rate limit' })
-      await this.emit('quota_wait', { context: key, pauseUntil }, true)
-      this.state.retryQueue ||= {}
-      this.state.retryQueue[key] = {
-        guidance: 'Provider quota/rate limit; retry automatically after the quota window',
-        attempts: this.state.retryQueue[key]?.attempts || 0,
-      }
-      delete this.state.crashCounts?.[key]
-      await this.save()
-      this.workers.delete(key)
-      cleanupBrowserOrphans({ port: worker.port })
-      return
+    const plan = planWorkerClosedActions({
+      key,
+      exitCode: code,
+      tail,
+      result,
+      rateLimited: isProviderQuotaLimited(tail),
+      crashCount: this.state.crashCounts?.[key] || 0,
+      harnessRepairs: this.state.harnessRepairs,
+      retryQueue: this.state.retryQueue,
+      autoRepair: process.env.HARNESS_AUTO_REPAIR === 'true',
+      logFile: worker.logFile,
+    })
+
+    if (plan.emitHarnessIssue) {
+      await this.emit('harness_issue', { context: key, reason: plan.emitHarnessIssue.reason, log: plan.emitHarnessIssue.logFile }, true)
     }
-    if (result?.goal === true) {
-      // A passing Goal Review doesn't mean the run is actually finished if a lease is still
-      // stuck in retryQueue: completing here regardless would leave it there forever, invisible,
-      // exactly the bug bounded retry attempts exists to prevent. Hold the result and let tick's
-      // retryQueue drain (below) finalize once the queue is actually empty.
-      if (Object.keys(this.state.retryQueue || {}).length === 0) await this.completeGoal(result)
-      else this.pendingGoalResult = result
-    } else if (result?.reopened?.length) {
-      await this.emit('goal_defects', { reopened: result.reopened, defects: result.defects }, true)
-    } else if (result?.blocked || result?.stuck?.length) {
-      await this.input(key === 'goal-review' ? 'goal' : 'context', result.summary || result.stuck?.[0]?.reason || 'Execution blocked', result, key === 'goal-review' ? null : key)
-    } else if (code === 0 && result?.stuck?.length === 0) {
-      exec('bash', [claimScript, 'release', repo, key], repo, true)
-      await this.emit('context_completed', { context: key, passed: result.passed, total: result.total })
-      delete this.state.crashCounts?.[key]
-    } else {
-      const goal = key === 'goal-review'
-      this.state.crashCounts = this.state.crashCounts || {}
-      this.state.crashCounts[key] = (this.state.crashCounts[key] || 0) + 1
-      // ponytail: the real cause (e.g. "reconcile: ENOENT: ...") is already the log's last
-      // line -- surfacing it here saves a manual log read every time a worker crashes.
-      const lastLine = tail.trim().split('\n').filter(Boolean).pop()?.slice(0, 200)
-      const reason = lastLine ? `Worker exited with code ${code}: ${lastLine}` : `Worker exited with code ${code}`
-      if (isHarnessInfrastructureError(tail)) {
-        await this.emit('harness_issue', { context: key, reason, log: worker.logFile }, true)
-        if (process.env.HARNESS_AUTO_REPAIR === 'true' && !this.state.harnessRepairs?.[key]) {
-          this.state.harnessRepairs ||= {}
-          this.state.harnessRepairs[key] = true
-          this.state.retryQueue[key] = { guidance: `Fix harness infrastructure issue, then retry: ${lastLine || reason}` }
-          delete this.state.crashCounts?.[key]
-          await this.save()
-          this.workers.delete(key)
-          cleanupBrowserOrphans({ port: worker.port })
-          return
+
+    switch (plan.action) {
+      case 'quota_retry': {
+        const pauseUntil = Math.floor(Date.now() / 1000) + this.config.quotaCooldownSeconds
+        const quota = await readJson(quotaFile, {})
+        await atomicJson(quotaFile, { ...quota, pauseUntil, reason: 'worker reported provider rate limit' })
+        await this.emit('quota_wait', { context: key, pauseUntil }, true)
+        this.state.retryQueue ||= {}
+        this.state.retryQueue[key] = {
+          guidance: plan.guidance,
+          attempts: this.state.retryQueue[key]?.attempts || 0,
         }
+        if (plan.clearCrashCount) delete this.state.crashCounts?.[key]
+        await this.save()
+        this.workers.delete(key)
+        cleanupBrowserOrphans({ port: worker.port })
+        return
       }
-      await this.input(goal ? 'goal' : 'context', reason, { log: worker.logFile }, goal ? null : key)
+      case 'goal_complete':
+        if (Object.keys(this.state.retryQueue || {}).length === 0) await this.completeGoal(plan.result)
+        else this.pendingGoalResult = plan.result
+        break
+      case 'pending_goal':
+        this.pendingGoalResult = plan.result
+        break
+      case 'goal_defects':
+        await this.emit('goal_defects', { reopened: plan.reopened, defects: plan.defects }, true)
+        break
+      case 'blocked_input':
+        await this.input(plan.scope, plan.reason, plan.detail, plan.context)
+        break
+      case 'release':
+        releaseClaim(repo, key)
+        await this.emit('context_completed', { context: key, passed: plan.passed, total: plan.total })
+        if (plan.clearCrashCount) delete this.state.crashCounts?.[key]
+        break
+      case 'harness_repair':
+        this.state.harnessRepairs ||= {}
+        this.state.harnessRepairs[key] = true
+        this.state.retryQueue ||= {}
+        this.state.retryQueue[key] = { guidance: plan.guidance }
+        if (plan.clearCrashCount) delete this.state.crashCounts?.[key]
+        await this.save()
+        this.workers.delete(key)
+        cleanupBrowserOrphans({ port: worker.port })
+        return
+      case 'crash_input':
+        this.state.crashCounts = this.state.crashCounts || {}
+        if (plan.incrementCrashCount) this.state.crashCounts[key] = plan.crashCount
+        await this.input(plan.scope, plan.reason, plan.detail, plan.context)
+        break
+      case 'noop':
+        break
+      default:
+        break
     }
     this.workers.delete(key)
     cleanupBrowserOrphans({ port: worker.port })
@@ -518,7 +533,7 @@ class Supervisor {
     const worktree = await mainCheckout()
     const claim = { context: 'goal-review', worktree, port: 5170, featureIds: [] }
     const child = spawn(process.execPath, [orchestrator, '--host', this.config.host, '--repo', repo, '--workdir', worktree,
-      '--mode', 'goal-review', '--context', 'goal-review', '--port', '5170', '--claim-script', claimScript],
+      '--mode', 'goal-review', '--context', 'goal-review', '--port', '5170'],
       { cwd: worktree, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] })
     const logFile = join(logDir, `goal-review-${Date.now()}-${child.pid}.log`)
     const log = createWriteStream(logFile, { flags: 'w' })
