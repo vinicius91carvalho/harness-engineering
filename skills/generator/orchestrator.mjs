@@ -531,14 +531,6 @@ async function runGoalReview() {
   }
 }
 
-if (process.env.HARNESS_TEST_SUPERVISOR_QUOTA === '1') {
-  const message = "ERROR: You've hit your usage limit. Try again at Jul 9th, 2026 12:17 AM."
-  process.stderr.write(`${message}\n`)
-  await mkdir(runDir, { recursive: true })
-  await writeState({ status: 'failed', phase: 'coding', nextAction: 'release-claim', lastResult: message, childPid: null })
-  process.exit(1)
-}
-
 logVisible(`started pid=${process.pid} workdir=${options.workdir}`)
 const result = options.mode === 'goal-review' ? await runGoalReview() : await runWorkItems()
 await writeWorkerResult(stateFile, { exitCode: 0, payload: result })

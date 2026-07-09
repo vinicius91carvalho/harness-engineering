@@ -384,6 +384,22 @@ class Supervisor {
       '--context', claim.context, '--port', String(claim.port), '--features', claim.featureIds.join(',')]
     if (guidance) args.push('--guidance', guidance)
     const logFile = join(logDir, `${key.replace(/[^a-zA-Z0-9_-]/g, '_')}-${Date.now()}.log`)
+    // Deterministic CI hook: skip the real orchestrator and close as if the worker
+    // reported a provider usage limit. Avoids macOS races where stderr is lost before close.
+    if (process.env.HARNESS_TEST_SUPERVISOR_QUOTA === '1') {
+      const quotaTail = "ERROR: You've hit your usage limit. Try again at Jul 9th, 2026 12:17 AM.\n"
+      await mkdir(logDir, { recursive: true })
+      await writeFile(logFile, quotaTail)
+      this.workers.set(key, {
+        type: 'background', child: null, log: null, logFile,
+        context: claim.context, featureIds: claim.featureIds,
+        worktree: claim.worktree, port: claim.port, startedAt: new Date().toISOString(),
+      })
+      await this.emit('worker_started', { context: claim.context, featureIds: claim.featureIds, pid: null })
+      await this.save()
+      await this.trackClose(this.workerClosed(key, 1, quotaTail).catch((error) => this.crash(error)))
+      return
+    }
     if (this.config.display === 'herdr') {
       const agentName = `worker-${claim.project || projectId}-${key}`
       const { paneId } = spawnAgent(agentName, [process.execPath, ...args], { cwd: claim.worktree, layoutLockDir: herdrLayoutLock })

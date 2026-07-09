@@ -49,10 +49,17 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
 done
 kill "$quota_supervisor" 2>/dev/null || true
 wait "$quota_supervisor" 2>/dev/null || true
-jq -s -e 'any(.[]; .kind == "quota_wait") and all(.[]; .kind != "input_required")' \
-  "$TMP/quota-limit/.git/harness-control/events.jsonl" >/dev/null
-jq -e '.retryQueue.core.guidance | contains("Provider quota")' \
-  "$TMP/quota-limit/.git/harness-control/state.json" >/dev/null
+if ! jq -s -e 'any(.[]; .kind == "quota_wait") and all(.[]; .kind != "input_required")' \
+  "$TMP/quota-limit/.git/harness-control/events.jsonl" >/dev/null \
+  || ! jq -e '.retryQueue.core.guidance | contains("Provider quota")' \
+  "$TMP/quota-limit/.git/harness-control/state.json" >/dev/null; then
+  echo 'not ok - provider usage limits did not pause quota' >&2
+  echo '--- events ---' >&2
+  cat "$TMP/quota-limit/.git/harness-control/events.jsonl" 2>/dev/null >&2 || true
+  echo '--- state ---' >&2
+  cat "$TMP/quota-limit/.git/harness-control/state.json" 2>/dev/null >&2 || true
+  exit 1
+fi
 echo 'ok - provider usage limits pause quota and auto-retry instead of raising a false Work Item Input Request'
 
 git -C "$TMP/invalid" init -b main -q
