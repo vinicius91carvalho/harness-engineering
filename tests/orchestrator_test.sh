@@ -2,7 +2,8 @@
 set -euo pipefail
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 TMP=${TMPDIR:-/tmp}/harness-orchestrator-test.$$
-trap 'rm -rf "$TMP"' EXIT
+ORCHESTRATOR_PID=""
+trap 'kill "$ORCHESTRATOR_PID" 2>/dev/null || true; rm -rf "$TMP" 2>/dev/null || true' EXIT
 mkdir -p "$TMP/bin" "$TMP/repo"
 
 install_role_stubs() {
@@ -289,11 +290,23 @@ PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" \
   --workdir "$CANCEL_WT" --context core --port 5170 --features WI-AC-001 \
   --claim-script "$ROOT/skills/generator/claim.sh" >"$TMP/cancel-result.json" &
 ORCHESTRATOR_PID=$!
-for _ in $(seq 1 100); do pgrep -P "$ORCHESTRATOR_PID" >/dev/null 2>&1 && break; sleep 0.05; done
-CHILD_PID=$(pgrep -P "$ORCHESTRATOR_PID" | head -1)
+CANCEL_RUN_STATE="$TMP/cancel/.git/harness-runs/core.json"
+CHILD_PID=""
+for _ in $(seq 1 200); do
+  CHILD_PID=$(jq -r '.childPid // empty' "$CANCEL_RUN_STATE" 2>/dev/null || true)
+  if [ -n "$CHILD_PID" ] && kill -0 "$CHILD_PID" 2>/dev/null; then break; fi
+  sleep 0.1
+done
 test -n "$CHILD_PID"
-kill -TERM "$ORCHESTRATOR_PID"
-wait "$ORCHESTRATOR_PID" || true
+kill -TERM "$ORCHESTRATOR_PID" 2>/dev/null || true
+for _ in $(seq 1 50); do
+  kill -0 "$CHILD_PID" 2>/dev/null || break
+  sleep 0.1
+done
+kill -KILL "$CHILD_PID" 2>/dev/null || true
+wait "$ORCHESTRATOR_PID" 2>/dev/null || true
+bash "$ROOT/skills/generator/claim.sh" release-claim "$TMP/cancel" core >/dev/null 2>&1 || true
+ORCHESTRATOR_PID=""
 if kill -0 "$CHILD_PID" 2>/dev/null; then
   echo 'not ok - interrupted roles-routed descendant remained alive' >&2; exit 1
 fi
