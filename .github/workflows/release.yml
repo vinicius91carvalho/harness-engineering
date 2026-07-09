@@ -53,6 +53,8 @@ jobs:
           mv plugin.json.tmp .claude-plugin/plugin.json
           jq --arg v "$NEW_VERSION" '.version = $v' .codex-plugin/plugin.json > codex-plugin.json.tmp
           mv codex-plugin.json.tmp .codex-plugin/plugin.json
+          jq --arg v "$NEW_VERSION" '.version = $v' .cursor-plugin/plugin.json > cursor-plugin.json.tmp
+          mv cursor-plugin.json.tmp .cursor-plugin/plugin.json
           python3 - <<'PY'
           import os, pathlib
           p = pathlib.Path("CHANGELOG.md")
@@ -64,7 +66,7 @@ jobs:
           PY
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add CHANGELOG.md .claude-plugin/plugin.json .codex-plugin/plugin.json
+          git add CHANGELOG.md .claude-plugin/plugin.json .codex-plugin/plugin.json .cursor-plugin/plugin.json
           git diff --cached --quiet && { echo "already current"; exit 0; }
           git commit -m "chore: release ${{ steps.tag.outputs.new_tag }} [skip ci]"
           git push origin HEAD:main
