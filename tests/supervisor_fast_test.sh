@@ -37,12 +37,14 @@ rm -f "$TMP/quota-limit/.git/harness-control/state.json" "$TMP/quota-limit/.git/
 PATH="$SUPERVISOR_PATH" HARNESS_TEST_SUPERVISOR_QUOTA=1 HARNESS_RATE_LIMIT_BACKOFF_MS=100 HARNESS_RATE_LIMIT_JITTER_MS=0 \
   "$NODE" "$CONTROL" run \
   --repo "$TMP/quota-limit" --host claude --poll-ms 50 --quota-cooldown-seconds 60 \
-  --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100 >/dev/null 2>&1 &
+  --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100 >"$TMP/quota-supervisor.log" 2>&1 &
 quota_supervisor=$!
-deadline=$(( $(date +%s) + 20 ))
+# macOS CI cold-starts can exceed 20s before the first claim/spawn; keep polling until
+# quota_wait lands (jq -se fails on false, so we do not treat "not yet" as success).
+deadline=$(( $(date +%s) + 60 ))
 while [ "$(date +%s)" -lt "$deadline" ]; do
   if [ -f "$TMP/quota-limit/.git/harness-control/events.jsonl" ] \
-    && [ "$(jq -s 'any(.[]; .kind == "quota_wait")' "$TMP/quota-limit/.git/harness-control/events.jsonl" 2>/dev/null)" = "true" ]; then
+    && jq -se 'any(.[]; .kind == "quota_wait")' "$TMP/quota-limit/.git/harness-control/events.jsonl" >/dev/null 2>&1; then
     break
   fi
   sleep 0.25
@@ -58,6 +60,8 @@ if ! jq -s -e 'any(.[]; .kind == "quota_wait") and all(.[]; .kind != "input_requ
   cat "$TMP/quota-limit/.git/harness-control/events.jsonl" 2>/dev/null >&2 || true
   echo '--- state ---' >&2
   cat "$TMP/quota-limit/.git/harness-control/state.json" 2>/dev/null >&2 || true
+  echo '--- supervisor log ---' >&2
+  cat "$TMP/quota-supervisor.log" 2>/dev/null >&2 || true
   exit 1
 fi
 echo 'ok - provider usage limits pause quota and auto-retry instead of raising a false Work Item Input Request'
