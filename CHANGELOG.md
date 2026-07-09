@@ -11,6 +11,19 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [2.3.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.2.0...v2.3.0) (2026-07-09)
+
+
+### Features
+
+* **supervisor:** one named herdr tab per worker and resilient monorepo ops ([3bb698f](https://github.com/vinicius91carvalho/harness-engineering/commit/3bb698f6205b088ccbab6ef90f7aab6ea1d65136))
+
+
+### Bug Fixes
+
+* **ci:** give macOS quota_wait poll a longer deadline ([c3fc59d](https://github.com/vinicius91carvalho/harness-engineering/commit/c3fc59dda824c662000606c67ef8964d6395cc04))
+* **supervisor:** prune orphan Input Requests before auto-retry ([896e775](https://github.com/vinicius91carvalho/harness-engineering/commit/896e775f0990f35c9b1e11139630fe95edcb1ce1))
+
 ## [2.2.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.1.0...v2.2.0) (2026-07-09)
 
 
