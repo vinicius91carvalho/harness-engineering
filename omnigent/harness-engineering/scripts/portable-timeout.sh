@@ -8,4 +8,12 @@ fi
 if command -v gtimeout >/dev/null 2>&1; then
   exec gtimeout "$secs" "$@"
 fi
-exec perl -e 'alarm shift @ARGV; exec @ARGV or die $!' "$secs" "$@"
+"$@" &
+pid=$!
+status=0
+( sleep "$secs"; kill "$pid" 2>/dev/null ) &
+killer=$!
+wait "$pid" 2>/dev/null || status=$?
+kill "$killer" 2>/dev/null || true
+wait "$killer" 2>/dev/null || true
+exit "$status"

@@ -11,7 +11,15 @@ run_timeout() {
   elif command -v gtimeout >/dev/null 2>&1; then
     gtimeout "$secs" "$@"
   else
-    perl -e 'alarm shift @ARGV; exec @ARGV or die $!' "$secs" "$@"
+    "$@" &
+    local pid=$!
+    local status=0
+    ( sleep "$secs"; kill "$pid" 2>/dev/null ) &
+    local killer=$!
+    wait "$pid" 2>/dev/null || status=$?
+    kill "$killer" 2>/dev/null || true
+    wait "$killer" 2>/dev/null || true
+    return "$status"
   fi
 }
 
