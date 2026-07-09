@@ -550,6 +550,8 @@ test('planAutoRetryResponses queues retry for stalled context inputs only', () =
   }
   assert.equal(isAutoRetryableInput(pending[10]), true)
   assert.equal(isAutoRetryableInput(pending[12]), false)
+  // Coding exhaustion must not auto-burn; needs operator/Repair Plan guidance.
+  assert.equal(isAutoRetryableInput(pending[13]), false)
   const goalReviewExit = {
     status: 'pending',
     scope: 'goal',

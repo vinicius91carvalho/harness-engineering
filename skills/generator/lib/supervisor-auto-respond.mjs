@@ -6,7 +6,8 @@ const AUTO_RETRY_PREFIXES = [
   'Harness worker is idle or waiting',
   'Integrated Verification failed after Attempt 3',
   'integration could not complete',
-  'coding agent failed three times',
+  // coding exhaustion needs operator/Repair Plan guidance — do not auto-burn
+  // 'coding agent failed three times',
   'Work Item blocked',
   'Claim Lease is stale on another host',
 ]
