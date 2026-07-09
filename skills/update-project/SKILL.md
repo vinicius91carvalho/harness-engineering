@@ -1,6 +1,6 @@
 ---
 name: update-project
-description: Back up sanitized, restorable configuration for every detected Claude Code, Codex, and OpenCode host without copying credentials, caches, histories, or sessions.
+description: Back up sanitized, restorable configuration for every detected Claude Code, Codex, OpenCode, and Cursor Agent host without copying credentials, caches, histories, or sessions.
 ---
 
 # Update project
@@ -46,7 +46,7 @@ marketplace plugin or reintroduce host-specific plugins.
 Run the same checks as CI:
 
 ```sh
-jq empty .claude-plugin/*.json .codex-plugin/*.json .agents/plugins/marketplace.json opencode.json config/*.json
+jq empty .claude-plugin/*.json .codex-plugin/*.json .cursor-plugin/*.json .agents/plugins/marketplace.json opencode.json config/*.json
 sh -n install.sh && bash -n skills/generator/claim.sh scripts/*.sh
 node --check skills/generator/orchestrator.mjs && node --check skills/generator/reconcile.mjs && node --check skills/supervisor/scripts/harness-control.mjs
 bash tests/install_test.sh && bash tests/reconcile_test.sh && bash tests/orchestrator_test.sh && bash tests/supervisor_test.sh && bash tests/site_test.sh && bash tests/claim_test.sh

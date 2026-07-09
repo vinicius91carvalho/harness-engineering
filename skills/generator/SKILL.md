@@ -21,7 +21,7 @@ optional project-local `.harness/roles.json` selects or orders model IDs.
 
 Let `PROJECT` be the directory containing `project_specs.xml`, `GIT_ROOT` be its
 Git top-level, `GEN` this skill directory, and `HOST` the current host (`claude`,
-`codex`, or `opencode`). If invoked at a monorepo root, resolve a project through
+`codex`, `opencode`, or `agent`). If invoked at a monorepo root, resolve a project through
 `.harness/projects.json`; list the choices when more than one is registered. Never
 combine project queues.
 
@@ -109,7 +109,7 @@ When `.harness/roles.json` exists, the same engine runs each role through the
 installed Omnigent worker template. `coding`, `validation`, `repairPlanning`, and
 `goalReview` are non-empty ordered candidate arrays; each entry is a harness name
 or `{ "harness": "opencode", "model": "provider/model" }`. Harnesses are
-`claude`, `codex`, `opencode`, or `pi`; model is optional. Without this file, `--host`
+`claude`, `codex`, `opencode`, `pi`, or `agent`; model is optional. Without this file, `--host`
 keeps the existing direct CLI behavior.
 
 Validation candidates using a harness different from the actual coding harness

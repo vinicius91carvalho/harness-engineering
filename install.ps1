@@ -1,10 +1,10 @@
-# Native Windows installer for Claude Code, Codex, and OpenCode.
+# Native Windows installer for Claude Code, Codex, OpenCode, and Cursor Agent.
 [CmdletBinding()]
 param(
   [switch]$Yes,
   [switch]$No,
   [switch]$DryRun,
-  [ValidateSet("claude", "codex", "opencode", "all")][string]$Cli,
+  [ValidateSet("claude", "codex", "opencode", "agent", "all")][string]$Cli,
   [ValidateSet("user", "project", "local")][string]$Scope = "user"
 )
 $ErrorActionPreference = "Stop"
@@ -15,13 +15,13 @@ $CodexMarketplace = "harness-engineering"
 $MemoryInstaller = "https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.ps1"
 $Optional = @("omnigent", "ponytail", "skill-creator", "codebase-memory-mcp", "context7", "playwright", "status-line", "shared-config", "mcp-servers")
 $PluginClis = @{
-  harness = @("claude", "codex", "opencode")
-  omnigent = @("claude", "codex", "opencode")
-  ponytail = @("claude", "codex", "opencode")
-  "skill-creator" = @("claude", "codex", "opencode")
-  "codebase-memory-mcp" = @("claude", "codex", "opencode")
-  context7 = @("claude", "codex", "opencode"); playwright = @("claude", "codex", "opencode")
-  "mcp-servers" = @("claude", "codex", "opencode")
+  harness = @("claude", "codex", "opencode", "agent")
+  omnigent = @("claude", "codex", "opencode", "agent")
+  ponytail = @("claude", "codex", "opencode", "agent")
+  "skill-creator" = @("claude", "codex", "opencode", "agent")
+  "codebase-memory-mcp" = @("claude", "codex", "opencode", "agent")
+  context7 = @("claude", "codex", "opencode", "agent"); playwright = @("claude", "codex", "opencode", "agent")
+  "mcp-servers" = @("claude", "codex", "opencode", "agent")
   "status-line" = @("claude", "codex"); "shared-config" = @("claude")
 }
 
@@ -36,7 +36,13 @@ if ($LASTEXITCODE -ne 0 -or -not [int]::TryParse(([string]$NodeVersion).Trim(), 
 
 function Test-CliInstalled([string]$Name) {
   if (Get-Command $Name -ErrorAction SilentlyContinue) { return $true }
-  if ($Name -ne "opencode") { return $false }
+  if ($Name -ne "opencode" -and $Name -ne "agent") { return $false }
+  if ($Name -eq "agent") {
+    foreach ($path in @($env:CURSOR_AGENT_BIN, (Join-Path $HOME ".local/bin/agent.exe"), (Join-Path $HOME ".local/bin/agent"), (Join-Path $HOME "bin/agent.exe"), (Join-Path $HOME "bin/agent"))) {
+      if ($path -and (Test-Path $path -PathType Leaf)) { return $true }
+    }
+    return $false
+  }
   # The official OpenCode installer writes here before the updated PATH is
   # visible to the current shell. Also honor its documented custom locations.
   $directories = @($env:OPENCODE_INSTALL_DIR, $env:XDG_BIN_DIR, (Join-Path $HOME "bin"), (Join-Path $HOME ".opencode/bin")) |
@@ -49,8 +55,8 @@ function Test-CliInstalled([string]$Name) {
   return $false
 }
 
-$Detected = @("claude", "codex", "opencode") | Where-Object { Test-CliInstalled $_ }
-if ($Detected.Count -eq 0) { throw "No supported CLI found. Install Claude Code, Codex, or OpenCode." }
+$Detected = @("claude", "codex", "opencode", "agent") | Where-Object { Test-CliInstalled $_ }
+if ($Detected.Count -eq 0) { throw "No supported CLI found. Install Claude Code, Codex, OpenCode, or Cursor Agent." }
 
 # Arrow-key menu that repaints the whole console each frame (Clear() first), so
 # navigation never duplicates lines. single = pick one; multi = space-toggle
@@ -102,7 +108,7 @@ function Select-Host {
     return @($Cli)
   }
   if ($Detected.Count -eq 1) { return @($Detected[0]) }
-  if ([Console]::IsInputRedirected) { throw "Multiple CLIs detected; pass -Cli claude|codex|opencode|all." }
+  if ([Console]::IsInputRedirected) { throw "Multiple CLIs detected; pass -Cli claude|codex|opencode|agent|all." }
   $choice = @(Select-Menu -Mode single -Items (@($Detected) + "all") -Title "Select target host:")[0]
   if ($choice -eq "all") { return $Detected }
   return @($choice)
@@ -171,6 +177,40 @@ function Install-Omnigent {
     (Join-Path $repo "skills/generator/claim.sh"),
     (Join-Path $repo "skills/generator/claim.ps1")
   ) $parentGenerator -Force
+}
+
+function Install-AgentPlugin([string]$Name) {
+  if ($DryRun) { Write-Host "DRY RUN - install Cursor Agent plugin at $HOME/.cursor/plugins/local/$Name"; return }
+  if (-not (Test-CliInstalled agent)) { throw "agent is required to install the harness Cursor Agent plugin" }
+  $source = Get-Repository
+  $dest = Join-Path $HOME ".cursor/plugins/local/$Name"
+  New-Item -ItemType Directory -Force (Join-Path $dest ".cursor-plugin"), (Join-Path $dest "skills"), (Join-Path $dest "agents"), (Join-Path $dest "commands"), (Join-Path $dest "assets") | Out-Null
+  Copy-Item (Join-Path $source ".cursor-plugin/plugin.json") (Join-Path $dest ".cursor-plugin/") -Force
+  Copy-Item (Join-Path $source "skills/*") (Join-Path $dest "skills") -Recurse -Force
+  Get-ChildItem (Join-Path $source "agents/*.md") -ErrorAction SilentlyContinue | ForEach-Object {
+    Copy-Item $_.FullName (Join-Path $dest "agents/") -Force
+  }
+  if (Test-Path (Join-Path $source "assets/banner.svg")) {
+    Copy-Item (Join-Path $source "assets/banner.svg") (Join-Path $dest "assets/") -Force
+  }
+  if (Test-Path (Join-Path $source ".mcp.json")) { Copy-Item (Join-Path $source ".mcp.json") $dest -Force }
+  if (Test-Path (Join-Path $source "AGENTS.md")) { Copy-Item (Join-Path $source "AGENTS.md") $dest -Force }
+  Get-ChildItem (Join-Path $source "skills/*/SKILL.md") -ErrorAction SilentlyContinue | ForEach-Object {
+    Copy-Item $_.FullName (Join-Path $dest "commands/harness-$($_.Directory.Name).md") -Force
+  }
+}
+
+function Set-CursorMcp([string]$Name, $Entry) {
+  $dir = Join-Path $HOME ".cursor"; $config = Join-Path $dir "mcp.json"
+  New-Item -ItemType Directory -Force $dir | Out-Null
+  if (-not (Test-Path $config)) { "{}" | Set-Content $config -Encoding utf8 }
+  Copy-Item $config "$config.pre-harness.bak" -Force
+  $json = Get-Content $config -Raw | ConvertFrom-Json
+  if (-not $json.mcpServers) { $json | Add-Member -Force NoteProperty mcpServers ([pscustomobject]@{}) }
+  $json.mcpServers | Add-Member -Force NoteProperty $Name $Entry
+  $temp = "$config.$PID.tmp"
+  $json | ConvertTo-Json -Depth 20 | Set-Content $temp -Encoding utf8
+  Move-Item $temp $config -Force
 }
 
 function Install-OpenCodePlugin([string]$Name) {
@@ -370,6 +410,15 @@ function Install-McpInventory {
             }
           Set-OpenCodeMcp $property.Name $entry
         }
+        agent {
+          $entry = if ($server.url) { [pscustomobject]@{ type="http"; url=$server.url } }
+            else {
+              $local = @{ type="stdio"; command=$server.command; args=@($server.args) }
+              if ($server.env) { $local.env = $server.env }
+              [pscustomobject]$local
+            }
+          Set-CursorMcp $property.Name $entry
+        }
       }
     }
   }
@@ -400,6 +449,7 @@ function Install-Memory {
       }
       codex { Invoke-Native codex @("mcp", "add", "codebase-memory-mcp", "--", $binary.Source) }
       opencode { Set-OpenCodeMcp "codebase-memory-mcp" ([pscustomobject]@{ type="local"; command=@($binary.Source); enabled=$true }) }
+      agent { Set-CursorMcp "codebase-memory-mcp" ([pscustomobject]@{ type="stdio"; command=$binary.Source; args=@() }) }
     }
   }
 }
@@ -421,9 +471,7 @@ function Install-SkillCreator {
         & codex plugin marketplace upgrade $CodexMarketplace *> $null
         Invoke-Native codex @("plugin", "add", "skill-creator@$CodexMarketplace")
       }
-      pi {
-        & pi install "https://github.com/$MarketplaceRepo.git" *> $null
-      }
+      agent { Install-AgentPlugin "skill-creator" }
     }
   }
 }
@@ -452,6 +500,7 @@ function Install-PortableMcp([string]$Name) {
           else { [pscustomobject]@{ type="local"; command=@($server.command) + @($server.args); enabled=$true } }
         Set-OpenCodeMcp $Name $entry
       }
+      agent { Set-CursorMcp $Name $server }
     }
   }
 }
@@ -519,6 +568,7 @@ foreach ($item in $Selected) {
         } else { Invoke-Native codex @("plugin", "add", "$item@$CodexMarketplace") }
       }
       opencode { Install-OpenCodePlugin $item }
+      agent { Install-AgentPlugin $item }
     }
   }
 }

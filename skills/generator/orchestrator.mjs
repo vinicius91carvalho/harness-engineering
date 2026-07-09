@@ -19,7 +19,7 @@ for (let i = 2; i < process.argv.length; i += 2) {
   if (!key?.startsWith('--') || value === undefined) fail(`invalid argument: ${key || ''}`)
   options[key.slice(2)] = value
 }
-if (!['claude', 'codex', 'opencode', 'pi'].includes(options.host)) fail('--host must be claude, codex, opencode, or pi')
+if (!['claude', 'codex', 'opencode', 'pi', 'agent'].includes(options.host)) fail('--host must be claude, codex, opencode, pi, or agent')
 if (!options.workdir) fail('--workdir is required')
 
 options.workdir = realpathSync(resolve(options.workdir))
@@ -28,7 +28,7 @@ const claimScript = options['claim-script'] || resolve(dirname(fileURLToPath(imp
 const wanted = (options.features || '').split(',').filter(Boolean)
 const commands = {
   claude: (prompt) => ['claude', ['-p', prompt]],
-  codex: (prompt) => ['codex', ['exec', prompt]],
+  codex: (prompt) => ['codex', ['exec', '--dangerously-bypass-approvals-and-sandbox', prompt]],
   // Pinned explicitly for the same reason `pi` is below -- opencode's own
   // default model may differ from what the account is provisioned to use
   // at volume, and the harness shouldn't depend on whatever is currently
@@ -54,6 +54,7 @@ const commands = {
   // per-model metadata (maxTokens, contextWindow) under the provider's
   // correct native key.
   pi: (prompt) => ['pi', ['--model', 'opencode-go/deepseek-v4-flash', '-p', prompt]],
+  agent: (prompt) => ['agent', ['-p', '--force', '--trust', prompt]],
 }
 const roleNames = {
   CODING: 'coding', QA: 'validation', INTEGRATION_QA: 'validation',
@@ -189,8 +190,8 @@ async function readRoles(workdir = options.workdir) {
   const normalized = {}
   const normalizeCandidate = (role, value) => {
     const candidate = typeof value === 'string' ? { harness: value } : value
-    if (!candidate || !['claude', 'codex', 'opencode', 'pi'].includes(candidate.harness)) {
-      fail(`${file}: ${role} candidates must use claude, codex, opencode, or pi`)
+    if (!candidate || !['claude', 'codex', 'opencode', 'pi', 'agent'].includes(candidate.harness)) {
+      fail(`${file}: ${role} candidates must use claude, codex, opencode, pi, or agent`)
     }
     if (candidate.model !== undefined && (typeof candidate.model !== 'string' || !candidate.model.trim())) {
       fail(`${file}: ${role} model must be a non-empty string`)
@@ -201,7 +202,7 @@ async function readRoles(workdir = options.workdir) {
     if (!Array.isArray(roles[role]) || !roles[role].length) fail(`${file}: ${role} must be a non-empty array`)
     normalized[role] = roles[role].map((value) => normalizeCandidate(role, value))
   }
-  // Optional free/no-credits tier: validated like the four roles (claude/codex/opencode/pi, optional model). Absent/empty is fine.
+  // Optional free/no-credits tier: validated like the five roles (claude/codex/opencode/pi/agent, optional model). Absent/empty is fine.
   if (Array.isArray(roles.noCredits)) normalized.noCredits = roles.noCredits.map((value) => normalizeCandidate('noCredits', value))
   return normalized
 }

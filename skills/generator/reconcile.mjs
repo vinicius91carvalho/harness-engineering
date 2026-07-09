@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFile, rename, writeFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
 import { resolve } from 'node:path'
 
 function fail(message) {
@@ -21,6 +22,31 @@ function attribute(text, name) {
 function body(text, tag) {
   return text.match(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`))?.[1]
     ?.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() || ''
+}
+
+function gitOutput(args) {
+  const result = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' })
+  return result.status === 0 ? result.stdout.trim() : ''
+}
+
+function mainQueueFallback() {
+  const prefix = gitOutput(['rev-parse', '--show-prefix'])
+  const source = gitOutput(['show', `main:${prefix}feature_list.json`])
+  if (!source) return null
+  try { return JSON.parse(source) } catch { return null }
+}
+
+async function readQueue() {
+  try {
+    return JSON.parse(await readFile(queueFile, 'utf8'))
+  } catch (error) {
+    const fallback = mainQueueFallback()
+    if (!fallback) throw error
+    const temporary = `${queueFile}.tmp.${process.pid}`
+    await writeFile(temporary, `${JSON.stringify(fallback, null, 2)}\n`)
+    await rename(temporary, queueFile)
+    return fallback
+  }
 }
 
 function parseChecks(xml) {
@@ -66,7 +92,7 @@ function parseChecks(xml) {
 let xml, parsed
 try {
   xml = await readFile(specFile, 'utf8')
-  parsed = JSON.parse(await readFile(queueFile, 'utf8'))
+  parsed = await readQueue()
 } catch (error) {
   fail(error.message)
 }

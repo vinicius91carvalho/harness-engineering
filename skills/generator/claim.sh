@@ -63,7 +63,7 @@ acquire_state_lock() {
   while :; do
     if mkdir "$ld" 2>/dev/null; then
       printf '%s\n' "$token" > "$ld/owner"
-      hostname > "$ld/host" 2>/dev/null || echo unknown > "$ld/host"
+      printf '%s\n' "$current_host" > "$ld/host"
       sleep 0.02
       if [ "$(cat "$ld/owner" 2>/dev/null || true)" = "$token" ]; then
         STATE_LOCK_TOKEN=$token
@@ -152,7 +152,27 @@ select_claim_locked() {
   [ -n "$prefix" ] || wt="$checkout"
   if [ -d "$checkout" ] && [ "$(git -C "$checkout" rev-parse --abbrev-ref HEAD 2>/dev/null || true)" = "$branch" ] \
      && git -C "$repo" worktree list --porcelain | grep -qx "worktree $checkout"; then
-    :                                                         # reuse worktree already on $branch
+    if ! jq -e . "$wt/feature_list.json" >/dev/null 2>&1; then
+      # ponytail: a corrupt queue file should be repaired in place from main so
+      # we keep the branch's other progress instead of re-cloning the bad file.
+      git -C "$repo" restore -s main -- feature_list.json >/dev/null 2>&1 || true
+    fi
+    if jq -e . "$wt/feature_list.json" >/dev/null 2>&1; then
+      :                                                         # reuse worktree already on $branch
+    else
+      # ponytail: if in-place repair failed, rebuild the checkout but still
+      # seed the queue from main rather than inheriting the broken snapshot.
+      if [ -d "$checkout" ]; then
+        git -C "$repo" worktree remove --force "$checkout" 2>/dev/null
+        git -C "$repo" worktree prune
+      fi
+      if git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
+        git -C "$repo" worktree add "$checkout" "$branch" >/dev/null
+      else
+        git -C "$repo" worktree add "$checkout" -b "$branch" main >/dev/null || return 75
+      fi
+      git -C "$repo" restore -s main -- feature_list.json >/dev/null 2>&1 || true
+    fi
   else
     # ponytail: only verifies branch identity + worktree registration, not full working-tree cleanliness (dirty/untracked files)
     if [ -d "$checkout" ]; then
@@ -164,6 +184,7 @@ select_claim_locked() {
     else
       git -C "$repo" worktree add "$checkout" -b "$branch" main >/dev/null || return 75
     fi
+    git -C "$repo" restore -s main -- feature_list.json >/dev/null 2>&1 || true
   fi
 
   local started; started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -239,8 +260,8 @@ release() {
 merge_acquire() {
   local repo="$1" session="${2:-$$}" ld current_host owner_host owner_pid; ld="$(mergeld "$repo")"
   mkdir -p "$(dirname "$ld")"
+  current_host="$(hostname 2>/dev/null || echo unknown)"
   if ! mkdir "$ld" 2>/dev/null; then
-    current_host="$(hostname 2>/dev/null || echo unknown)"
     owner_host="$(cat "$ld/host" 2>/dev/null || true)"
     owner_pid="$(cat "$ld/owner" 2>/dev/null || true)"
     if [ "$owner_host" = "$current_host" ] && { [ -z "$owner_pid" ] || ! kill -0 "$owner_pid" 2>/dev/null; }; then
@@ -251,7 +272,7 @@ merge_acquire() {
     fi
   fi
   echo "$session" > "$ld/owner"
-  hostname > "$ld/host" 2>/dev/null || echo unknown > "$ld/host"
+  printf '%s\n' "$current_host" > "$ld/host"
   # integration dir = whichever worktree has main checked out, else create one
   local integ; integ="$(git -C "$repo" worktree list --porcelain | awk '
     /^worktree /{w=$2} /^branch refs\/heads\/main$/{print w; exit}')"

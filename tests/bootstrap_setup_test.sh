@@ -4,18 +4,44 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 SCRIPT="$ROOT/omnigent/harness-engineering/scripts/bootstrap-setup.sh"
 trap '[ -z "${TMP:-}" ] || rm -rf "$TMP"' EXIT
 
-# Stub body shared by all three hosts: `<host> <subcommand-or-flag> <prompt>`
-# (codex exec, claude -p, opencode run) all pass the prompt as arg 2. First
+# Stub body shared by all three hosts: `<host> <subcommand-or-flag> [flags] <prompt>`.
+# First
 # call has no answer on file yet, so it "asks" a question and exits without
 # writing project_specs.xml; second call must see the folded-back question
 # + answer in its prompt before it writes the spec.
 write_stub() {
   bin_dir=$1; host=$2
+  if [ "$host" = agent ]; then
+    cat > "$bin_dir/$host" <<'SH'
+#!/bin/sh
+set -eu
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -p|--print|--force|--trust) shift ;;
+    *) break ;;
+  esac
+done
+prompt=$1
+count_file="$PWD/.harness/agent-call-count"
+count=0; [ ! -f "$count_file" ] || count=$(cat "$count_file")
+count=$((count + 1)); printf '%s' "$count" > "$count_file"
+if [ "$count" -eq 1 ]; then
+  echo "Found projects: core, web. Which should I initialize?"
+  exit 0
+fi
+printf '%s' "$prompt" | grep -q 'Which should I initialize'
+printf '%s' "$prompt" | grep -q 'initialize core'
+echo '<project_specification/>' > "$PWD/project_specs.xml"
+echo '[]' > "$PWD/feature_list.json"
+SH
+    chmod +x "$bin_dir/$host"
+    return
+  fi
   cat > "$bin_dir/$host" <<SH
 #!/bin/sh
 set -eu
-shift # drop the subcommand/flag ("exec" / "-p" / "run")
-prompt=\$1
+prompt=
+for arg in "\$@"; do prompt=\$arg; done
 count_file="\$PWD/.harness/$host-call-count"
 count=0; [ ! -f "\$count_file" ] || count=\$(cat "\$count_file")
 count=\$((count + 1)); printf '%s' "\$count" > "\$count_file"
@@ -41,7 +67,7 @@ wait_for_pid() {
 # Full ask -> surface -> answer -> relaunch -> ready cycle, once per host, so
 # the ASKED/WAITING_FOR_ANSWER relay logic is proven host-agnostic and not
 # just something that happens to work for codex.
-for host in opencode codex claude; do
+for host in opencode codex claude agent; do
   TMP=$(mktemp -d "${TMPDIR:-/tmp}/harness-bootstrap-setup-test.XXXXXX")
   mkdir -p "$TMP/bin" "$TMP/repo"
   write_stub "$TMP/bin" "$host"
@@ -85,7 +111,7 @@ echo 'ok - bootstrap-setup.sh reports NO_HOST when no coding CLI is on PATH'
 # All three on PATH: opencode is preferred (matches roles.example.json's own ordering).
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/harness-bootstrap-setup-test.XXXXXX")
 mkdir -p "$TMP/bin" "$TMP/repo"
-for host in opencode codex claude; do write_stub "$TMP/bin" "$host"; done
+for host in opencode codex claude agent; do write_stub "$TMP/bin" "$host"; done
 out=$(cd "$TMP/repo" && PATH="$TMP/bin:/usr/bin:/bin" bash "$SCRIPT" check "$TMP/repo")
 [ "$out" = "RUNNING opencode" ]
 wait_for_pid "$TMP/repo"

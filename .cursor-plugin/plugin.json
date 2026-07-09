@@ -1,0 +1,21 @@
+{
+  "name": "harness",
+  "version": "1.1.1",
+  "description": "AI Harness Engineering System - A curated developer workflow with spec→build→QA pipeline, learning loop, and marketplace",
+  "author": {
+    "name": "Vinicius Carvalho",
+    "url": "https://github.com/vinicius91carvalho"
+  },
+  "homepage": "https://github.com/vinicius91carvalho/harness-engineering",
+  "repository": "https://github.com/vinicius91carvalho/harness-engineering",
+  "license": "MIT",
+  "keywords": [
+    "harness",
+    "workflow",
+    "spec-build-qa",
+    "learning-loop",
+    "marketplace"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
+}

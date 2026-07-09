@@ -20,7 +20,7 @@ curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineeri
 ```
 
 Steps 2 and 3 are typed **inside your coding tool's chat** (Claude Code, Codex,
-or OpenCode) — not in a terminal:
+OpenCode, or Cursor Agent) — not in a terminal:
 
 **2. Describe** what you want, in plain language.
 ```text
@@ -47,7 +47,9 @@ changes, and lost conversations.
 [Claude Code](https://code.claude.com/docs/en/overview),
 [Codex](https://developers.openai.com/codex/), and
 [OpenCode](https://opencode.ai/) are interactive tools that can run the harness.
-Pi is a fourth, headless harness: the orchestrator can dispatch work to it
+[Cursor Agent](https://cursor.com/docs/cli/overview) is a fifth interactive host
+with the same skills installed as a local plugin.
+Pi is a headless harness: the orchestrator can dispatch work to it
 directly (`--host pi`), and it can also run as the Omnigent supervisor relay
 for small-context hosts. [Omnigent](https://omnigent.ai/) is another optional
 tool: it provides a control surface and routes work between those coding
@@ -61,7 +63,7 @@ the others:
 
 | Context | What it is | Required? |
 | --- | --- | --- |
-| **Plugin marketplace** | `install.sh`/`install.ps1` and the marketplace manifests that put harness commands, skills, and other listed plugins into Claude Code, Codex, or OpenCode. | Yes, to install anything. |
+| **Plugin marketplace** | `install.sh`/`install.ps1` and the marketplace manifests that put harness commands, skills, and other listed plugins into Claude Code, Codex, OpenCode, or Cursor Agent. | Yes, to install anything. |
 | **Spec → build → QA → Goal Review pipeline** | The harness workflow itself: `project_specs.xml`, `feature_list.json`, the orchestrator, and Goal Review. This is "the harness." | Yes, this is the product. |
 | **Omnigent agent bundle** | An optional control surface and tool/model router (`omnigent/harness-engineering/`) that starts the harness and routes work across candidate models, including open-source ones. The installer copies the orchestrator (`harness-control.mjs` + generator scripts) alongside the bundle so the supervisor can call it from a known path. | No, direct tool execution works without it. |
 | **MCP servers** | Optional Model Context Protocol integrations (e.g. `codebase-memory-mcp`, Bright Data, Playwright) configured per host and backed up sanitized into `config/mcp.json`. | No, unrelated to whether the pipeline runs. |
@@ -85,23 +87,23 @@ keeps a durable, checkable record so "done" means the work actually passes.
 - **Parallel work is governed.** Dependencies, claims, resource limits, and
   serialized merges prevent workers from colliding.
 - **Tools are replaceable.** The same workflow runs through Claude Code, Codex,
-  OpenCode, Pi, or optional Omnigent routing.
+  OpenCode, Cursor Agent, Pi, or optional Omnigent routing.
 
 ## Framework
 
 The harness exposes workflow and support commands:
 
-| Task | Claude Code / Codex | OpenCode | Purpose |
-| --- | --- | --- | --- |
-| Set up existing code | `/harness:setup` | `/harness-setup` | Map an existing codebase and create its harness files. Takes no arguments. |
-| Plan new work | `/harness:planner` | `/harness-planner` | Turn a new product idea into `project_specs.xml`. |
-| Build or resume | `/harness:generator` | `/harness-generator` | Reconcile, build, independently test, integrate, retry, and resume work. |
-| Review the goal | `/harness:evaluator` | `/harness-evaluator` | Run an independent Goal Review against integrated `main`. |
-| Operate supervisor | `/harness:supervisor` | `/harness-supervisor` | Run and operate the detached supervisor. |
-| Capture lessons | `/harness:learning-loop` | `/harness-learning-loop` | Convert useful session lessons into reusable harness improvements. |
-| Back up configuration | `/harness:update-project` | `/harness-update-project` | Back up sanitized host configuration into this repository. |
+| Task | Claude Code / Codex | OpenCode | Cursor Agent | Purpose |
+| --- | --- | --- | --- | --- |
+| Set up existing code | `/harness:setup` | `/harness-setup` | `/harness-setup` | Map an existing codebase and create its harness files. Takes no arguments. |
+| Plan new work | `/harness:planner` | `/harness-planner` | `/harness-planner` | Turn a new product idea into `project_specs.xml`. |
+| Build or resume | `/harness:generator` | `/harness-generator` | `/harness-generator` | Reconcile, build, independently test, integrate, retry, and resume work. |
+| Review the goal | `/harness:evaluator` | `/harness-evaluator` | `/harness-evaluator` | Run an independent Goal Review against integrated `main`. |
+| Operate supervisor | `/harness:supervisor` | `/harness-supervisor` | `/harness-supervisor` | Run and operate the detached supervisor. |
+| Capture lessons | `/harness:learning-loop` | `/harness-learning-loop` | `/harness-learning-loop` | Convert useful session lessons into reusable harness improvements. |
+| Back up configuration | `/harness:update-project` | `/harness-update-project` | `/harness-update-project` | Back up sanitized host configuration into this repository. |
 
-Examples below use the colon form (Claude Code/Codex); OpenCode uses the hyphen form shown above.
+Examples below use the colon form (Claude Code/Codex); OpenCode and Cursor Agent use the hyphen form shown above.
 
 Planner uses the bundled grilling skill internally; it is not a separate harness
 workflow command. A user can still activate an installed grilling skill directly
@@ -157,7 +159,10 @@ See [CONTEXT.md](CONTEXT.md) for the full glossary.
    persisted `run_completed` event prove completion.
 
 Multiple generator sessions may claim independent contexts concurrently. A new
-session resumes durable state rather than restarting the project.
+session resumes durable state rather than restarting the project. Reused
+worktrees are sanity-checked on claim; if a cached `feature_list.json` is
+corrupt, the queue is repaired from `main` before reuse, and stale state-lock
+holders are stolen immediately when their host marker says they are dead.
 
 ### Key terms
 
@@ -193,18 +198,24 @@ Run the harness on the machine containing the Git repository. It requires:
 - **[Node.js 18 or newer](https://nodejs.org/)**, used by reconciliation, orchestration, setup
   inventory, and the supervisor;
 - one installed and authenticated tool: [Claude Code](https://code.claude.com/docs/en/overview),
-  [Codex](https://developers.openai.com/codex/), or [OpenCode](https://opencode.ai/).
+  [Codex](https://developers.openai.com/codex/), [OpenCode](https://opencode.ai/), or
+  [Cursor Agent](https://cursor.com/docs/cli/overview).
 
 ```sh
 git --version
 bash --version
 node --version
-claude --version  # or: codex --version / opencode --version
+claude --version  # or: codex --version / opencode --version / agent --version
 ```
 
 The installer requires `jq`; install it via your package manager (e.g. `apt
 install jq`, `brew install jq`) if it's missing. Omnigent, Tailscale, and
 additional plugins are optional.
+
+Codex workers are launched with `codex exec --dangerously-bypass-approvals-and-sandbox`
+because the harness worker must bind local ports and write commits inside its
+claimed worktree. Use the harness only on repositories where that automation
+level is acceptable.
 
 ## Install
 
@@ -414,6 +425,7 @@ that looks stuck.
 | Symptom | Action |
 | --- | --- |
 | Build says `blocked` | Three failed coding → QA → integration Attempts always stop for input — the harness never guesses past that point, and a `blocked` context never resumes on its own. Review the journal and evidence above, then explicitly resume with guidance: `bash "$GEN/claim.sh" resume "$PROJECT" "$CONTEXT" $$ force`, then rerun the orchestrator with a concise `--guidance "..."` describing how to proceed. |
+| Codex worker says writes or local listeners are blocked | Reinstall or refresh the harness scripts. Current Codex workers run with `--dangerously-bypass-approvals-and-sandbox` so they can edit the claimed worktree and open the assigned local port. |
 | Looks done but won't complete | The supervisor is still draining its retry queue (up to 5 attempts per context) before it can declare the goal complete. Check `node "$CONTROL" status --repo "$PROJECT"` and wait, or answer any pending Input Request. |
 | Worker crashed / stale lease | Recovery reclaims a `stale` context automatically once its heartbeat passes the lease timeout (`HARNESS_LEASE_TIMEOUT_SECONDS`, default 60s) — including one owned by a different host. Force only once you're sure the owning process is actually dead: `bash "$GEN/claim.sh" resume "$PROJECT" "$CONTEXT" $$ force` |
 
@@ -455,7 +467,7 @@ periodic status relay's cadence is configurable via `--summary-minutes`
 
 See the [complete guide](https://vinicius91carvalho.github.io/harness-engineering/#omnigent) for setup, priority/fallback behavior, and the Tailscale walkthrough.
 
-The harness also accepts `--host pi`, routing GLM 5.2 (via OpenRouter) as a coding/validation/review candidate; run Pi directly with `pi --model openrouter/z-ai/glm-5.2`.
+The harness also accepts `--host pi` and `--host agent`, routing headless workers through `pi -p` and `agent -p --force --trust` respectively.
 
 ### How the supervisor bundle works
 

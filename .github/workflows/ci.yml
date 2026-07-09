@@ -9,13 +9,14 @@ jobs:
 
       - name: JSON valid
         run: |
-          jq empty .claude-plugin/*.json .codex-plugin/*.json .agents/plugins/marketplace.json config/*.json opencode.json omnigent/harness-engineering/roles.example.json
+          jq empty .claude-plugin/*.json .codex-plugin/*.json .cursor-plugin/*.json .agents/plugins/marketplace.json config/*.json opencode.json omnigent/harness-engineering/roles.example.json
 
       - name: Catalog and asset contracts
         run: |
           ! jq -e '.plugins[] | select(.name == "codebase-memory-mcp")' .claude-plugin/marketplace.json
           ! jq -e '.plugins[] | select(.name == "remember")' .agents/plugins/marketplace.json
           test "$(jq -r .version .claude-plugin/plugin.json)" = "$(jq -r .version .codex-plugin/plugin.json)"
+          test "$(jq -r .version .claude-plugin/plugin.json)" = "$(jq -r .version .cursor-plugin/plugin.json)"
           for p in $(jq -r '.interface.logo, .interface.screenshots[]' .codex-plugin/plugin.json); do test -f "${p#./}"; done
 
       - name: Shell syntax

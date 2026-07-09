@@ -150,10 +150,10 @@ function number(name, fallback) {
 
 function workerHost() {
   if (options.host) return options.host
-  for (const host of ['codex', 'claude', 'opencode', 'pi']) {
+  for (const host of ['codex', 'claude', 'opencode', 'pi', 'agent']) {
     if (exec('sh', ['-c', `command -v ${host}`], repo, true).status === 0) return host
   }
-  fatal('no worker host found; pass --host claude|codex|opencode|pi')
+  fatal('no worker host found; pass --host claude|codex|opencode|pi|agent')
 }
 
 function baseConfig() {

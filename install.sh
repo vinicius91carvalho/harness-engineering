@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install the harness plugin and optional integrations for Claude Code, Codex, OpenCode, and Pi.
+# Install the harness plugin and optional integrations for Claude Code, Codex, OpenCode, Pi, and Cursor Agent.
 set -eu
 
 MARKETPLACE_REPO="vinicius91carvalho/harness-engineering"
@@ -20,7 +20,7 @@ OWN_TEMP_REPO=""
 usage() {
   cat <<'EOF'
 Usage: install.sh [--yes|--no] [--dry-run]
-                  [--cli claude|codex|opencode|pi|all]
+                  [--cli claude|codex|opencode|pi|agent|all]
                   [--scope user|project|local]
 
 --yes/--no choose checklist contents; --cli chooses target hosts.
@@ -51,7 +51,7 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
-case "$CLI_REQUEST" in ""|claude|codex|opencode|pi|all) ;; *) die "invalid --cli value: $CLI_REQUEST" ;; esac
+case "$CLI_REQUEST" in ""|claude|codex|opencode|pi|agent|all) ;; *) die "invalid --cli value: $CLI_REQUEST" ;; esac
 case "$SCOPE" in ""|user|project|local) ;; *) die "invalid --scope value: $SCOPE" ;; esac
 
 command -v node >/dev/null 2>&1 || die 'Node.js 18 or newer is required'
@@ -61,26 +61,38 @@ NODE_MAJOR=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null) || die '
 cli_installed() {
   cli=$1
   command -v "$cli" >/dev/null 2>&1 && return 0
-  [ "$cli" = opencode ] || return 1
-  # The official OpenCode installer writes here before the updated PATH is
-  # visible to the current shell. Also honor its documented custom locations.
-  for path in \
-    "${OPENCODE_INSTALL_DIR:-}/opencode" \
-    "${XDG_BIN_DIR:-}/opencode" \
-    "$HOME/bin/opencode" \
-    "$HOME/.opencode/bin/opencode"
-  do
-    [ "$path" != /opencode ] && [ -x "$path" ] && return 0
-  done
+  if [ "$cli" = opencode ]; then
+    # The official OpenCode installer writes here before the updated PATH is
+    # visible to the current shell. Also honor its documented custom locations.
+    for path in \
+      "${OPENCODE_INSTALL_DIR:-}/opencode" \
+      "${XDG_BIN_DIR:-}/opencode" \
+      "$HOME/bin/opencode" \
+      "$HOME/.opencode/bin/opencode"
+    do
+      [ "$path" != /opencode ] && [ -x "$path" ] && return 0
+    done
+    return 1
+  fi
+  if [ "$cli" = agent ]; then
+    for path in \
+      "${CURSOR_AGENT_BIN:-}" \
+      "$HOME/.local/bin/agent" \
+      "$HOME/bin/agent"
+    do
+      [ -n "$path" ] && [ -x "$path" ] && return 0
+    done
+    return 1
+  fi
   return 1
 }
 
 detected_clis=""
-for cli in claude codex opencode pi; do
+for cli in claude codex opencode pi agent; do
   cli_installed "$cli" && detected_clis="$detected_clis $cli"
 done
 detected_clis=${detected_clis# }
-[ -n "$detected_clis" ] || die 'no supported CLI found (install Claude Code, Codex, OpenCode, or Pi)'
+[ -n "$detected_clis" ] || die 'no supported CLI found (install Claude Code, Codex, OpenCode, Pi, or Cursor Agent)'
 
 tty_available() { [ -r /dev/tty ] && [ -w /dev/tty ] && (set +e; : </dev/tty) >/dev/null 2>&1; }
 word_count() { set -- $1; echo "$#"; }
@@ -177,7 +189,7 @@ select_cli() {
   fi
   count=$(word_count "$detected_clis")
   if [ "$count" -eq 1 ]; then CLI=$detected_clis; return; fi
-  tty_available || die "multiple CLIs detected ($detected_clis); pass --cli claude|codex|opencode|all"
+  tty_available || die "multiple CLIs detected ($detected_clis); pass --cli claude|codex|opencode|pi|agent|all"
 
   MENU_MODE=single; MENU_TITLE='Select target host:'; MENU_ITEMS="$detected_clis all"; MENU_CHECKED=
   select_menu
@@ -190,11 +202,11 @@ if [ -n "$SCOPE" ] && [ "$CLI" != claude ]; then die '--scope is only valid when
 
 plugin_clis() {
   case "$1" in
-    harness) echo 'claude codex opencode pi' ;;
-    omnigent|ponytail) echo 'claude codex opencode' ;;
-    skill-creator) echo 'claude codex opencode pi' ;;
-    codebase-memory-mcp|context7|playwright) echo 'claude codex opencode' ;;
-    mcp-servers) echo 'claude codex opencode' ;;
+    harness) echo 'claude codex opencode pi agent' ;;
+    omnigent|ponytail) echo 'claude codex opencode agent' ;;
+    skill-creator) echo 'claude codex opencode pi agent' ;;
+    codebase-memory-mcp|context7|playwright) echo 'claude codex opencode agent' ;;
+    mcp-servers) echo 'claude codex opencode agent' ;;
     status-line) echo 'claude codex' ;;
     shared-config) echo claude ;;
   esac
@@ -320,6 +332,28 @@ install_pi_extension() {
   pi install "https://github.com/$MARKETPLACE_REPO" >/dev/null || die 'pi install of harness failed'
 }
 
+install_agent_plugin() {
+  name=$1
+  if [ -n "$DRY" ]; then echo "DRY RUN — install Cursor Agent plugin at $HOME/.cursor/plugins/local/$name"; return; fi
+  command -v agent >/dev/null 2>&1 || cli_installed agent || die 'agent is required to install the harness Cursor Agent plugin'
+  ensure_repo
+  dest=$HOME/.cursor/plugins/local/$name
+  mkdir -p "$dest/.cursor-plugin" "$dest/skills" "$dest/agents" "$dest/commands" "$dest/assets"
+  cp "$TEMP_REPO/.cursor-plugin/plugin.json" "$dest/.cursor-plugin/"
+  cp -R "$TEMP_REPO/skills"/. "$dest/skills"/
+  if [ -d "$TEMP_REPO/agents" ]; then
+    for path in "$TEMP_REPO"/agents/*.md; do [ -f "$path" ] || continue; cp "$path" "$dest/agents/"; done
+  fi
+  if [ -f "$TEMP_REPO/assets/banner.svg" ]; then cp "$TEMP_REPO/assets/banner.svg" "$dest/assets/"; fi
+  if [ -f "$TEMP_REPO/.mcp.json" ]; then cp "$TEMP_REPO/.mcp.json" "$dest/"; fi
+  if [ -f "$TEMP_REPO/AGENTS.md" ]; then cp "$TEMP_REPO/AGENTS.md" "$dest/"; fi
+  for path in "$TEMP_REPO"/skills/*; do
+    [ -d "$path" ] || continue
+    [ -f "$path/SKILL.md" ] || continue
+    cp "$path/SKILL.md" "$dest/commands/harness-$(basename "$path").md"
+  done
+}
+
 install_plugin() {
   name=$1; cli=$2
   has_word "$(plugin_clis "$name")" "$cli" || return 0
@@ -340,6 +374,7 @@ install_plugin() {
       ;;
     opencode) install_opencode_plugin "$name" ;;
     pi) install_pi_extension ;;
+    agent) install_agent_plugin "$name" ;;
   esac
 }
 
@@ -449,6 +484,9 @@ install_mcp_inventory() {
         opencode)
           server=$(printf '%s' "$json" | jq -c 'if .url then {type:"remote",url:.url,enabled:true} else {type:"local",command:([.command]+(.args//[])),enabled:true} + (if .env then {environment:.env} else {} end) end')
           atomic_opencode_mcp "$name" "$server" ;;
+        agent)
+          server=$(printf '%s' "$json" | jq -c 'if .url then {type:"http",url:.url} else {type:"stdio",command:.command,args:(.args//[])} + (if .env then {env:.env} else {} end) end')
+          atomic_cursor_mcp "$name" "$server" ;;
       esac
     done
   done
@@ -482,6 +520,18 @@ atomic_opencode_plugin_add() {
   atomic_opencode_json '.plugin = (.plugin // []) | if (.plugin | index($spec)) then . else .plugin += [$spec] end' --arg spec "$spec"
 }
 
+atomic_cursor_mcp() {
+  name=$1; server=$2
+  ensure_jq; dir=$HOME/.cursor; cfg=$dir/mcp.json; mkdir -p "$dir"
+  [ -f "$cfg" ] || printf '{}\n' >"$cfg"
+  cp "$cfg" "$cfg.pre-harness.bak"
+  tmp=$(mktemp "$dir/mcp.json.XXXXXX")
+  jq --arg name "$name" --argjson server "$server" \
+    '.mcpServers = (.mcpServers // {}) | .mcpServers[$name] = $server' "$cfg" >"$tmp" \
+    || { rm -f "$tmp"; die "invalid Cursor MCP JSON in $cfg (backup retained)"; }
+  mv "$tmp" "$cfg"
+}
+
 install_memory() {
   if [ -n "$DRY" ]; then
     echo "DRY RUN — download signed codebase-memory-mcp binary with --skip-config"
@@ -506,6 +556,7 @@ install_memory() {
         claude mcp add-json --scope user codebase-memory-mcp "{\"command\":\"$binary\",\"args\":[]}" || die 'Claude MCP configuration failed' ;;
       codex) codex mcp add codebase-memory-mcp -- "$binary" || die 'Codex MCP configuration failed' ;;
       opencode) atomic_opencode_mcp codebase-memory-mcp "$(jq -nc --arg bin "$binary" '{type:"local",command:[$bin],enabled:true}')" ;;
+      agent) atomic_cursor_mcp codebase-memory-mcp "$(jq -nc --arg bin "$binary" '{type:"stdio",command:$bin,args:[]}')" ;;
     esac
   done
 }
@@ -526,6 +577,7 @@ install_skill_creator() {
       opencode) install_opencode_plugin skill-creator ;;
       codex) install_plugin skill-creator "$cli" ;;
       pi) install_pi_extension ;;
+      agent) install_agent_plugin skill-creator ;;
     esac
   done
 }
@@ -552,6 +604,9 @@ install_portable_mcp() {
       opencode)
         server=$(printf '%s' "$json" | jq -c 'if .url then {type:"remote",url:.url,enabled:true} else {type:"local",command:([.command]+.args),enabled:true} end')
         atomic_opencode_mcp "$name" "$server" ;;
+      agent)
+        server=$(printf '%s' "$json" | jq -c 'if .url then {type:"http",url:.url} else {type:"stdio",command:.command,args:(.args//[])} end')
+        atomic_cursor_mcp "$name" "$server" ;;
     esac
   done
 }

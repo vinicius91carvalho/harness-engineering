@@ -6,7 +6,7 @@ Everything below is a row in the installer's checklist. Toggle whatever you want
 
 | Plugin | CLI Support | Namespace | Source | What it does |
 | --- | --- | --- | --- | --- |
-| `harness` | claude, opencode, codex | `/harness:*` | this repo | My own skills, agents, and scripts — the [spec→build→QA pipeline](../README.md#framework) (`planner`/`generator`/`evaluator` + agents), the [learning loop](../README.md#maintenance), `/harness:update-project`, and the status line. |
+| `harness` | claude, opencode, codex, agent | `/harness:*` or `/harness-*` | this repo | My own skills, agents, and scripts — the [spec→build→QA pipeline](../README.md#framework) (`planner`/`generator`/`evaluator` + agents), the [learning loop](../README.md#maintenance), `/harness:update-project`, and the status line. |
 | `ponytail` | claude, opencode, codex | `/ponytail:*` | [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail) | Lazy senior-dev mode — forces the simplest solution that works (YAGNI, stdlib first, no unrequested abstractions). |
 | `skill-creator` | claude, opencode, codex | agent-based | [anthropics/skills](https://github.com/anthropics/skills) | Multi-agent pipeline to create, evaluate, benchmark, and refine AI coding skills. |
 | `codebase-memory-mcp` | claude, opencode, codex | MCP/tool integration | [DeusData/codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) | Signed local code-intelligence binary for 158 languages. Replaces the Claude-only TypeScript, Pyright, and Rust LSP plugins; auto-indexing is enabled during install. |

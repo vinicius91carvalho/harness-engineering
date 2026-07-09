@@ -93,6 +93,23 @@ test -f "$(jq -r .worktree "$TMP/web.json")/feature_list.json"
 test -f "$(jq -r .worktree "$TMP/api.json")/feature_list.json"
 echo 'ok - monorepo projects keep independent queues, claims, branches, and worktree directories'
 
+mkdir -p "$TMP/corrupt"
+git -C "$TMP/corrupt" init -b main -q
+git -C "$TMP/corrupt" config user.name test
+git -C "$TMP/corrupt" config user.email test@example.invalid
+cat >"$TMP/corrupt/feature_list.json" <<'JSON'
+[{"id":"A","context":"core","acceptance_checks":["AC-A"],"depends_on":[],"implementation":false,"qa":false,"integration":false}]
+JSON
+git -C "$TMP/corrupt" add feature_list.json
+git -C "$TMP/corrupt" commit -qm init
+git -C "$TMP/corrupt" worktree add "$TMP/corrupt-wt-root-core" -b gen/root-core main >/dev/null
+printf '{\"id\":\"broken\",\"context\":\"core\"' >"$TMP/corrupt-wt-root-core/feature_list.json"
+bash "$ROOT/skills/generator/claim.sh" select-claim "$TMP/corrupt" all '' 4000 >"$TMP/corrupt-claim.json"
+CORRUPT_WT=$(jq -r .worktree "$TMP/corrupt-claim.json")
+test -f "$CORRUPT_WT/feature_list.json"
+jq -e . "$CORRUPT_WT/feature_list.json" >/dev/null
+echo 'ok - a reused worktree with a corrupt feature_list.json is repaired before claim reuse'
+
 WEB_WT=$(jq -r .worktree "$TMP/web.json")
 echo branch >"$WEB_WT/collision"
 git -C "$WEB_WT" add collision
@@ -169,9 +186,12 @@ echo 'ok - the per-run strike scoreboard clears only when the last claim release
 # merge lock already guards against, ported to the state lock.
 STATE_LOCK_DIR="$TMP/repo/.git/harness-locks/generator-state"
 mkdir -p "$STATE_LOCK_DIR"
-( exit 0 ) & dead_pid=$!; wait "$dead_pid" 2>/dev/null || true
+# ponytail: use an obviously nonexistent PID so the lock-steal check is
+# deterministic instead of depending on whether the OS reuses a short-lived PID.
+dead_pid=99999999
 printf '%s\n' "$dead_pid.1.$(date +%s)" > "$STATE_LOCK_DIR/owner"
-hostname > "$STATE_LOCK_DIR/host" 2>/dev/null || echo unknown > "$STATE_LOCK_DIR/host"
+current_host="$(hostname 2>/dev/null || echo unknown)"
+printf '%s\n' "$current_host" > "$STATE_LOCK_DIR/host"
 start=$(date +%s)
 bash "$ROOT/skills/generator/claim.sh" resume "$TMP/repo" alpha 9001 >/dev/null 2>&1 || true
 elapsed=$(( $(date +%s) - start ))

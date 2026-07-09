@@ -7,10 +7,10 @@ jq -e '
   ([.coding,.validation,.repairPlanning,.goalReview,.noCredits] | all(length > 0)) and
   ([.coding[],.validation[],.repairPlanning[],.goalReview[],.noCredits[]] |
     all((if type == "string" then . else .harness end) as $h |
-      ["claude","codex","opencode","pi"] | index($h)))
+      ["claude","codex","opencode","pi","agent"] | index($h)))
 ' "$BUNDLE/roles.example.json" >/dev/null
 
-for harness in claude codex opencode pi; do
+for harness in claude codex opencode pi agent; do
   file="$BUNDLE/agents/$harness/config.yaml"
   test -s "$file"
   grep -q '^spec_version: 1$' "$file"

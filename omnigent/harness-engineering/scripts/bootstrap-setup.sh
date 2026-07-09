@@ -63,7 +63,7 @@ case "$cmd" in
     fi
 
     host=""
-    for candidate in opencode codex claude; do
+    for candidate in opencode codex claude agent; do
       command -v "$candidate" >/dev/null 2>&1 && { host="$candidate"; break; }
     done
     if [ -z "$host" ]; then
@@ -108,9 +108,10 @@ unavoidable, print the question as your final output and stop."
     echo "$host" > "$HOSTFILE"
     cd "$REPO" # host CLI must scan $REPO, not the relay/omni server's own cwd (a monorepo root)
     case "$host" in
-      codex)    nohup timeout "$BOOTSTRAP_TIMEOUT_SECONDS" codex exec "$PROMPT" >"$LOGFILE" 2>&1 & ;;
+      codex)    nohup timeout "$BOOTSTRAP_TIMEOUT_SECONDS" codex exec --dangerously-bypass-approvals-and-sandbox "$PROMPT" >"$LOGFILE" 2>&1 & ;;
       claude)   nohup timeout "$BOOTSTRAP_TIMEOUT_SECONDS" claude -p "$PROMPT" >"$LOGFILE" 2>&1 & ;;
       opencode) nohup timeout "$BOOTSTRAP_TIMEOUT_SECONDS" opencode run "$PROMPT" >"$LOGFILE" 2>&1 & ;;
+      agent)    nohup timeout "$BOOTSTRAP_TIMEOUT_SECONDS" agent -p --force --trust "$PROMPT" >"$LOGFILE" 2>&1 & ;;
     esac
     echo $! > "$PIDFILE"
     echo "RUNNING $host"

@@ -14,7 +14,7 @@ must pass through its Resource Governor.
 Let `REPO` be the selected harness project directory (which may be below the Git
 top-level), `CONTROL` this skill directory, and
 `WORKER_HOST` one authenticated CLI installed on the machine: `claude`, `codex`,
-or `opencode`. An external control surface is not a `WORKER_HOST`; Omnigent role
+`opencode`, or `agent`. An external control surface is not a `WORKER_HOST`; Omnigent role
 routing is selected by project-local `.harness/roles.json` instead.
 
 At a monorepo root, resolve one project through `.harness/projects.json` before

@@ -305,8 +305,8 @@ echo 'ok - single-harness Omnigent records same-harness validation fallback'
 if "$NODE" "$ROOT/skills/generator/orchestrator.mjs" --host invalid --workdir "$TMP/repo" 2>"$TMP/err"; then
   echo 'not ok - invalid host accepted' >&2; exit 1
 fi
-grep -q 'claude, codex, opencode, or pi' "$TMP/err"
-echo 'ok - one state machine exposes only the four thin host adapters'
+grep -q 'claude, codex, opencode, pi, or agent' "$TMP/err"
+echo 'ok - one state machine exposes only the five thin host adapters'
 
 mkdir -p "$TMP/cancel/.harness"
 git -C "$TMP/cancel" init -b main -q

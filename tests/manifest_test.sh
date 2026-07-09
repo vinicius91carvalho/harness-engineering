@@ -36,10 +36,12 @@ echo 'ok - every skill directory name matches its own SKILL.md frontmatter name'
 test "$(jq -r .name .claude-plugin/plugin.json)" = "harness"
 test "$(jq -r .skills .codex-plugin/plugin.json)" = "./skills/"
 test -d "$(jq -r .skills .codex-plugin/plugin.json)"
+test "$(jq -r .skills .cursor-plugin/plugin.json)" = "./skills/"
+test -d "$(jq -r .skills .cursor-plugin/plugin.json)"
 test -f opencode.json
 jq empty opencode.json
 grep -qF 'skills/*/SKILL.md' install.sh
-echo 'ok - Claude, Codex, and OpenCode manifests all key off the same skills/ directory convention'
+echo 'ok - Claude, Codex, Cursor Agent, and OpenCode manifests all key off the same skills/ directory convention'
 
 # ---- (ii) parseObject drift: the two independent copies must stay byte-identical ----------------
 extract_parse_object() {

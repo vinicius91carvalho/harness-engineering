@@ -24,6 +24,19 @@ jq -e 'length == 2 and .[1].acceptance_checks == ["AC-002"] and .[1].depends_on 
 node "$ROOT/skills/generator/reconcile.mjs" "$TMP" --check >/dev/null
 echo 'ok - stable Acceptance Checks reconcile deterministically into mapped Work Items'
 
+mkdir -p "$TMP/repair"
+git -C "$TMP/repair" init -b main -q
+git -C "$TMP/repair" config user.name test
+git -C "$TMP/repair" config user.email test@example.invalid
+cp "$TMP/project_specs.xml" "$TMP/repair/project_specs.xml"
+cp "$TMP/feature_list.json" "$TMP/repair/feature_list.json"
+git -C "$TMP/repair" add project_specs.xml feature_list.json
+git -C "$TMP/repair" commit -qm init
+printf '{\"id\":\"broken\",\"context\":\"core\"' >"$TMP/repair/feature_list.json"
+node "$ROOT/skills/generator/reconcile.mjs" "$TMP/repair" --check >/dev/null
+jq -e 'length == 2 and .[0].id == "WI-AC-001" and .[1].id == "WI-AC-002"' "$TMP/repair/feature_list.json" >/dev/null
+echo 'ok - corrupt feature_list.json is repaired from main on reconcile --check'
+
 sed 's/depends_on="AC-001"/depends_on="AC-404"/' "$TMP/project_specs.xml" >"$TMP/bad.xml"
 mv "$TMP/bad.xml" "$TMP/project_specs.xml"
 if node "$ROOT/skills/generator/reconcile.mjs" "$TMP" --check 2>"$TMP/error"; then

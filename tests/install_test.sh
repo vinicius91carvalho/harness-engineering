@@ -7,7 +7,7 @@ TMP=${TMPDIR:-/tmp}/harness-installer-test.$$
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/bin" "$TMP/home"
 
-for cli in claude codex opencode pi; do
+for cli in claude codex opencode pi agent; do
   cat >"$TMP/bin/$cli" <<'EOF'
 #!/bin/sh
 printf '%s %s\n' "$(basename "$0")" "$*" >>"$HARNESS_TEST_LOG"
@@ -82,9 +82,9 @@ after=$(find "$HOME" -mindepth 1 -print | sort)
 grep -q 'codebase-memory-mcp' "$TMP/out" || fail 'dry-run should describe memory integration'
 grep -q 'official runtime installer' "$TMP/out" || fail 'dry-run should describe Omnigent runtime installation'
 grep -q '.omnigent/agents/harness-engineering' "$TMP/out" || fail 'dry-run should describe the Omnigent bundle destination'
-grep -q 'configure context7 MCP for:claude codex opencode' "$TMP/out" || fail 'Context7 should target every host'
-grep -q 'configure playwright MCP for:claude codex opencode' "$TMP/out" || fail 'Playwright should target every host'
-grep -q 'MCP inventory for:claude codex opencode' "$TMP/out" || fail 'MCP inventory should target every selected host'
+grep -q 'configure context7 MCP for:claude codex opencode pi agent' "$TMP/out" || fail 'Context7 should target every host'
+grep -q 'configure playwright MCP for:claude codex opencode pi agent' "$TMP/out" || fail 'Playwright should target every host'
+grep -q 'MCP inventory for:claude codex opencode pi agent' "$TMP/out" || fail 'MCP inventory should target every selected host'
 grep -q 'marketplace upgrade ponytail' "$TMP/out" || fail 'Codex Ponytail marketplace should be idempotent'
 grep -q 'plugin add ponytail@ponytail' "$TMP/out" || fail 'Codex Ponytail should use its upstream marketplace'
 pass 'dry-run performs no writes or host commands'
@@ -116,6 +116,18 @@ second=$(find "$HOME/.config/opencode" -type f -exec shasum -a 256 {} \; | sort 
 [ "$first" = "$second" ] || fail 'repeated OpenCode install is not idempotent'
 [ ! -s "$HARNESS_TEST_LOG" ] || fail 'OpenCode asset install should not invoke another host'
 pass 'OpenCode assets are namespaced and idempotent'
+
+: >"$HARNESS_TEST_LOG"
+"$ROOT/install.sh" --cli agent --no </dev/null >"$TMP/out"
+test -f "$HOME/.cursor/plugins/local/harness/.cursor-plugin/plugin.json" || fail 'Cursor Agent plugin manifest missing'
+test -f "$HOME/.cursor/plugins/local/harness/skills/generator/SKILL.md" || fail 'Cursor Agent generator skill missing'
+test -f "$HOME/.cursor/plugins/local/harness/commands/harness-generator.md" || fail 'Cursor Agent harness command missing'
+first=$(find "$HOME/.cursor/plugins/local/harness" -type f -exec shasum -a 256 {} \; | sort | shasum -a 256)
+"$ROOT/install.sh" --cli agent --no </dev/null >"$TMP/out"
+second=$(find "$HOME/.cursor/plugins/local/harness" -type f -exec shasum -a 256 {} \; | sort | shasum -a 256)
+[ "$first" = "$second" ] || fail 'repeated Cursor Agent install is not idempotent'
+[ ! -s "$HARNESS_TEST_LOG" ] || fail 'Cursor Agent asset install should not invoke another host'
+pass 'Cursor Agent assets are local-plugin installed and idempotent'
 
 : >"$HARNESS_TEST_LOG"
 "$ROOT/install.sh" --cli pi --no </dev/null >"$TMP/out"
