@@ -91,11 +91,18 @@ mkdir -p "$TMP/retry/.git/harness-control"
 printf '%s\n' '{"retryQueue":{"ghost":{"guidance":"","attempts":4}}}' >"$TMP/retry/.git/harness-control/state.json"
 supervisor_common_run_once --repo "$TMP/retry" --host claude --once true --poll-ms 50 \
   --max-workers 2 --quota-workers 2 --cpu-per-worker 0.25 \
-  --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100
+  --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100
 RETRY_STATE="$TMP/retry/.git/harness-control/state.json"
 RETRY_EVENTS="$TMP/retry/.git/harness-control/events.jsonl"
-jq -e '.retryQueue == {}' "$RETRY_STATE" >/dev/null
-jq -s -e 'any(.[]; .kind == "input_required" and .context == "ghost" and .reason == "Retry could not resume the Claim Lease")' "$RETRY_EVENTS" >/dev/null
+if ! jq -e '.retryQueue == {}' "$RETRY_STATE" >/dev/null \
+  || ! jq -s -e 'any(.[]; .kind == "input_required" and .context == "ghost" and .reason == "Retry could not resume the Claim Lease")' "$RETRY_EVENTS" >/dev/null; then
+  echo 'not ok - exhausted retry did not raise Claim Lease Input Request' >&2
+  echo '--- state ---' >&2
+  cat "$RETRY_STATE" >&2 || true
+  echo '--- events ---' >&2
+  cat "$RETRY_EVENTS" >&2 || true
+  exit 1
+fi
 echo 'ok - a retry that can never resume its Claim Lease re-raises a bounded Input Request'
 
 mkdir -p "$TMP/prune"

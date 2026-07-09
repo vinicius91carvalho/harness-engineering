@@ -723,7 +723,17 @@ class Supervisor {
     let slots = cap.available
     const { attempts: retryAttempts } = drainRetryQueue(this.state.retryQueue, slots)
     for (const { context, retry } of retryAttempts) {
-      if (slots < 1) break
+      // Without a free slot we cannot spawn a resumed worker. Still advance failed attempts
+      // so exhaustion can raise Input Requests on memory-starved hosts (macOS CI).
+      if (slots < 1) {
+        const outcome = applyRetryResumeOutcome(this.state.retryQueue, context, retry, false)
+        this.state.retryQueue = outcome.updatedQueue
+        if (outcome.exhausted) {
+          await this.input('context', 'Retry could not resume the Claim Lease', { attempts: outcome.exhausted.attempts }, context)
+        }
+        await this.save()
+        continue
+      }
       if (await this.resumeClaim(context, 'force', retry.guidance)) {
         const outcome = applyRetryResumeOutcome(this.state.retryQueue, context, retry, true)
         this.state.retryQueue = outcome.updatedQueue
@@ -735,6 +745,7 @@ class Supervisor {
         if (outcome.exhausted) {
           await this.input('context', 'Retry could not resume the Claim Lease', { attempts: outcome.exhausted.attempts }, context)
         }
+        await this.save()
       }
     }
     if (shouldFinalizePendingGoal(this.state.retryQueue, this.pendingGoalResult)) {
@@ -779,6 +790,14 @@ class Supervisor {
       await this.save({ status: this.state.status })
     } finally {
       this.stopping = true
+      for (const worker of this.workers.values()) {
+        if (worker.type === 'herdr') closePane(worker.paneId)
+        else if (worker.child) {
+          try { worker.child.stdout?.destroy?.() } catch {}
+          try { worker.child.stderr?.destroy?.() } catch {}
+          try { worker.child.kill('SIGTERM') } catch {}
+        }
+      }
       const deadline = Date.now() + 5000
       while (this.workers.size > 0 && Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 25))
