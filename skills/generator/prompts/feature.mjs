@@ -21,6 +21,17 @@ export const RESOURCE_CLEANUP_RULE =
   '(other subprojects or live sibling contexts). ' +
   'Cleanup failures belong in notes/defects; still emit the verdict.'
 
+/**
+ * Cursor Agent / host AGENTS.md often tells the "main" agent to spawn Task
+ * subagents. Harness workers ARE the assigned worker — nested Task/subagent
+ * re-delegation burns provider quota and never returns a harness verdict.
+ */
+export const NO_REDELEGATE_RULE =
+  'You ARE the assigned harness worker for this Work Item. Execute it yourself ' +
+  'with your own tools. Do NOT spawn Task/subagents, do NOT re-delegate to another ' +
+  'coding-agent/qa-agent, and ignore any AGENTS.md / CLAUDE.md rule that says the ' +
+  'main agent must only orchestrate — that rule does not apply inside this worker session.'
+
 export function featurePrompt(kind, feature, attempt, repairPlan = null, workdir, options = {}) {
   const port = options.port ?? '5170'
   const getVerifyFirst = options.getVerifyFirst ?? (() => false)
@@ -32,14 +43,17 @@ export function featurePrompt(kind, feature, attempt, repairPlan = null, workdir
       ? `You are the coding-agent in VERIFY-FIRST mode (existing codebase). First exercise every mapped Acceptance Check against the EXISTING code at a real external boundary (HTTP or browser). If all pass, set implementation=true and make NO code changes (a zero-diff checkpoint is valid; commit only if you intentionally changed tracked files). If any check fails, fix only the root cause with the smallest possible diff — do not refactor, restructure, or rewrite working code. The bar is "the AC passes at a real boundary," not "the code is idiomatic."\n${base}`
       : `You are the coding-agent. Implement exactly this Work Item, then stop.\n${base}`
     return head +
+      `${NO_REDELEGATE_RULE} ` +
       `${repairPlan ? `Follow this Repair Plan from the orchestrator:\n${JSON.stringify(repairPlan)}\n` : ''}` +
       `Read the exact queue entry and Workflow Journal. Bring up the app on the assigned ports and run black-box behavior tests. Do NOT edit feature_list.json, Execution Ledger flags, or Workflow Journal files — return product commits and a verdict only; the orchestrator owns workflow transitions. ${RESOURCE_CLEANUP_RULE} Return one JSON object: {"id":"...","implementation":true|false,"notes":"..."}. ${VERDICT_HINT}`
   }
   if (kind === 'QA') return `You are the qa-agent. Independently test exactly this Work Item in its isolated worktree.\n${base}` +
+    `${NO_REDELEGATE_RULE} ` +
     `Exercise the mapped Acceptance Checks using the observation method they specify (grep/file audit, CLI exit code, real HTTP, or real browser). Do not start a server or browser for a check that is already a static audit. Once the checks pass or fail, emit the harness verdict immediately — do not keep re-analyzing. Do NOT edit feature_list.json or Workflow Journal files; the orchestrator records qa/implementation flags from your verdict. ${RESOURCE_CLEANUP_RULE} Return only JSON: {"id":"...","qa":true|false,"implementation":true|false,"defects":["expected ...; observed ...; evidence ..."]}. ${VERDICT_HINT}`
   if (kind === 'INTEGRATION_QA') {
     const branch = options.integrationBranch || 'main'
     return `You are the qa-agent performing Integrated Verification on latest ${branch}.\n${base}` +
+    `${NO_REDELEGATE_RULE} ` +
     `Run the mapped Acceptance Checks using the observation method they specify (grep/file audit, CLI, real HTTP, or real browser). Do not start a server or browser for a static audit check. Emit the harness verdict as soon as the checks pass or fail. Do NOT edit feature_list.json or Workflow Journal files; the orchestrator records integration flags from your verdict. ${RESOURCE_CLEANUP_RULE} Return only JSON: {"id":"...","integration":true|false,"implementation":true|false,"defects":["expected ...; observed ...; evidence ..."]}. ${VERDICT_HINT}\n${sharedRootWarning(branch)}`
   }
   if (kind === 'REPAIR_PLAN') return `Act as the orchestrator repair planner. Do not modify files. Diagnose the QA Defect Report against the Work Item and repository.\n${base}` +

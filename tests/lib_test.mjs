@@ -242,14 +242,17 @@ test('browser cleanup is a no-op without scoped identifiers', () => {
 })
 
 test('feature prompts require resource cleanup before verdict', async () => {
-  const { featurePrompt, RESOURCE_CLEANUP_RULE } = await import('../skills/generator/prompts/feature.mjs')
+  const { featurePrompt, RESOURCE_CLEANUP_RULE, NO_REDELEGATE_RULE } = await import('../skills/generator/prompts/feature.mjs')
   assert.match(RESOURCE_CLEANUP_RULE, /RESOURCE CLEANUP/)
   assert.match(RESOURCE_CLEANUP_RULE, /docker compose down/)
+  assert.match(NO_REDELEGATE_RULE, /assigned harness worker/)
+  assert.match(NO_REDELEGATE_RULE, /Do NOT spawn Task/)
   const feature = { id: 'WI-1', context: 'core', description: 'x', acceptance_checks: ['AC-1'] }
   for (const kind of ['CODING', 'QA', 'INTEGRATION_QA']) {
     const prompt = featurePrompt(kind, feature, 1, null, '/wt', { port: 5170, integrationBranch: 'plan/x' })
     assert.match(prompt, /RESOURCE CLEANUP/)
     assert.match(prompt, /docker compose down/)
+    assert.match(prompt, /assigned harness worker|Do NOT spawn Task/)
   }
 })
 
