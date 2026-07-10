@@ -346,9 +346,19 @@ class Supervisor {
     if (this.workers.has(key)) return false
     const admission = await this.requestWorkerAdmission(key)
     if (!admission.granted) return false
-    const governorEnv = admission.reservation?.id
-      ? { HARNESS_GOVERNOR_RESERVATION: admission.reservation.id }
-      : {}
+    // Propagate the supervisor reservation id AND the same capacity knobs so the
+    // orchestrator does not re-admit under stricter defaultGovernorOptions (1024MB).
+    const governorEnv = {
+      HARNESS_MAX_WORKERS: String(this.config.maxWorkers),
+      HARNESS_QUOTA_WORKERS: String(this.config.quotaWorkers),
+      HARNESS_CPU_PER_WORKER: String(this.config.cpuPerWorker),
+      HARNESS_MEMORY_PER_WORKER_MB: String(this.config.memoryPerWorkerMb),
+      HARNESS_RESERVE_MEMORY_MB: String(this.config.reserveMemoryMb),
+      HARNESS_MAX_LOAD_RATIO: String(this.config.maxLoadRatio),
+      ...(admission.reservation?.id
+        ? { HARNESS_GOVERNOR_RESERVATION: admission.reservation.id }
+        : {}),
+    }
     const logFile = join(logDir, workerLogFileName(key))
     const argv = buildOrchestratorArgv({
       orchestrator,
@@ -715,7 +725,11 @@ class Supervisor {
       let lastAgentOutputAgeMs = null
       if (runState.lastAgentOutputAt) {
         const ts = Date.parse(runState.lastAgentOutputAt)
-        if (Number.isFinite(ts)) lastAgentOutputAgeMs = now - ts
+        const startedMs = worker.startedAt ? Date.parse(worker.startedAt) : NaN
+        // Ignore timestamps from a prior run — they make MCP-warmup look instantly overdue.
+        if (Number.isFinite(ts) && (!Number.isFinite(startedMs) || ts >= startedMs)) {
+          lastAgentOutputAgeMs = now - ts
+        }
       }
       const childAlive = Boolean(runState.childPid && processAlive(runState.childPid))
       let health
@@ -1284,9 +1298,19 @@ async function respond() {
   const id = Number(options.event)
   if (!id || !options.action) fatal('--event and --action are required')
   const events = await readEvents()
-  const request = events.find((event) => event.id === id && event.kind === 'input_required')
+  let request = events.find((event) => event.id === id && event.kind === 'input_required')
+  // Fallback when the journal has duplicate/recycled ids and dedupe hid the
+  // live Input Request — state.pendingInputs is authoritative for the run.
+  if (!request) {
+    const state = await readJson(stateFile, {})
+    const pending = state.pendingInputs?.[id] || state.pendingInputs?.[String(id)]
+    if (pending?.status === 'pending' && (pending.kind === 'input_required' || pending.choices)) {
+      request = pending
+    }
+  }
   if (!request) fatal(`unknown Input Request ${id}`)
-  if (!request.choices.includes(options.action)) fatal(`action must be one of: ${request.choices.join(', ')}`)
+  const choices = request.choices || ['retry', 'pause', 'abort']
+  if (!choices.includes(options.action)) fatal(`action must be one of: ${choices.join(', ')}`)
   const file = join(responseDir, `${id}.json`)
   const response = { eventId: id, action: options.action, guidance: options.guidance || '', at: new Date().toISOString() }
   await mkdir(responseDir, { recursive: true })

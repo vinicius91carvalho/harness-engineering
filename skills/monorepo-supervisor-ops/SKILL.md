@@ -27,7 +27,7 @@ Use this when several subprojects share one Git top-level (e.g. `core`, `web`,
 After editing in the harness-engineering repo:
 
 ```bash
-cp skills/generator/lib/{agent-spawn,agent-stream,supervisor-auto-respond,worker-health,repair-router,observation-method}.mjs ~/.agents/skills/generator/lib/
+cp skills/generator/lib/{agent-spawn,agent-stream,supervisor-auto-respond,worker-health,repair-router,observation-method,control-journal,resource-governor}.mjs ~/.agents/skills/generator/lib/
 cp skills/generator/prompts/feature.mjs ~/.agents/skills/generator/prompts/
 cp skills/generator/orchestrator.mjs ~/.agents/skills/generator/
 cp skills/supervisor/scripts/harness-control.mjs ~/.agents/skills/supervisor/scripts/
@@ -35,19 +35,22 @@ cp skills/supervisor/lib/herdr-spawn.mjs ~/.agents/skills/supervisor/lib/
 cp skills/monorepo-supervisor-ops/SKILL.md ~/.agents/skills/monorepo-supervisor-ops/SKILL.md
 ```
 
+Also document: Control Journal must keep monotonic ids (`journal-meta.json`); Resource Governor must prune dead-pid reservations and reuse same-context admissions so orchestrators do not double-book slots.
+
 Recycle orchestrators (`SIGTERM`) so new spawn/stream/prompt code loads.
 kill -9 on old supervisors so their `stop()` path does not close tabs.
 Use guarded harness-control fleet commands instead of raw `kill`/`rm`:
 
 ```bash
-node "$CONTROL" kill-supervisor --repo "$REPO" --force
-node "$CONTROL" release-supervisor-lock --repo "$REPO" --force
-node "$CONTROL" clear-dead-lock --repo "$REPO" --lock merge
-node "$CONTROL" kill-worker --repo "$REPO" --context <context> --force
-node "$CONTROL" release-lease --repo "$REPO" --context <context> --force
+node "$CONTROL" kill-supervisor --repo "$REPO" --force true
+node "$CONTROL" release-supervisor-lock --repo "$REPO" --force true
+node "$CONTROL" clear-dead-lock --repo "$REPO" --lock merge --force true
+node "$CONTROL" kill-worker --repo "$REPO" --context <context> --force true
+node "$CONTROL" release-lease --repo "$REPO" --context <context> --force true
 ```
 
-`--force` is required when a local supervisor PID is still recorded as live.
+`--force true` is required when a local supervisor PID is still recorded as live
+(harness-control parses `--key value` pairs; bare `--force` is invalid).
 Pass `HARNESS_SUPERVISOR_TOKEN` instead when you hold the active lease.
 
 ## Restart one subproject supervisor (keep workers)
@@ -62,10 +65,11 @@ TOP=$(git -C "$REPO" rev-parse --show-toplevel)
 # Set retryQueue[context].guidance in state.json, clear workers={}, supervisorPid=null
 # Neutralize pending inputs for that context so auto-respond cannot race.
 
-node "$CONTROL" kill-supervisor --repo "$REPO" --force
-node "$CONTROL" release-supervisor-lock --repo "$REPO" --force
+node "$CONTROL" kill-supervisor --repo "$REPO" --force true
+node "$CONTROL" release-supervisor-lock --repo "$REPO" --force true
 # Prefer `run` + setsid/nohup for long-lived supervisors; `start` may exit after spawn.
 # CauseFlow ops: --host agent (composer-2.5). Use pi only when the operator asks.
+# harness-control parses argv as `--key value` pairs — use `--force true`, not bare `--force`.
 setsid -f env HERDR_ENV=1 node "$CONTROL" run --repo "$REPO" --host agent --display herdr \
   --max-workers 3 --quota-workers 3 --cpu-per-worker 1 \
   --memory-per-worker-mb 640 --reserve-memory-mb 1024 --max-load-ratio 0.9 \
@@ -80,8 +84,8 @@ When `status=running` but `workers={}`, herdr has only the default tab, or
 
 1. **Dead merge lock** — `mergeLock.holderAlive=false` or owner PID gone:
    ```bash
-   node "$CONTROL" clear-dead-lock --repo "$REPO" --lock merge --force
-   ```
+   node "$CONTROL" clear-dead-lock --repo "$REPO" --lock merge --force true
+```
 2. **Dead state lock** — same for `generator-state` if owner PID is dead.
 3. **Quota pause** — rate-limit sets `quota.pauseUntil` → slots 0:
    ```bash
@@ -103,8 +107,8 @@ Only when the operator asks and host memory allows. Cap by free RAM:
 `slots ≈ floor((MemAvailableMB - reserve) / memory-per-worker-mb)`.
 
 ```bash
-node "$CONTROL" kill-supervisor --repo "$REPO" --force   # preserve herdr tabs
-node "$CONTROL" release-supervisor-lock --repo "$REPO" --force
+node "$CONTROL" kill-supervisor --repo "$REPO" --force true   # preserve herdr tabs
+node "$CONTROL" release-supervisor-lock --repo "$REPO" --force true
 setsid -f env HERDR_ENV=1 node "$CONTROL" run --repo "$REPO" --host agent --display herdr \
   --max-workers 4 --quota-workers 4 --cpu-per-worker 1 \
   --memory-per-worker-mb 768 --reserve-memory-mb 1024 --max-load-ratio 0.9 \
@@ -141,12 +145,15 @@ stop/pause the dependent project until a dependency-root finishes.
 | Symptom | Check |
 |---|---|
 | Progress near done, one WI looping | Run state `phase` / `currentFeatureId`; pane shows endless `thinking:` |
+| WI "never finishes" on integrate/resume / `Checkpoint was not integrated…` with no product change | **Flag drift:** compare plan-branch `feature_list` / ledger `integration=true` vs worktree flags. If plan already integrated, sync worktree flags / skip re-integrate — do **not** recycle coding. Fixed path: `integrate-checkpoint.mjs` skips when plan already has `integration=true`. |
+| Dependent E2E fails on Core/API 5xx or contract break | Escalate to root project repair (Supervisor → Core Orchestrator); pause dependent coding retries until API is fixed |
 | Static AC but Mintlify/browser up | QA prompt must follow AC observation method — kill mint, restart with audit guidance |
 | `status` has workers, herdr empty | Zombie pane IDs — restart supervisors; confirm project-scoped cleanup |
 | `workers={}`, no panes, status running | Empty-fleet recovery above (locks / quota / load) |
 | Goal review exits with code 1 | Often merge lock wait — not a product failure |
 | Memory pressure / `Session terminated` | Lower `--max-workers` / `--memory-per-worker-mb`; kill heavy mint/docker leftovers |
 | `capacity.limit=0` + high load | Docker build or CPU spike — wait; do not thrash recycles |
+| Many `docker ps` leftovers after WIs finish | Workers must `compose down` / `docker rm` what they started (generator RESOURCE_CLEANUP_RULE). Stop orphans not owned by a live worker; keep only stacks a running context still needs. Harden prompts/skills same turn. |
 
 ## Herdr layout
 
@@ -192,6 +199,28 @@ Also check `harness-control status` → `workerHealth` / `mergeLock` (written ea
 
 **Never recycle** `waiting_expected` merge_lock when `mergeLock.holderAlive=true`,
 or MCP warmup still under budget. Act on `stuck` only. Close tabs for `done`.
+
+### Known false stuck: stale `lastAgentOutputAt`
+
+After a resume, Run State may still carry `lastAgentOutputAt` from a prior
+invocation (hours old). That makes `mcp_warmup` look instantly overdue and
+recycles healthy workers into the crash bound.
+
+Mitigations (must stay in code):
+- Supervisor ignores `lastAgentOutputAt` older than the current worker `startedAt`.
+- Orchestrator clears `lastAgentOutputAt` on each new invocation.
+- Treat `waiting_expected` + `MCP/plugin warmup before first token` as healthy
+  for up to the warmup budget (~90s).
+
+### Control Journal / respond / governor (2026-07-10)
+
+- Journal ids must be monotonic via `journal-meta.json`. Caller-supplied `id`
+  fields must not overwrite the allocated id. `respond` falls back to
+  `state.pendingInputs` when the journal has recycled ids.
+- Resource Governor prunes dead-pid reservations and reuses same
+  project/context admissions so orchestrators do not double-book slots.
+- Supervisor passes `HARNESS_*` capacity env + `HARNESS_GOVERNOR_RESERVATION`
+  into herdr worker panes. Fleet recovery flags are `--force true` (key/value).
 
 ### Pane stream smoke check (after spawn / on 10-min pass)
 

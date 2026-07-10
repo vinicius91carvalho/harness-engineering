@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, chmodSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, appendFileSync, chmodSync } from 'node:fs'
 import { readFile, writeFile as writeFileAsync, appendFile as appendFileAsync, mkdir as mkdirAsync } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -239,6 +239,18 @@ test('stuck threshold default', () => {
 test('browser cleanup is a no-op without scoped identifiers', () => {
   assert.deepEqual(cleanupBrowserOrphans({}), { killed: 0 })
   assert.deepEqual(cleanupBrowserOrphans(), { killed: 0 })
+})
+
+test('feature prompts require resource cleanup before verdict', async () => {
+  const { featurePrompt, RESOURCE_CLEANUP_RULE } = await import('../skills/generator/prompts/feature.mjs')
+  assert.match(RESOURCE_CLEANUP_RULE, /RESOURCE CLEANUP/)
+  assert.match(RESOURCE_CLEANUP_RULE, /docker compose down/)
+  const feature = { id: 'WI-1', context: 'core', description: 'x', acceptance_checks: ['AC-1'] }
+  for (const kind of ['CODING', 'QA', 'INTEGRATION_QA']) {
+    const prompt = featurePrompt(kind, feature, 1, null, '/wt', { port: 5170, integrationBranch: 'plan/x' })
+    assert.match(prompt, /RESOURCE CLEANUP/)
+    assert.match(prompt, /docker compose down/)
+  }
 })
 
 test('browser cleanup patterns stay scoped to port/workdir/profile', () => {
@@ -1134,6 +1146,69 @@ test('control journal compaction preserves pending input lineage', async () => {
   assert.ok(eventsAfter.some((event) => event.id === input.id && event.kind === 'input_required'))
   const derived = deriveSnapshot(eventsAfter)
   assert.equal(derived.pendingInputs[input.id].status, 'pending')
+})
+
+test('control journal ignores caller id and keeps latest duplicate', async () => {
+  const {
+    appendControlEvent, readControlEvents, maxRawEventIdFromText,
+  } = await import('../skills/generator/lib/control-journal.mjs')
+  const root = mkdtempSync(join(tmpdir(), 'journal-id-'))
+  const first = await appendControlEvent(root, { kind: 'worker_started', id: 999, context: 'a' })
+  const second = await appendControlEvent(root, { kind: 'input_required', id: first.id, context: 'a', choices: ['retry'] })
+  assert.equal(first.id, 1)
+  assert.equal(second.id, 2)
+  assert.notEqual(second.id, 999)
+  const eventsFile = join(root, 'events.jsonl')
+  // Simulate a corrupt recycled-id tail (old bug) and ensure read keeps the newest.
+  appendFileSync(eventsFile, `${JSON.stringify({
+    id: 1, kind: 'input_required', context: 'a', reason: 'latest', choices: ['retry'],
+  })}\n`)
+  const events = await readControlEvents(root, eventsFile)
+  const one = events.find((event) => event.id === 1)
+  assert.equal(one.kind, 'input_required')
+  assert.equal(one.reason, 'latest')
+  assert.equal(maxRawEventIdFromText(readFileSync(eventsFile, 'utf8')), 2)
+})
+
+test('resource governor prunes dead-pid reservations and reuses context', async () => {
+  const { requestAdmission, observeCapacity, releaseAdmission } = await import('../skills/generator/lib/resource-governor.mjs')
+  const tmp = mkdtempSync(join(tmpdir(), 'governor-dead-'))
+  const commonGit = join(tmp, '.git')
+  mkdirSync(join(commonGit, 'harness-governor'), { recursive: true })
+  const file = join(commonGit, 'harness-governor', 'reservations.json')
+  writeFileSync(file, `${JSON.stringify({
+    version: 1,
+    reservations: {
+      ghost: {
+        id: 'ghost', projectId: 'core', context: 'remediation', provider: 'agent',
+        host: 'test', pid: 99999999, at: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+    },
+    providers: {},
+    updatedAt: new Date().toISOString(),
+  }, null, 2)}\n`)
+  const observed = await observeCapacity(commonGit, {
+    maxWorkers: 2, quotaWorkers: 2, cpuPerWorker: 1,
+    memoryPerWorkerMb: 1, reserveMemoryMb: 0, maxLoadRatio: 0.99,
+  })
+  // Dead pid must not count toward active workers after prune-on-admit.
+  const first = await requestAdmission(commonGit, {
+    projectId: 'core', context: 'remediation', provider: 'agent',
+    maxWorkers: 2, quotaWorkers: 2, cpuPerWorker: 1,
+    memoryPerWorkerMb: 1, reserveMemoryMb: 0, maxLoadRatio: 0.99,
+  })
+  assert.equal(first.granted, true)
+  const second = await requestAdmission(commonGit, {
+    projectId: 'core', context: 'remediation', provider: 'agent',
+    maxWorkers: 2, quotaWorkers: 2, cpuPerWorker: 1,
+    memoryPerWorkerMb: 1, reserveMemoryMb: 0, maxLoadRatio: 0.99,
+  })
+  assert.equal(second.granted, true)
+  assert.equal(second.reused, true)
+  assert.equal(second.reservation.id, first.reservation.id)
+  await releaseAdmission(commonGit, first.reservation.id)
+  assert.ok(observed)
 })
 
 test('resource governor denies admission when full', async () => {

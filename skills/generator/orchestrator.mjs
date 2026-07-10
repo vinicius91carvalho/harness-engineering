@@ -12,7 +12,7 @@ import { writeWorkerResult } from './lib/worker-result.mjs'
 import { cleanupBrowserOrphans } from './lib/browser-cleanup.mjs'
 import { buildHostCommand, hostCommands, roleNames, runHostAgentSession, terminateHostProcess, hostSpawnVisible } from './adapters/hosts.mjs'
 import { integrateCheckpoint } from './lib/integrate-checkpoint.mjs'
-import { featurePrompt as buildFeaturePrompt } from './prompts/feature.mjs'
+import { featurePrompt as buildFeaturePrompt, RESOURCE_CLEANUP_RULE } from './prompts/feature.mjs'
 import { integrationBranchName } from './lib/integration-branch.mjs'
 import { resolveProjectTopology, runStatePath } from './lib/project-topology.mjs'
 import { createWorkflowState } from './lib/workflow-state.mjs'
@@ -532,7 +532,7 @@ async function runGoalReviewLocked() {
   itemPlan = buildPlan(options.repo, await readRoles())
   const integrationBranch = integrationBranchName(options.repo)
   const guidance = options.guidance ? `\nOperator guidance (follow this when deciding pass vs block):\n${options.guidance}\n` : ''
-  const prompt = `You are the independent Goal Review agent. Read project_specs.xml, especially Project Goal and every stable Acceptance Check. On integrated ${integrationBranch} (never main/master for in-flight plans), exercise every check and cross-feature primary journeys through a real browser or real HTTP. Do not trust existing flags. Do not modify product code. Never commit to main/master.${guidance}Return only JSON: {"goal":true|false,"summary":"...","acceptanceCheckIds":["AC-..."],"defects":["expected ...; observed ...; evidence ..."]}. ${VERDICT_HINT}`
+  const prompt = `You are the independent Goal Review agent. Read project_specs.xml, especially Project Goal and every stable Acceptance Check. On integrated ${integrationBranch} (never main/master for in-flight plans), exercise every check and cross-feature primary journeys through a real browser or real HTTP. Do not trust existing flags. Do not modify product code. Never commit to main/master.${guidance} ${RESOURCE_CLEANUP_RULE} Return only JSON: {"goal":true|false,"summary":"...","acceptanceCheckIds":["AC-..."],"defects":["expected ...; observed ...; evidence ..."]}. ${VERDICT_HINT}`
   const reviewed = await runAgent('GOAL_REVIEW', prompt, 'goal', 1)
   const verdict = reviewed.parsed
   const dirtyAfter = git(['status', '--porcelain', '--', '.'], options.workdir).stdout.trim()
@@ -603,7 +603,9 @@ async function runGoalReview() {
 
 logVisible(`started pid=${process.pid} workdir=${options.workdir}`)
 setState(await readJson(stateFile, {}))
-await writeState({ invocationId: runId })
+// Clear prior-run agent output timestamps so the supervisor does not treat this
+// invocation as already past the MCP warmup budget.
+await writeState({ invocationId: runId, lastAgentOutputAt: null })
 let result
 try {
   await ensureGovernorAdmission()

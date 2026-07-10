@@ -137,6 +137,16 @@ function inputLineageIds(events) {
   return keep
 }
 
+/** Max numeric id in a raw JSONL file (ignores dedupe). Used to bootstrap journal-meta. */
+export function maxRawEventIdFromText(text) {
+  let max = 0
+  for (const event of parseJsonl(text || '')) {
+    const id = Number(event?.id)
+    if (Number.isFinite(id) && id > max) max = id
+  }
+  return max
+}
+
 export async function readControlEvents(controlRootOrFile, maybeFile) {
   const controlRoot = maybeFile ? controlRootOrFile : dirname(controlRootOrFile)
   const eventsFile = maybeFile || controlRootOrFile
@@ -156,15 +166,11 @@ export async function readControlEvents(controlRootOrFile, maybeFile) {
     return preserved.sort((a, b) => a.id - b.id)
   }
   const tail = parseJsonl(await readFile(eventsFile, 'utf8'))
-  const merged = [...preserved, ...tail]
-  const seen = new Set()
-  const out = []
-  for (const event of merged.sort((a, b) => a.id - b.id)) {
-    if (seen.has(event.id)) continue
-    seen.add(event.id)
-    out.push(event)
-  }
-  return out
+  // File order: later duplicate ids win so recycled/corrupt journals still surface
+  // the newest input_required (needed by harness-control respond).
+  const byId = new Map()
+  for (const event of [...preserved, ...tail]) byId.set(event.id, event)
+  return [...byId.values()].sort((a, b) => a.id - b.id)
 }
 
 export async function appendControlEvent(controlRoot, event, lease = null) {
@@ -178,11 +184,12 @@ export async function appendControlEvent(controlRoot, event, lease = null) {
     if (existsSync(paths.meta)) {
       meta = JSON.parse(await readFile(paths.meta, 'utf8'))
     } else if (existsSync(paths.events)) {
-      const existing = await readControlEvents(controlRoot, paths.events)
-      meta.lastId = existing.reduce((max, row) => Math.max(max, Number(row.id) || 0), 0)
+      // Bootstrap from RAW max id — deduped reads under-count when ids were recycled.
+      meta.lastId = maxRawEventIdFromText(await readFile(paths.events, 'utf8'))
     }
     const id = meta.lastId + 1
-    const record = { id, at: new Date().toISOString(), ...event }
+    // Allocated id/at must win over any caller-supplied fields (e.g. spread health objects).
+    const record = { ...event, id, at: new Date().toISOString() }
     await mkdir(dirname(paths.events), { recursive: true })
     await appendFile(paths.events, `${JSON.stringify(record)}\n`)
     const temporary = `${paths.meta}.tmp.${process.pid}.${randomUUID()}`

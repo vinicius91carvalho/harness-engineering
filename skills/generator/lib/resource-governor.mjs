@@ -69,10 +69,17 @@ async function writeState(file, state) {
   return next
 }
 
+function processAlive(pid) {
+  if (!Number(pid)) return false
+  try { process.kill(Number(pid), 0); return true } catch { return false }
+}
+
 function pruneExpired(state) {
   const now = Date.now()
   for (const [key, row] of Object.entries(state.reservations || {})) {
     if (row.expiresAt && Date.parse(row.expiresAt) <= now) delete state.reservations[key]
+    // Drop ghost slots left by crashed orchestrators / workers.
+    else if (row.pid && !processAlive(row.pid)) delete state.reservations[key]
   }
   return state
 }
@@ -104,6 +111,19 @@ export async function requestAdmission(commonGit, {
   return withGovernorLock(commonGit, async () => {
     const file = governorPath(commonGit)
     const state = pruneExpired(await readState(file))
+    // Persist prunes so dead-pid ghosts do not keep blocking siblings.
+    await writeState(file, state)
+    // Reuse an existing live reservation for the same project/context (supervisor
+    // already admitted; orchestrator must not double-book a second slot).
+    const existing = Object.values(state.reservations || {}).find((row) => (
+      row.projectId === (projectId || 'root')
+      && row.context === context
+      && (!row.pid || processAlive(row.pid))
+    ))
+    if (existing) {
+      const after = await observeCapacity(commonGit, { ...capacityOptions, provider, quotaFile })
+      return { granted: true, reservation: existing, capacity: after, reused: true }
+    }
     const observed = await observeCapacity(commonGit, { ...capacityOptions, provider, quotaFile })
     if (observed.slots < 1) {
       return { granted: false, reason: 'no-capacity', capacity: observed }
