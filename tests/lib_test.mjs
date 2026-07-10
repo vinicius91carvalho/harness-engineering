@@ -425,15 +425,18 @@ test('cursor agent herdr stream uses stream-json and formats thinking/tools', as
     fmt.push(`${JSON.stringify({ type: 'thinking', subtype: 'delta', text: 'plan the next verification steps carefully ' })}\n`),
     fmt.push(`${JSON.stringify({ type: 'thinking', subtype: 'completed' })}\n`),
     fmt.push(`${JSON.stringify({ type: 'tool_call', subtype: 'started', tool_call: { shellToolCall: { description: 'curl health' } } })}\n`),
-    fmt.push(`${JSON.stringify({ type: 'tool_call', subtype: 'completed', tool_call: { shellToolCall: { description: 'curl health' } } })}\n`),
-    fmt.push(`${JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: '===HARNESS-VERDICT-BEGIN===\n{"ok":true}\n===HARNESS-VERDICT-END===\n' }] } })}\n`),
-    fmt.flush(),
-  ].join('')
-  assert.match(pane, /agent: working/)
-  assert.match(pane, /thinking: plan the next verification steps carefully/)
-  assert.match(pane, /tool → shell: curl health/)
-  assert.match(pane, /tool ✓ shell: curl health/)
-  assert.match(pane, /HARNESS-VERDICT-BEGIN/)
+  ]
+  assert.equal(fmt.inFlightTool(), 'shell: curl health')
+  pane.push(fmt.push(`${JSON.stringify({ type: 'tool_call', subtype: 'completed', tool_call: { shellToolCall: { description: 'curl health' } } })}\n`))
+  assert.equal(fmt.inFlightTool(), null)
+  pane.push(fmt.push(`${JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: '===HARNESS-VERDICT-BEGIN===\n{"ok":true}\n===HARNESS-VERDICT-END===\n' }] } })}\n`))
+  pane.push(fmt.flush())
+  const joined = pane.join('')
+  assert.match(joined, /agent: working/)
+  assert.match(joined, /thinking: plan the next verification steps carefully/)
+  assert.match(joined, /tool → shell: curl health/)
+  assert.match(joined, /tool ✓ shell: curl health/)
+  assert.match(joined, /HARNESS-VERDICT-BEGIN/)
   assert.match(fmt.assistantText(), /"ok":true/)
 })
 

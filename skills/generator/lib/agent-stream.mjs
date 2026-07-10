@@ -67,6 +67,7 @@ export function createAgentStreamFormatter() {
   let thinkingBuf = ''
   let textBuf = ''
   let lastTool = ''
+  let inFlight = null
   const paneChunks = []
 
   const emitLine = (line) => {
@@ -182,11 +183,13 @@ export function createAgentStreamFormatter() {
           flushText(true)
           emitLine(`tool → ${name}`)
           lastTool = `start:${name}`
+          inFlight = name
         }
       } else if (isEnd) {
         if (lastTool !== `end:${name}`) {
           emitLine(`tool ✓ ${name}`)
           lastTool = `end:${name}`
+          if (!inFlight || inFlight === name) inFlight = null
         }
       }
       return
@@ -242,6 +245,10 @@ export function createAgentStreamFormatter() {
     },
     assistantText() {
       return assistantText
+    },
+    /** Open tool label while waiting on a long tool_call (e.g. task/shell), else null. */
+    inFlightTool() {
+      return inFlight
     },
   }
 }

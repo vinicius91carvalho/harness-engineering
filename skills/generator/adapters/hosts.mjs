@@ -105,8 +105,10 @@ export async function runHostAgentSession({
         const quietSec = Math.round((Date.now() - lastPaneAt) / 1000)
         if (quietSec < Math.max(15, heartbeatMs / 1000 - 1)) return
         let phase
+        const waitingOn = formatter?.inFlightTool?.() || null
         if (verdictSeen) phase = 'verdict received — waiting for agent exit'
         else if (!sawAgentStream) phase = 'still waiting for first token / MCP warmup'
+        else if (waitingOn) phase = `waiting on tool → ${waitingOn}`
         else phase = 'still working'
         paneOut(`agent: ${phase} (${quietSec}s since last log)\n`)
         notePaneActivity(false)
