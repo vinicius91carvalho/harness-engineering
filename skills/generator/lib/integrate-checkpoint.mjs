@@ -1,5 +1,7 @@
 /** Integrated Verification checkpoint: merge to the plan integration branch, resolve conflicts, run integration QA. */
 
+import { writeFileSync } from 'node:fs'
+import { join as pathJoin } from 'node:path'
 import { mergeDo, mergeRelease } from './claim-lease.mjs'
 
 export const MARKER_PATTERN = /^(<{7} |={7}$|>{7} )/m
@@ -13,6 +15,40 @@ export function stillMarkedConflictFiles(git, integrationDir, conflictedFiles) {
     const shown = git(['show', `HEAD:${relPath}`], integrationDir, true)
     return shown.status === 0 && hasMergeMarkers(shown.stdout)
   })
+}
+
+/** Append-only union for harness-progress journals (ours + unique theirs lines). */
+export function unionAppendOnly(ours, theirs) {
+  const a = String(ours || '')
+  const b = String(theirs || '')
+  if (!a) return b
+  if (!b) return a
+  if (a.includes(b)) return a
+  if (b.includes(a)) return b
+  const sep = a.endsWith('\n') ? '' : '\n'
+  return `${a}${sep}${b.startsWith('\n') ? b.slice(1) : b}`
+}
+
+export function autoResolveHarnessProgressConflicts(git, integrationDir, conflictedFiles) {
+  const resolved = []
+  const remaining = []
+  for (const relPath of conflictedFiles || []) {
+    if (!/(^|\/)harness-progress\//.test(relPath)) {
+      remaining.push(relPath)
+      continue
+    }
+    const ours = git(['show', `:2:${relPath}`], integrationDir, true)
+    const theirs = git(['show', `:3:${relPath}`], integrationDir, true)
+    if (ours.status !== 0 && theirs.status !== 0) {
+      remaining.push(relPath)
+      continue
+    }
+    const merged = unionAppendOnly(ours.stdout || '', theirs.stdout || '')
+    writeFileSync(pathJoin(integrationDir, relPath), merged.endsWith('\n') ? merged : `${merged}\n`)
+    git(['add', '--', relPath], integrationDir)
+    resolved.push(relPath)
+  }
+  return { resolved, remaining }
 }
 
 export async function integrateCheckpoint(ctx) {
@@ -37,21 +73,39 @@ export async function integrateCheckpoint(ctx) {
   } = ctx
 
   await stopApp(workdir)
-  const journalFile = await journal(workdir, 'Checkpoint ready', {
-    Attempt: `${attempt}/${maxAttempts}`, WorkItem: feature.id, Outcome: 'isolated QA passed', NextAction: 'Integrated Verification',
-  })
-  commitPaths(workdir, [journalFile], `chore(harness): checkpoint ${feature.id}`)
-  const checkpointSha = git(['rev-parse', 'HEAD'], workdir).stdout.trim()
   const integrationDir = await acquireMergeLock()
   const preMergeSha = git(['rev-parse', 'HEAD'], integrationDir).stdout.trim()
   try {
+    // Plan branch already records this WI as integrated — sync flags to the
+    // worktree and skip merge/QA thrash (worktree feature_list often lags).
+    const onPlan = (await readFeatures(integrationDir)).list.find((item) => String(item.id) === String(feature.id))
+    if (onPlan?.integration === true) {
+      await updateFeature(workdir, feature.id, { implementation: true, qa: true, integration: true })
+      commitPaths(workdir, [join(workdir, 'feature_list.json')], `chore(harness): sync integrated ${feature.id}`)
+      syncWorkdirWithIntegration(workdir)
+      await writeState({ phase: 'integrated', nextAction: 'next-work-item', lastResult: 'Already integrated on plan branch' })
+      return { passed: true }
+    }
+
+    const journalFile = await journal(workdir, 'Checkpoint ready', {
+      Attempt: `${attempt}/${maxAttempts}`, WorkItem: feature.id, Outcome: 'isolated QA passed', NextAction: 'Integrated Verification',
+    })
+    commitPaths(workdir, [journalFile], `chore(harness): checkpoint ${feature.id}`)
+    const checkpointSha = git(['rev-parse', 'HEAD'], workdir).stdout.trim()
+
     await writeState({ phase: 'merge', nextAction: 'merge', integrationDir })
     const merged = mergeDo(repo, feature.context, integrationDir)
     if (merged.status === 'conflict') {
       const conflictedFiles = merged.paths || []
-      const resolved = await runAgent('MERGE', featurePrompt('MERGE', feature, attempt, null, integrationDir), feature.id, attempt, integrationDir)
-      const unmerged = git(['diff', '--name-only', '--diff-filter=U'], integrationDir).stdout.trim()
-      const stillMarked = stillMarkedConflictFiles(git, integrationDir, conflictedFiles)
+      const auto = autoResolveHarnessProgressConflicts(git, integrationDir, conflictedFiles)
+      let unmerged = git(['diff', '--name-only', '--diff-filter=U'], integrationDir).stdout.trim()
+      let stillMarked = stillMarkedConflictFiles(git, integrationDir, auto.remaining.length ? auto.remaining : conflictedFiles)
+      let resolved = { artifact: null }
+      if (unmerged || stillMarked) {
+        resolved = await runAgent('MERGE', featurePrompt('MERGE', feature, attempt, null, integrationDir), feature.id, attempt, integrationDir)
+        unmerged = git(['diff', '--name-only', '--diff-filter=U'], integrationDir).stdout.trim()
+        stillMarked = stillMarkedConflictFiles(git, integrationDir, conflictedFiles)
+      }
       if (unmerged || stillMarked) {
         git(['merge', '--abort'], integrationDir, true)
         if (git(['rev-parse', 'HEAD'], integrationDir).stdout.trim() !== preMergeSha) {
@@ -75,6 +129,7 @@ export async function integrateCheckpoint(ctx) {
     await stopApp(integrationDir)
     if (verified.ok && verified.parsed?.implementation === true && verified.parsed?.integration === true) {
       await updateFeature(integrationDir, feature.id, { implementation: true, qa: true, integration: true })
+      await updateFeature(workdir, feature.id, { implementation: true, qa: true, integration: true })
     }
     const current = (await readFeatures(integrationDir)).list.find((item) => String(item.id) === String(feature.id))
     if (verified.ok && current?.implementation === true && current?.qa === true && current?.integration === true) {
@@ -83,6 +138,7 @@ export async function integrateCheckpoint(ctx) {
         Outcome: 'passed on integrated branch', Evidence: verified.artifact, NextAction: 'next Ready Work Item',
       })
       commitPaths(integrationDir, [file], `verify(harness): integrate ${feature.id}`)
+      commitPaths(workdir, [join(workdir, 'feature_list.json')], `chore(harness): record integrated ${feature.id}`)
       syncWorkdirWithIntegration(workdir)
       await writeState({ phase: 'integrated', nextAction: 'next-work-item', lastResult: 'Integrated Verification passed' })
       return { passed: true }
@@ -90,6 +146,7 @@ export async function integrateCheckpoint(ctx) {
 
     const defects = verified.parsed?.defects?.length ? verified.parsed.defects : [verified.detail.slice(-2000) || 'Integrated Verification failed']
     await updateFeature(integrationDir, feature.id, { implementation: false, qa: false, integration: false, retries: attempt })
+    await updateFeature(workdir, feature.id, { implementation: false, qa: false, integration: false, retries: attempt })
     const file = await journal(integrationDir, 'Integrated Verification defect', {
       Attempt: `${attempt}/${maxAttempts}`, WorkItem: feature.id, Defects: defects, Evidence: verified.artifact, NextAction: 'Repair Plan',
     })

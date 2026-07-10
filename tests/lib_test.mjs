@@ -13,7 +13,7 @@ import { resolveProjectTopology } from '../skills/generator/lib/project-topology
 import { claimKey, projectIdFromPrefix, resultFileFromRunState } from '../skills/generator/lib/project-keys.mjs'
 import { isHarnessInfrastructureError, stuckThresholdMs } from '../skills/generator/lib/stuck-worker.mjs'
 import { pickClaimCandidate, mergeDo, restoreDirtyRuntimeLogs } from '../skills/generator/lib/claim-lease.mjs'
-import { MARKER_PATTERN, hasMergeMarkers } from '../skills/generator/lib/integrate-checkpoint.mjs'
+import { MARKER_PATTERN, hasMergeMarkers, unionAppendOnly } from '../skills/generator/lib/integrate-checkpoint.mjs'
 import { interpretWorkerOutcome } from '../skills/generator/lib/worker-outcome.mjs'
 import { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } from '../skills/generator/lib/supervisor-tick.mjs'
 import { planTickAdmission, goalReviewAdmissible } from '../skills/generator/lib/supervisor-admission.mjs'
@@ -496,6 +496,12 @@ test('MARKER_PATTERN detects unresolved merge markers', () => {
   assert.equal(hasMergeMarkers('line\n>>>>>>> theirs\n'), true)
   assert.equal(hasMergeMarkers('clean merged content\n'), false)
   assert.equal(MARKER_PATTERN.test('<<<<<<< HEAD\n'), true)
+})
+
+test('unionAppendOnly keeps both journal sides', () => {
+  assert.equal(unionAppendOnly('a\n', 'a\nb\n'), 'a\nb\n')
+  assert.equal(unionAppendOnly('# h\n\n## one\n', '# h\n\n## two\n'), '# h\n\n## one\n# h\n\n## two\n')
+  assert.equal(unionAppendOnly('', 'only\n'), 'only\n')
 })
 
 test('interpretWorkerOutcome goal-review complete', () => {

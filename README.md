@@ -23,6 +23,28 @@ The curl one-liner points at `main` only to download `install.sh`; that script t
 Without release tags, every remote install would track the moving `main` tip.
 A local checkout of this repo is different: `./install.sh` uses the working tree (dev mode).
 
+## Examples
+
+What a live run looks like in practice: supervisor status in chat, and per-Work-Item agent tabs when herdr is enabled.
+
+### Supervisor status
+
+During a live run the supervisor prints periodic ticks, per-context rows, merge-lock remediation, and worker health.
+The same snapshot is available from `harness-control.mjs status`.
+
+<p align="center">
+  <img src="assets/example-supervisor.png" alt="Supervisor status table showing core progress, merge-lock remediation, and per-context worker rows" width="960">
+</p>
+
+### Agent workers in herdr
+
+Each Work Item opens in its own tab while the supervisor keeps the fleet healthy.
+Workers stream live thinking, tool calls, and MCP warmup in the pane.
+
+<p align="center">
+  <img src="assets/example-agent-herdr.png" alt="herdr workspace with supervisor overview and per-Work-Item agent tabs" width="960">
+</p>
+
 ## Quickstart
 
 **1. Install once in a terminal** ([details](#install)):
@@ -67,9 +89,6 @@ After reconcile, Work Items in `feature_list.json` carry `planning_decision_ids`
 Spec review does not open until the grilling **Ready Gate** passes.
 You can also activate grilling directly by asking “grill me.”
 Generator bundles `worktree-git-recovery` for narrow git-only fixes in a worktree.
-
-Shared generator libraries live under `skills/generator/lib/` (`claim-lease`, `integrate-checkpoint`, `worker-outcome`, `supervisor-tick`, `workflow-state`, `route-plan`, `worker-lifecycle`, and helpers such as `verdict`, `ready-work-items`, `project-keys`).
-The Attempt loop lives in `skills/generator/workflow/attempt-machine.mjs` (orchestrator delegates; supervisor does not own Attempt policy). `runAttemptLoop` takes narrow, named ports (`state`, `queue`, `agent`, `integrate`, `verifyFirst`, `constants`) rather than a flat context bag; the orchestrator wires host adapters into those ports and owns no Attempt/Defect Report/Repair Plan/Checkpoint policy itself.
 
 ```mermaid
 flowchart TD
@@ -145,28 +164,6 @@ When the plan ships, merge the plan branch to `main` in one deliberate PR — no
 Override for a single run with `HARNESS_INTEGRATION_BRANCH=plan/my-feature`.
 
 Retries: **3 Attempts** per Work Item (orchestrator), **5 resume tries** per blocked context (supervisor), **2 Goal Review reopenings** per item before blocking.
-
-## Examples
-
-What a live run looks like in practice: supervisor status in chat, and per-Work-Item agent tabs when herdr is enabled.
-
-### Supervisor status
-
-During a live run the supervisor prints periodic ticks, per-context rows, merge-lock remediation, and worker health.
-The same snapshot is available from `harness-control.mjs status`.
-
-<p align="center">
-  <img src="assets/example-supervisor.png" alt="Supervisor status table showing core progress, merge-lock remediation, and per-context worker rows" width="960">
-</p>
-
-### Agent workers in herdr
-
-Each Work Item opens in its own tab while the supervisor keeps the fleet healthy.
-Workers stream live thinking, tool calls, and MCP warmup in the pane.
-
-<p align="center">
-  <img src="assets/example-agent-herdr.png" alt="herdr workspace with supervisor overview and per-Work-Item agent tabs" width="960">
-</p>
 
 ## Install
 

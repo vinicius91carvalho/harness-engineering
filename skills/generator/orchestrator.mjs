@@ -426,7 +426,23 @@ async function acquireMergeLock() {
 function syncWorkdirWithIntegration(workdir) {
   const branch = integrationBranchName(options.repo)
   const result = git(['merge', '--no-edit', branch], workdir, true)
-  if (result.status !== 0) git(['merge', '--abort'], workdir, true)
+  if (result.status === 0) return
+  // Journal-only conflicts must not leave the worktree lagging the plan
+  // feature_list (that re-triggers endless integrate loops).
+  const unmerged = git(['diff', '--name-only', '--diff-filter=U'], workdir, true).stdout.trim().split('\n').filter(Boolean)
+  const onlyJournals = unmerged.length > 0 && unmerged.every((p) => /(^|\/)harness-progress\//.test(p))
+  if (onlyJournals) {
+    for (const relPath of unmerged) {
+      git(['checkout', '--theirs', '--', relPath], workdir, true)
+      git(['add', '--', relPath], workdir, true)
+    }
+    const mergeHead = git(['rev-parse', '-q', '--verify', 'MERGE_HEAD'], workdir, true)
+    if (mergeHead.status === 0) git(['commit', '--no-edit'], workdir, true)
+    return
+  }
+  git(['merge', '--abort'], workdir, true)
+  // Always pull plan feature_list so integration=true sticks on the worktree.
+  git(['checkout', branch, '--', 'feature_list.json'], workdir, true)
 }
 
 async function integrate(feature, attempt) {
