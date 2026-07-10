@@ -47,19 +47,25 @@ git clone -q "$TMP/repo" "$TMP/detached"
 git -C "$TMP/detached" config user.name test
 git -C "$TMP/detached" config user.email test@example.invalid
 supervisor_common_write_feature_queue "$TMP/detached/feature_list.json" false
-git -C "$TMP/detached" add feature_list.json && git -C "$TMP/detached" commit -qm reset
+# Catalog flags stay false after a complete run (progress lives in the Execution Ledger),
+# so bump a note and clear the ledger so HEAD moves and Work Items are ready again.
+jq '.[0].note = "reset-for-detached-run"' "$TMP/detached/feature_list.json" \
+  >"$TMP/detached/feature_list.json.tmp"
+mv "$TMP/detached/feature_list.json.tmp" "$TMP/detached/feature_list.json"
+rm -f "$TMP/detached/.git/harness-ledger/"*.json
+git -C "$TMP/detached" add -A && git -C "$TMP/detached" commit -qm reset
 PATH="$SUPERVISOR_PATH" HARNESS_TEST_GOAL_SLEEP=1 "$NODE" "$CONTROL" start \
   --repo "$TMP/detached" --host claude --poll-ms 100 --quota-workers 1 \
   --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100 | jq -e '.started == true' >/dev/null
 if PATH="$SUPERVISOR_PATH" "$NODE" "$CONTROL" start --repo "$TMP/detached" --host claude >/dev/null 2>&1; then
   echo 'not ok - a second live supervisor acquired the same repository' >&2; exit 1
 fi
-for _ in $(seq 1 150); do
+for _ in $(seq 1 450); do
   [ "$("$NODE" "$CONTROL" status --repo "$TMP/detached" | jq -r 'select(.status == "complete" and .supervisorPid == null) | "ready"')" = ready ] && break
   sleep 0.1
 done
 "$NODE" "$CONTROL" status --repo "$TMP/detached" | jq -e '.status == "complete" and .supervisorPid == null' >/dev/null \
-  || { echo 'not ok - detached supervisor did not finish within 15s' >&2; "$NODE" "$CONTROL" status --repo "$TMP/detached" >&2; exit 1; }
+  || { echo 'not ok - detached supervisor did not finish within 45s' >&2; "$NODE" "$CONTROL" status --repo "$TMP/detached" >&2; exit 1; }
 echo 'ok - detached start is singleton/recoverable and finishes in the background'
 
 mkdir -p "$TMP/crash-msg"

@@ -641,6 +641,8 @@ class Supervisor {
   async completeGoal(result) {
     this.pendingGoalResult = null
     await this.emit('run_completed', { summary: result.summary }, true)
+    // Mark stopping before save so supervisorPid is cleared in the complete snapshot.
+    this.stopping = true
     await this.save({ status: 'complete', completedAt: new Date().toISOString() })
   }
 
@@ -1016,6 +1018,7 @@ class Supervisor {
     const head = git(['rev-parse', integrationBranchName(repo)], true).stdout.trim()
     const clean = git(['status', '--porcelain'], true).stdout.trim() === ''
     if (goalState.status === 'complete' && goalState.reviewedHead === head && clean) {
+      this.stopping = true
       await this.save({ status: 'complete' })
       return true
     }
