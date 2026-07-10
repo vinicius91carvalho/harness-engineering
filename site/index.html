@@ -131,8 +131,8 @@
             <thead><tr><th>Context</th><th>What lives here</th><th>You interact through</th></tr></thead>
             <tbody>
               <tr><td><strong>Plugin marketplace</strong></td><td><code>install.sh</code>, manifests, host configuration</td><td>Installer checklist</td></tr>
-              <tr><td><strong>Workflow pipeline</strong></td><td><code>project_specs.xml</code>, <code>feature_list.json</code>, <code>orchestrator.mjs</code>, <code>claim-lease.mjs</code></td><td>Skills + files in your repo</td></tr>
-              <tr><td><strong>Supervisor control</strong></td><td><code>harness-control.mjs</code>, Resource Governor, Control Events</td><td><code>/harness:supervisor</code></td></tr>
+              <tr><td><strong>Workflow pipeline</strong></td><td><code>project_specs.xml</code>, <code>feature_list.json</code> (catalog), Execution Ledger, <code>orchestrator.mjs</code>, <code>claim-lease.mjs</code></td><td>Skills + files in your repo</td></tr>
+              <tr><td><strong>Supervisor control</strong></td><td><code>harness-control.mjs</code>, host-wide Resource Governor, Control Journal</td><td><code>/harness:supervisor</code></td></tr>
               <tr><td><strong>Optional routing</strong></td><td><code>.harness/roles.json</code>, MCP servers</td><td><code>config/roles.example.json</code></td></tr>
             </tbody>
           </table>
@@ -220,7 +220,7 @@ flowchart LR
           <div class="card-grid" aria-label="Core terms">
             <article><strong>Project Goal</strong><span>What “done” means — written in <code>project_specs.xml</code>.</span></article>
             <article><strong>Acceptance Check</strong><span>One observable behavior with an ID (e.g. <code>AC-001</code>).</span></article>
-            <article><strong>Work Item</strong><span>Executable queue entry in <code>feature_list.json</code>.</span></article>
+            <article><strong>Work Item</strong><span>Catalog entry in immutable <code>feature_list.json</code>; progress lives in the Execution Ledger.</span></article>
             <article><strong>Context</strong><span>Work Items built together in one branch/worktree.</span></article>
             <article><strong>Claim Lease</strong><span>Proof that only one worker owns a context.</span></article>
             <article><strong>Attempt</strong><span>One code → QA → (maybe) integrate cycle.</span></article>
@@ -270,7 +270,14 @@ claude --version  # or: codex --version / opencode --version / pi --version</cod
               <tr><td>Back up configuration</td><td><code>/harness:update-project</code></td><td><code>/harness-update-project</code></td><td><code>/harness-update-project</code></td><td><code>/skill:update-project</code></td></tr>
             </tbody>
           </table>
-          <p class="files"><strong>Grilling:</strong> planner uses the grilling skill internally; it is not a separate harness workflow command. A user can still activate an installed grilling skill directly by asking “grill me.”</p>
+          <p class="files"><strong>Grilling (before generator):</strong> the planner asks one product question at a time - not a separate command.
+            It covers three topics: <em>ambiguous requirements</em> (two readers could disagree, for example soft-delete vs hard-delete),
+            <em>architectural trade-offs</em> (two viable approaches, for example SQLite vs Postgres),
+            and <em>edge cases</em> (empty input, expired session, not-found).
+            Answers land in <code>&lt;planning_decisions&gt;</code> inside <code>project_specs.xml</code> and are proved by Acceptance Checks.
+            After reconcile, Work Items list <code>planning_decision_ids</code>.
+            Spec review does not open until the grilling <strong>Ready Gate</strong> passes.
+            You can also activate grilling directly by asking “grill me.”</p>
         </section>
 
         <section class="topic" id="start">
@@ -305,7 +312,7 @@ claude --version  # or: codex --version / opencode --version / pi --version</cod
               <pre><code>/harness:generator</code></pre>
             </article>
           </div>
-          <p>Setup inventories technologies, reports code/docs contradictions, creates the execution queue, and stops before implementation. An optional audit uses verify-first mode for only the selected work, so passing checks are recorded without a rewrite.</p>
+          <p>Setup inventories technologies, reports code/docs contradictions, creates the Work Item catalog, and stops before implementation. An optional audit uses verify-first mode for only the selected work, so passing checks are recorded without a rewrite.</p>
           <p class="files"><strong>OpenCode / Cursor:</strong> substitute <code>/harness-planner</code>, <code>/harness-setup</code>, or <code>/harness-generator</code> using the command table above. <strong><a href="https://pi.dev/">Pi</a>:</strong> substitute <code>/skill:planner</code>, <code>/skill:setup</code>, or <code>/skill:generator</code>.</p>
         </section>
 
@@ -328,12 +335,12 @@ claude --version  # or: codex --version / opencode --version / pi --version</cod
             <li>
               <strong>Describe the product goal</strong>
               <p><span class="you">You</span> type <code>/harness:planner Build a notes app where…</code></p>
-              <p><span class="harness">Planner skill</span> interviews you (grilling), then writes <code>project_specs.xml</code> — the append-only contract.</p>
+              <p><span class="harness">Planner skill</span> grills you one question at a time, records answers in <code>&lt;planning_decisions&gt;</code>, then writes <code>project_specs.xml</code> - the append-only contract.</p>
             </li>
             <li>
               <strong>Review the specification</strong>
-              <p><span class="you">You</span> read Acceptance Checks. Each one must be observable in a browser or via real HTTP.</p>
-              <p>Edits happen in chat (“change AC-002 to…”) until you are satisfied.</p>
+              <p><span class="you">You</span> confirm grilled decisions and Acceptance Checks in the spec review page (opens only after the Ready Gate passes).</p>
+              <p>Each check must be observable in a browser or via real HTTP. Edits happen in chat (“change AC-002 to…”) until you are satisfied.</p>
             </li>
             <li>
               <strong>Start the build</strong>
@@ -405,7 +412,7 @@ sequenceDiagram
               <div class="phase-num">1</div>
               <div>
                 <h3>You → Planner skill</h3>
-                <p>Natural-language goal becomes stable Acceptance Checks. Planner may grill one decision at a time.</p>
+                <p>Natural-language goal becomes stable Acceptance Checks plus grilled <code>&lt;planning_decisions&gt;</code>. Planner asks one decision at a time until the Ready Gate passes.</p>
                 <p class="who"><em>You</em> decide product behavior · <strong>Planner</strong> writes <code>project_specs.xml</code></p>
               </div>
             </div>
@@ -443,15 +450,15 @@ sequenceDiagram
             </div>
           </div>
 
-          <p class="note">For long runs, <code>/harness:supervisor</code> wraps the same orchestrator workers with a Resource Governor (memory, quota, concurrency) and durable Control Events every ~20 minutes.</p>
+          <p class="note">For long runs, <code>/harness:supervisor</code> wraps the same orchestrator workers with a host-wide Resource Governor (memory, quota, concurrency), an append-only fail-closed Control Journal, and durable progress events every ~20 minutes.</p>
         </section>
 
         <section class="topic" id="workflow">
           <p class="step">How the workflow runs</p>
           <h2>Seven stages, idea to reviewed</h2>
           <ol>
-            <li><strong>Specify:</strong> planner or setup writes the Project Goal and observable Acceptance Checks.</li>
-            <li><strong>Reconcile:</strong> generator maps every check into an append-only Work Item.</li>
+            <li><strong>Specify:</strong> planner grills ambiguities, trade-offs, and edge cases, then writes the Project Goal, Acceptance Checks, and <code>&lt;planning_decisions&gt;</code> (setup maps an existing repo without grilling a new goal).</li>
+            <li><strong>Reconcile:</strong> generator maps every check into the immutable Work Item catalog, copies <code>planning_decision_ids</code> onto each item, and verifies dependency order.</li>
             <li><strong>Claim:</strong> a ready context receives a lease, its own Git branch and worktree, a port (so parallel dev servers don't clash), and Run State.</li>
             <li><strong>Build and inspect:</strong> coding implements; independent QA exercises a real boundary.</li>
             <li><strong>Repair:</strong> failures produce evidence and a Repair Plan before a bounded retry.</li>
@@ -467,14 +474,16 @@ sequenceDiagram
           <h2>Each phase explained</h2>
 
           <h3>1. Specify (planner / setup)</h3>
-          <p><strong>Planner</strong> turns your goal into <code>project_specs.xml</code>: Project Goal, technology stack, core features, and stable Acceptance Check IDs (<code>AC-001</code>, …). The file is append-only after first build — new work adds checks; old IDs never change.</p>
+          <p><strong>Planner</strong> turns your goal into <code>project_specs.xml</code>: Project Goal, technology stack, core features, stable Acceptance Check IDs (<code>AC-001</code>, …), and <code>&lt;planning_decisions&gt;</code> that record grilled answers.</p>
+          <p class="note"><strong>Grilling:</strong> before generator runs, the planner asks one question at a time about (1) ambiguous requirements - two readers could disagree; (2) architectural trade-offs - two viable approaches; (3) edge cases - empty input, auth expiry, not-found, and similar. Each resolution is written under <code>&lt;planning_decisions&gt;</code> and proved by Acceptance Checks. Spec review does not open until the <strong>Ready Gate</strong> passes.</p>
+          <p>The file is append-only after first build - new work adds checks and decisions; old IDs never change.</p>
           <p><strong>Setup</strong> does the same for an existing codebase: inventories tech, records contradictions, sets <code>&lt;mode&gt;existing-codebase&lt;/mode&gt;</code> for verify-first audits. Setup does not require a generator run and does not validate every feature.</p>
 
           <h3>2. Reconcile</h3>
-          <p><code>reconcile.mjs</code> verifies every Acceptance Check maps to at least one Work Item and dependency order is acyclic. Reconciliation runs before every orchestrator start — a missing mapping blocks execution immediately.</p>
+          <p><code>reconcile.mjs</code> verifies every Acceptance Check maps to at least one Work Item, copies linked <code>planning_decision_ids</code> from the spec onto each catalog entry, and checks dependency order is acyclic. Reconciliation runs before every orchestrator start - a missing mapping blocks execution immediately.</p>
 
           <h3>3. Scaffold (initializer, once)</h3>
-          <p>If <code>feature_list.json</code> is empty, the initializer creates the queue, <code>init.sh</code> (PORT-parameterized dev server), and project structure, then commits. Idempotent: a second run skips scaffolding.</p>
+          <p>If <code>feature_list.json</code> is empty, the initializer creates the Work Item catalog, <code>init.sh</code> (PORT-parameterized dev server), and project structure, then commits. Idempotent: a second run skips scaffolding.</p>
 
           <h3>4. Claim lease</h3>
           <p><code>claim-lease.mjs</code> atomically assigns a context: dedicated branch (<code>gen/&lt;context&gt;</code>), git worktree, free port, heartbeat, and <code>.git/harness-runs/&lt;context&gt;.json</code>. Only one live owner per context.</p>
@@ -522,12 +531,14 @@ flowchart LR
             <tbody>
               <tr><td><code>project_specs.xml</code></td><td>Project Goal, direction, stable Acceptance Checks.</td><td>Planner / setup</td></tr>
               <tr><td><code>.harness-technology-inventory.json</code></td><td>Setup evidence for material technologies and contradictions.</td><td>Setup</td></tr>
-              <tr><td><code>feature_list.json</code></td><td>Dependency-aware queue and implementation, QA, integration proofs.</td><td>Initializer + orchestrator updates</td></tr>
+              <tr><td><code>feature_list.json</code></td><td>Immutable Work Item catalog reconciled from Acceptance Checks.</td><td>Initializer + reconcile.mjs</td></tr>
+              <tr><td><code>.git/harness-ledger/</code></td><td>Execution Ledger: mutable implementation, QA, integration, Attempt, Blocking Scope.</td><td>Orchestrator (workflow transition module)</td></tr>
               <tr><td><code>init.sh</code></td><td>PORT-parameterized dev server startup for QA.</td><td>Initializer</td></tr>
-              <tr><td><code>harness-progress/</code></td><td>Human-readable journals by work context.</td><td>Orchestrator</td></tr>
-              <tr><td><code>.git/harness-runs/</code></td><td>Run State, routes, evidence per context.</td><td>Orchestrator</td></tr>
+              <tr><td><code>harness-progress/</code></td><td>Human-readable Workflow Journals by work context.</td><td>Orchestrator</td></tr>
+              <tr><td><code>.git/harness-runs/</code></td><td>Run State and worker results per context.</td><td>Orchestrator</td></tr>
+              <tr><td><code>.git/harness-evidence/</code></td><td>Create-only Evidence Artifacts (screenshots, HTTP, logs).</td><td>Workers + orchestrator references</td></tr>
               <tr><td><code>.git/generator-claims.json</code></td><td>Live Claim Leases for all contexts.</td><td>claim-lease.mjs</td></tr>
-              <tr><td><code>.git/harness-control/</code></td><td>Supervisor state, pending input, ordered events.</td><td>harness-control.mjs</td></tr>
+              <tr><td><code>.git/harness-control/</code></td><td>Control Journal, supervisor lease, Resource Governor quota.</td><td>harness-control.mjs</td></tr>
               <tr><td><code>.harness/roles.json</code></td><td>Optional per-role tool/model routing.</td><td>You (optional)</td></tr>
               <tr><td><code>.harness/projects.json</code></td><td>Optional monorepo project registry.</td><td>Setup</td></tr>
             </tbody>
@@ -544,7 +555,7 @@ flowchart LR
         <section class="topic" id="spec-format">
           <p class="step">Format</p>
           <h2>project_specs.xml — the completion contract</h2>
-          <p>The specification is the source of truth for <em>what</em> done means. Work Items are derived from it; they never replace it.</p>
+          <p>The specification is the source of truth for <em>what</em> done means. Work Items are derived from it; they never replace it. Grilled product choices live in <code>&lt;planning_decisions&gt;</code> so a fresh agent does not re-open settled questions.</p>
 
           <h3>Key sections</h3>
           <table>
@@ -553,7 +564,8 @@ flowchart LR
               <tr><td><code>&lt;project_goal&gt;</code></td><td>One observable system-level outcome Goal Review evaluates directly.</td></tr>
               <tr><td><code>&lt;mode&gt;</code></td><td><code>existing-codebase</code> enables verify-first audits; omit for greenfield.</td></tr>
               <tr><td><code>&lt;core_features&gt;</code></td><td>Named areas — each area name becomes a <code>context</code> for parallel builds.</td></tr>
-              <tr><td><code>&lt;acceptance_checks&gt;</code></td><td>Stable IDs, observable descriptions, <code>depends_on</code> graph.</td></tr>
+              <tr><td><code>&lt;acceptance_checks&gt;</code></td><td>Stable IDs, observable descriptions, <code>depends_on</code> graph (include in-scope edge cases).</td></tr>
+              <tr><td><code>&lt;planning_decisions&gt;</code></td><td>Grilled answers (ambiguity, trade-off, or edge case) with question, choice, rationale, and linked Acceptance Check IDs.</td></tr>
               <tr><td><code>&lt;technology_stack&gt;</code></td><td>Ports, frameworks, conventions agents must follow.</td></tr>
             </tbody>
           </table>
@@ -576,7 +588,39 @@ flowchart LR
         Publish a note, reload, and observe the same title and text.
       &lt;/description&gt;
     &lt;/acceptance_check&gt;
+    &lt;acceptance_check
+      id="AC-002"
+      context="notes"
+      category="edge-case"
+      depends_on="AC-001"&gt;
+      &lt;description&gt;
+        Submit an empty title and observe a validation error with no note created.
+      &lt;/description&gt;
+    &lt;/acceptance_check&gt;
   &lt;/acceptance_checks&gt;
+  &lt;planning_decisions&gt;
+    &lt;decision id="D-001" topic="ambiguous-requirement"&gt;
+      &lt;question&gt;Are deleted notes soft-deleted or hard-deleted?&lt;/question&gt;
+      &lt;options&gt;Soft-delete with restore; hard-delete&lt;/options&gt;
+      &lt;choice&gt;Soft-delete with restore&lt;/choice&gt;
+      &lt;rationale&gt;Matches user expectation for accidental deletes.&lt;/rationale&gt;
+      &lt;acceptance_checks&gt;AC-001&lt;/acceptance_checks&gt;
+    &lt;/decision&gt;
+    &lt;decision id="D-002" topic="architectural-tradeoff"&gt;
+      &lt;question&gt;SQLite vs Postgres for local MVP?&lt;/question&gt;
+      &lt;options&gt;SQLite file; Postgres container&lt;/options&gt;
+      &lt;choice&gt;SQLite file&lt;/choice&gt;
+      &lt;rationale&gt;Zero-ops local smoke path.&lt;/rationale&gt;
+      &lt;acceptance_checks&gt;AC-001&lt;/acceptance_checks&gt;
+    &lt;/decision&gt;
+    &lt;decision id="D-003" topic="edge-case"&gt;
+      &lt;question&gt;Empty title on publish?&lt;/question&gt;
+      &lt;options&gt;Reject with validation; allow untitled&lt;/options&gt;
+      &lt;choice&gt;Reject with validation&lt;/choice&gt;
+      &lt;rationale&gt;Prevents blank notes in the list.&lt;/rationale&gt;
+      &lt;acceptance_checks&gt;AC-002&lt;/acceptance_checks&gt;
+    &lt;/decision&gt;
+  &lt;/planning_decisions&gt;
 &lt;/project_specification&gt;</code></pre>
           </div>
           <p class="note"><strong>Append-only rule:</strong> after the first build, never edit or delete existing Acceptance Check IDs. Add new checks for new features; generator maps only the delta.</p>
@@ -584,8 +628,8 @@ flowchart LR
 
         <section class="topic" id="queue-format">
           <p class="step">Format</p>
-          <h2>feature_list.json — the execution queue</h2>
-          <p>A flat JSON array. Each entry is a <strong>Work Item</strong>: the smallest vertical slice that can be coded, QA'd, and integrated independently.</p>
+          <h2>feature_list.json — the Work Item catalog</h2>
+          <p>A flat JSON array. Each entry is a <strong>Work Item</strong>: the smallest vertical slice that can be coded, QA'd, and integrated independently. The catalog is reconciled from <code>project_specs.xml</code> and treated as immutable during execution; live progress flags are stored in the Execution Ledger and overlaid at read time.</p>
 
           <div class="format-block">
             <header><strong>Work Item shape</strong></header>
@@ -602,6 +646,7 @@ flowchart LR
       "Confirm the same title and body appear"
     ],
     "acceptance_checks": ["AC-001"],
+    "planning_decision_ids": ["D-001", "D-002"],
     "depends_on": [],
     "verify_first": true,
     "implementation": false,
@@ -618,9 +663,10 @@ flowchart LR
             <tbody>
               <tr><td><code>context</code></td><td>Build boundary — items in the same context share one worktree.</td></tr>
               <tr><td><code>acceptance_checks</code></td><td>Which spec IDs this item proves.</td></tr>
+              <tr><td><code>planning_decision_ids</code></td><td>Grilled decisions (ambiguity / trade-off / edge case) linked to those checks.</td></tr>
               <tr><td><code>depends_on</code></td><td>Other Work Item IDs that must be integrated first.</td></tr>
               <tr><td><code>verify_first</code></td><td>Audit existing code before changing it (existing-codebase mode).</td></tr>
-              <tr><td><code>implementation</code> / <code>qa</code> / <code>integration</code></td><td>Three separate proofs — see <a href="#files">file index</a>.</td></tr>
+              <tr><td><code>implementation</code> / <code>qa</code> / <code>integration</code></td><td>Three separate proofs — defaults in the catalog; live values in the Execution Ledger.</td></tr>
               <tr><td><code>retries</code></td><td>Goal Review reopen count for this item (not Attempt count).</td></tr>
             </tbody>
           </table>
@@ -654,18 +700,19 @@ flowchart LR
           <h3>Workflow journal — <code>harness-progress/&lt;context&gt;.md</code></h3>
           <p>Append-only human log: Attempt outcomes, Defect Reports, Repair Plans, explicit Resumes. Read this first when something looks stuck.</p>
 
-          <h3>Evidence — <code>.git/harness-runs/evidence/&lt;context&gt;/</code></h3>
-          <p>Screenshots, HTTP captures, and agent logs referenced by journals and Defect Reports.</p>
+          <h3>Evidence — <code>.git/harness-evidence/&lt;project&gt;/&lt;run&gt;/&lt;context&gt;/</code></h3>
+          <p>Create-only screenshots, HTTP captures, and agent logs referenced by Workflow Journals and Defect Reports.</p>
 
           <h3>Supervisor — <code>.git/harness-control/</code></h3>
           <table>
             <thead><tr><th>File</th><th>Contents</th></tr></thead>
             <tbody>
-              <tr><td><code>state.json</code></td><td>Supervisor lease, active workers, retry queue, crash counts.</td></tr>
-              <tr><td><code>events.jsonl</code></td><td>Ordered Control Events (<code>run_completed</code>, progress, input_required).</td></tr>
+              <tr><td><code>state.json</code></td><td>Derived supervisor status, active workers, retry queue, crash counts.</td></tr>
+              <tr><td><code>events.jsonl</code></td><td>Append-only Control Journal (<code>run_completed</code>, progress, <code>input_required</code>). Fail-closed on corrupt tails.</td></tr>
               <tr><td><code>responses/</code></td><td>Your answers to Input Requests (idempotent ack).</td></tr>
             </tbody>
           </table>
+          <p>Fleet recovery (kill supervisor, release locks, kill workers) uses guarded <code>harness-control</code> commands with lease authorization — not raw <code>kill</code>/<code>rm</code>. See <a href="#monorepo">monorepo ops</a>.</p>
         </section>
 
         <section class="topic" id="worked-example">
@@ -776,8 +823,9 @@ node "$CONTROL" events   --repo "$PROJECT" --consumer manual-check</code></pre>
             <article><span>3</span><div><strong>Goal reviewed</strong><p>Goal Review has <code>status: complete</code> and <code>phase: complete</code>.</p></div></article>
             <article><span>4</span><div><strong>Completion persisted</strong><p>Control events contain <code>kind: run_completed</code>.</p></div></article>
           </div>
-          <pre><code>node ~/.config/opencode/skills/harness-generator/reconcile.mjs "$PROJECT" --check
-jq 'all(.[]; .implementation and .qa and .integration)' "$PROJECT/feature_list.json"
+          <pre><code>GEN=~/.config/opencode/skills/harness-generator
+node "$GEN/reconcile.mjs" "$PROJECT" --check
+jq -e '.progress | (.integrated == .total) and (.total > 0)' &lt;(node "$CONTROL" status --repo "$PROJECT")
 node "$CONTROL" events --repo "$PROJECT" --consumer manual-check</code></pre>
         </section>
 
@@ -787,7 +835,7 @@ node "$CONTROL" events --repo "$PROJECT" --consumer manual-check</code></pre>
           <p>Start with the live claims view, from the generator skill directory. As with <a href="#operate">monitoring</a>, this path assumes OpenCode is installed; it is not the same directory Claude Code or Codex install their plugin into.</p>
           <pre><code>GEN=~/.config/opencode/skills/harness-generator
 bash "$GEN/claim.sh" list "$PROJECT"</code></pre>
-          <p>Each line reports a context's tasks, port, status, worktree, phase, attempt, next action, owner/child process, and heartbeat. For any context that looks stuck, read <code>harness-progress/&lt;context&gt;.md</code> (journal), <code>.git/harness-runs/&lt;context&gt;.json</code> (Run State), and <code>.git/harness-runs/evidence/&lt;context&gt;/</code> (Evidence Artifacts).</p>
+          <p>Each line reports a context's tasks, port, status, worktree, phase, attempt, next action, owner/child process, and heartbeat. For any context that looks stuck, read <code>harness-progress/&lt;context&gt;.md</code> (Workflow Journal), <code>.git/harness-runs/&lt;context&gt;.json</code> (Run State), and <code>.git/harness-evidence/</code> (Evidence Artifacts).</p>
           <table>
             <thead><tr><th>Symptom</th><th>Action</th></tr></thead>
             <tbody>
@@ -838,45 +886,45 @@ bash "$GEN/claim.sh" list "$PROJECT"</code></pre>
     { "harness": "codex", "model": "gpt-5.5" }
   ],
   "validation": [
+    { "harness": "agent", "model": "composer-2.5" },
+    { "harness": "codex", "model": "gpt-5.5" },
+    { "harness": "claude", "model": "claude-opus-4-8" },
+    { "harness": "agent", "model": "grok-4.5-high" },
     { "harness": "opencode", "model": "opencode-go/minimax-m3" },
     { "harness": "opencode", "model": "opencode-go/qwen3.7-plus" },
-    { "harness": "opencode", "model": "opencode-go/deepseek-v4-flash" },
-    { "harness": "opencode", "model": "nvidia/deepseek-ai/deepseek-v4-flash" },
-    { "harness": "opencode", "model": "openrouter/qwen/qwen3-coder:free" },
     { "harness": "opencode", "model": "opencode-go/qwen3.7-max" },
     { "harness": "opencode", "model": "opencode-go/deepseek-v4-pro" },
-    { "harness": "agent", "model": "composer-2.5" },
-    { "harness": "agent", "model": "grok-4.5-high" },
-    { "harness": "codex", "model": "gpt-5.5" },
-    { "harness": "claude", "model": "claude-opus-4-8" }
+    { "harness": "opencode", "model": "opencode-go/deepseek-v4-flash" },
+    { "harness": "opencode", "model": "nvidia/deepseek-ai/deepseek-v4-flash" },
+    { "harness": "opencode", "model": "openrouter/qwen/qwen3-coder:free" }
   ],
   "repairPlanning": [
+    { "harness": "agent", "model": "composer-2.5" },
+    { "harness": "codex", "model": "gpt-5.5" },
+    { "harness": "claude", "model": "claude-opus-4-8" },
     { "harness": "opencode", "model": "opencode-go/deepseek-v4-pro" },
     { "harness": "opencode", "model": "opencode-go/qwen3.7-max" },
     { "harness": "opencode", "model": "opencode-go/minimax-m3" },
     { "harness": "opencode", "model": "nvidia/deepseek-ai/deepseek-v4-pro" },
     { "harness": "agent", "model": "grok-4.5-high" },
-    { "harness": "agent", "model": "composer-2.5" },
     { "harness": "pi", "model": "anthropic/claude-opus-4-8:xhigh" },
-    { "harness": "pi", "model": "openai-codex/gpt-5.5:high" },
-    { "harness": "claude", "model": "claude-opus-4-8" },
-    { "harness": "codex", "model": "gpt-5.5" }
+    { "harness": "pi", "model": "openai-codex/gpt-5.5:high" }
   ],
   "goalReview": [
+    { "harness": "agent", "model": "composer-2.5" },
+    { "harness": "codex", "model": "gpt-5.5" },
+    { "harness": "claude", "model": "claude-opus-4-8" },
     { "harness": "opencode", "model": "opencode-go/qwen3.7-max" },
     { "harness": "opencode", "model": "opencode-go/deepseek-v4-pro" },
     { "harness": "opencode", "model": "opencode-go/minimax-m3" },
     { "harness": "opencode", "model": "nvidia/deepseek-ai/deepseek-v4-pro" },
-    { "harness": "agent", "model": "composer-2.5" },
-    { "harness": "agent", "model": "grok-4.5-high" },
-    { "harness": "codex", "model": "gpt-5.5" },
-    { "harness": "claude", "model": "claude-opus-4-8" }
+    { "harness": "agent", "model": "grok-4.5-high" }
   ],
   "noCredits": [
+    { "harness": "agent", "model": "composer-2.5" },
     { "harness": "opencode", "model": "opencode-go/deepseek-v4-flash" },
     { "harness": "opencode", "model": "nvidia/deepseek-ai/deepseek-v4-flash" },
     { "harness": "opencode", "model": "openrouter/qwen/qwen3-coder:free" },
-    { "harness": "agent", "model": "composer-2.5" },
     { "harness": "agent", "model": "grok-4.5-medium" }
   ]
 }</code></pre>

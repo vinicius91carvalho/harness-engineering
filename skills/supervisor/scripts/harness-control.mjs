@@ -15,7 +15,7 @@ for (let i = 0; i < rawArgs.length; i += 2) {
   if (!key?.startsWith('--') || value === undefined) fatal(`invalid argument: ${key || ''}`)
   options[key.slice(2)] = value
 }
-if (!commandName) fatal('usage: harness-control.mjs {start|run|status|capacity|events|ack|respond|quota|pause|resume|stop} --repo <path> ...')
+if (!commandName) fatal('usage: harness-control.mjs {start|run|status|capacity|events|ack|respond|quota|pause|resume|stop|kill-supervisor|release-supervisor-lock|kill-worker|release-lease|clear-dead-lock} --repo <path> ...')
 
 const scriptFile = fileURLToPath(import.meta.url)
 const supervisorLib = resolve(dirname(scriptFile), '..', 'lib')
@@ -30,19 +30,20 @@ async function importLib(name) {
 }
 const { readJson, atomicJson } = await importLib('fs-json.mjs')
 const { isProviderQuotaLimited } = await importLib('verdict.mjs')
-const { computeCapacity } = await importLib('capacity.mjs')
 const { scopeClaims, runStateFile: runStatePath } = await importLib('project-keys.mjs')
+const { resolveProjectTopology } = await importLib('project-topology.mjs')
 const { readWorkerResult } = await importLib('worker-result.mjs')
 const { cleanupBrowserOrphans } = await importLib('browser-cleanup.mjs')
 const { isWorkerStuck, isWorkerStuckByHealth, stuckThresholdMs, assessWorkerHealth } = await importLib('stuck-worker.mjs')
 const { interpretWorkerOutcome } = await importLib('worker-outcome.mjs')
-const { planWorkerClosedActions } = await importLib('worker-lifecycle.mjs')
+const { planWorkerClosedActions, buildOrchestratorArgv, buildWorkerBase, workerLogFileName, planWorkerHerdrMeta, planWorkerStop, planWorkerCleanupTargets, terminateProcessTree } = await importLib('worker-lifecycle.mjs')
 const { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } = await importLib('supervisor-tick.mjs')
 const { planTickAdmission } = await importLib('supervisor-admission.mjs')
 const { pruneOrphanPendingInputs, isCrashBoundContext } = await importLib('supervisor-claims.mjs')
 const { planAutoRetryResponses } = await importLib('supervisor-auto-respond.mjs')
-const { selectClaim, resumeClaim, releaseClaim, mergeLockHolder } = await importLib('claim-lease.mjs')
+const { selectClaim, resumeClaim, releaseClaim, mergeLockHolder, clearDeadLock } = await importLib('claim-lease.mjs')
 const { integrationBranchName, integrationBranchRef } = await importLib('integration-branch.mjs')
+const { ledgerPath, readLedger, applyLedgerToCatalog } = await importLib('execution-ledger.mjs')
 const {
   resolveDisplayMode, spawnAgent, closeWorkerDisplay, renameWorkerTab,
   buildWorkerTabLabel, roleFromPhase, readPaneTail, getPaneAgentStatus, paneExists,
@@ -67,12 +68,18 @@ function exec(program, args, cwd = repo, allowFailure = false) {
 
 function git(args, allowFailure = false) { return exec('git', args, repo, allowFailure) }
 
-const commonRaw = git(['rev-parse', '--git-common-dir']).stdout.trim()
-const commonGit = isAbsolute(commonRaw) ? commonRaw : resolve(repo, commonRaw)
+const topology = resolveProjectTopology(repo)
+const commonGit = topology.commonGit
 const herdrLayoutLock = join(commonGit, 'harness-control', 'herdr-layout.lock')
-const projectPrefix = git(['rev-parse', '--show-prefix']).stdout.trim().replace(/\/$/, '')
-const projectId = projectPrefix ? projectPrefix.replace(/[^a-zA-Z0-9_-]/g, '_') : 'root'
-const root = projectPrefix ? join(commonGit, 'harness-control', projectId) : join(commonGit, 'harness-control')
+const projectPrefix = topology.projectPrefix.replace(/\/$/, '')
+const projectId = topology.projectId
+const root = topology.controlRoot
+
+async function queueWithLedger() {
+  const catalog = await readJson(join(repo, 'feature_list.json'), [])
+  const ledger = await readLedger(ledgerPath(commonGit, projectId === 'root' ? '' : projectId))
+  return applyLedgerToCatalog(catalog, ledger)
+}
 const stateFile = join(root, 'state.json')
 const eventFile = join(root, 'events.jsonl')
 const responseDir = join(root, 'responses')
@@ -82,7 +89,6 @@ const controlFile = join(root, 'control.json')
 const logDir = join(root, 'logs')
 const supervisorLog = join(root, 'supervisor.log')
 const supervisorLock = join(root, 'supervisor.lock')
-const supervisorOwner = join(supervisorLock, 'owner.json')
 
 // generator-claims.json lives under commonGit (the shared .git of the whole
 // monorepo, not this subproject alone) so every sibling subproject's claims
@@ -100,9 +106,14 @@ function runStateFile(context) {
 }
 
 async function readEvents() {
+  const { readControlEvents } = await importLib('control-journal.mjs')
   try {
-    return (await readFile(eventFile, 'utf8')).split('\n').filter(Boolean).map((line) => JSON.parse(line))
-  } catch { return [] }
+    return await readControlEvents(root, eventFile)
+  } catch (error) {
+    if (error?.code === 'ENOENT') return []
+    if (error?.code === 'CONTROL_JOURNAL_CORRUPT') fatal(error.message)
+    fatal(`cannot read control events: ${error.message}`)
+  }
 }
 
 function consumerFile() {
@@ -116,51 +127,50 @@ function processAlive(pid) {
   try { process.kill(Number(pid), 0); return true } catch { return false }
 }
 
-async function acquireSupervisorLock(token, pid, status, leaseSeconds) {
-  await mkdir(root, { recursive: true })
-  for (;;) {
-    try {
-      await mkdir(supervisorLock)
-      await atomicJson(supervisorOwner, { token, pid, host: hostname(), status, heartbeatEpoch: Math.floor(Date.now() / 1000) })
-      return
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error
-    }
-    const owner = await readJson(supervisorOwner, {})
-    if (owner.token === token) {
-      await atomicJson(supervisorOwner, { ...owner, pid, host: hostname(), status, heartbeatEpoch: Math.floor(Date.now() / 1000) })
-      return
-    }
-    const age = Math.floor(Date.now() / 1000) - Number(owner.heartbeatEpoch || 0)
-    // A hard-killed supervisor's pid can be reused by an unrelated process, so pid-alive alone
-    // must not count as live: also require the heartbeat (refreshed every tick) to be fresh.
-    const live = owner.host === hostname() ? (age < leaseSeconds && (processAlive(owner.pid) || owner.status === 'starting')) : age < leaseSeconds
-    if (live) fatal(`supervisor lease is owned by ${owner.host || 'unknown'} pid ${owner.pid || 'unknown'}`)
-    const stale = `${supervisorLock}.stale.${randomUUID()}`
-    try { await rename(supervisorLock, stale) } catch { continue }
-    await rm(stale, { recursive: true, force: true })
+function governorOptions(config) {
+  return {
+    maxWorkers: config.maxWorkers,
+    quotaWorkers: config.quotaWorkers,
+    cpuPerWorker: config.cpuPerWorker,
+    memoryPerWorkerMb: config.memoryPerWorkerMb,
+    reserveMemoryMb: config.reserveMemoryMb,
+    maxLoadRatio: config.maxLoadRatio,
+    quotaFile,
+    provider: config.host || 'default',
   }
 }
 
-async function updateSupervisorLock(token, status = 'running', pid = process.pid) {
-  const owner = await readJson(supervisorOwner, {})
-  if (owner.token !== token) {
-    if (status === 'stopping') return
-    // Another start/run may have stolen a stale lease, or the lock dir was
-    // removed mid-tick. Re-acquire instead of exiting — exiting used to kill
-    // every herdr worker pane via run()'s finally block.
-    await acquireSupervisorLock(token, pid, status, Math.max(10, number('supervisor-lease-seconds', 30)))
-    return
+async function acquireSupervisorLock(token, pid, status, leaseSeconds) {
+  const { acquireSupervisorLease } = await importLib('supervisor-lease.mjs')
+  try {
+    return await acquireSupervisorLease(root, { token, pid, status, leaseSeconds })
+  } catch (error) {
+    if (error?.code === 'SUPERVISOR_LEASE_HELD') fatal(error.message)
+    throw error
   }
-  await atomicJson(supervisorOwner, { ...owner, pid, host: hostname(), status, heartbeatEpoch: Math.floor(Date.now() / 1000) })
+}
+
+async function updateSupervisorLock(token, fenceGeneration, status = 'running', pid = process.pid) {
+  const { updateSupervisorLease } = await importLib('supervisor-lease.mjs')
+  try {
+    return await updateSupervisorLease(root, {
+      token,
+      fenceGeneration,
+      pid,
+      status,
+      leaseSeconds: Math.max(10, number('supervisor-lease-seconds', 30)),
+    })
+  } catch (error) {
+    if (error?.code === 'SUPERVISOR_LEASE_STALE' && status !== 'stopping') {
+      return acquireSupervisorLock(token, pid, status, Math.max(10, number('supervisor-lease-seconds', 30)))
+    }
+    throw error
+  }
 }
 
 async function releaseSupervisorLock(token) {
-  const owner = await readJson(supervisorOwner, {})
-  if (owner.token !== token) return
-  const released = `${supervisorLock}.released.${randomUUID()}`
-  try { await rename(supervisorLock, released) } catch { return }
-  await rm(released, { recursive: true, force: true })
+  const { releaseSupervisorLease } = await importLib('supervisor-lease.mjs')
+  await releaseSupervisorLease(root, token)
 }
 
 function number(name, fallback) {
@@ -202,7 +212,15 @@ function baseConfig() {
 }
 
 async function capacity(config, active = 0) {
-  return computeCapacity(config, quotaFile, active)
+  const { observeCapacity } = await importLib('resource-governor.mjs')
+  const observed = await observeCapacity(commonGit, governorOptions(config))
+  const localAvailable = Math.max(0, observed.limit - active)
+  return {
+    ...observed,
+    active,
+    available: Math.min(observed.available, localAvailable),
+    slots: Math.min(observed.slots, localAvailable),
+  }
 }
 
 async function integrationCheckout() {
@@ -221,12 +239,22 @@ class Supervisor {
   constructor(config) {
     this.config = config
     this.leaseToken = process.env.HARNESS_SUPERVISOR_TOKEN || randomUUID()
+    this.fenceGeneration = 1
     this.state = null
     this.workers = new Map()
     this.stopping = false
     this.lastSummary = 0
     this.finalizing = new Set()
     this.pendingGoalResult = null
+  }
+
+  lease() {
+    return { token: this.leaseToken, fenceGeneration: this.fenceGeneration }
+  }
+
+  async refreshLease(status = 'running', pid = process.pid) {
+    const refreshed = await updateSupervisorLock(this.leaseToken, this.fenceGeneration, status, pid)
+    if (refreshed?.fenceGeneration) this.fenceGeneration = refreshed.fenceGeneration
   }
 
   // A worker's 'close' event fires whenever the OS schedules it, independent of the tick/run
@@ -262,16 +290,152 @@ class Supervisor {
       }])),
     }
     await atomicJson(stateFile, this.state)
-    await updateSupervisorLock(this.leaseToken, this.stopping ? 'stopping' : this.state.status)
+    await this.refreshLease(this.stopping ? 'stopping' : this.state.status)
   }
 
   async emit(kind, data = {}, immediate = false) {
-    const events = await readEvents()
-    const id = (events.at(-1)?.id || 0) + 1
-    const event = { id, runId: this.state.runId, at: new Date().toISOString(), kind, immediate, ...data }
-    await mkdir(root, { recursive: true })
-    await appendFile(eventFile, `${JSON.stringify(event)}\n`)
+    const { appendControlEvent } = await importLib('control-journal.mjs')
+    const event = await appendControlEvent(root, {
+      runId: this.state.runId,
+      kind,
+      immediate,
+      ...data,
+    }, this.lease())
     return event
+  }
+
+  async requestWorkerAdmission(context) {
+    if (process.env.HARNESS_TEST_SKIP_GOVERNOR === '1') return { granted: true, reservation: { id: null } }
+    const { requestAdmission } = await importLib('resource-governor.mjs')
+    return requestAdmission(commonGit, {
+      projectId: projectId || 'root',
+      context,
+      ...governorOptions(this.config),
+    })
+  }
+
+  async releaseWorkerAdmission(reservationId) {
+    if (!reservationId) return
+    const { releaseAdmission } = await importLib('resource-governor.mjs')
+    await releaseAdmission(commonGit, reservationId)
+  }
+
+  applyWorkerStop(worker, signal = 'SIGTERM') {
+    const plan = planWorkerStop(worker, { signal })
+    if (plan.kind === 'close_display') {
+      closeWorkerDisplay(plan.paneId, plan.tabId)
+      return plan
+    }
+    if (plan.kind === 'terminate_tree') {
+      terminateProcessTree(plan.pid, plan.signal)
+      return plan
+    }
+    return plan
+  }
+
+  cleanupWorkerResources(worker) {
+    if (!worker) return { killed: 0 }
+    return cleanupBrowserOrphans(planWorkerCleanupTargets(worker))
+  }
+
+  async startWorkerRuntime({
+    claim,
+    guidance = '',
+    mode = 'work-items',
+    herdrRole,
+    herdrTaskId,
+    herdrRetry,
+    startedEvent,
+    quotaTestTail = null,
+  }) {
+    const key = claim.context
+    if (this.workers.has(key)) return false
+    const admission = await this.requestWorkerAdmission(key)
+    if (!admission.granted) return false
+    const governorEnv = admission.reservation?.id
+      ? { HARNESS_GOVERNOR_RESERVATION: admission.reservation.id }
+      : {}
+    const logFile = join(logDir, workerLogFileName(key))
+    const argv = buildOrchestratorArgv({
+      orchestrator,
+      repo,
+      host: this.config.host,
+      claim,
+      guidance,
+      mode,
+    })
+    const workerBase = buildWorkerBase({
+      claim,
+      logFile,
+      reservationId: admission.reservation?.id || null,
+    })
+
+    if (quotaTestTail != null) {
+      await mkdir(logDir, { recursive: true })
+      await writeFile(logFile, quotaTestTail)
+      this.workers.set(key, {
+        type: 'background', child: null, log: null,
+        ...workerBase,
+      })
+      await this.emit(startedEvent || 'worker_started', { context: claim.context, featureIds: claim.featureIds, pid: null })
+      await this.save()
+      await this.trackClose(this.workerClosed(key, 1, quotaTestTail).catch((error) => this.crash(error)))
+      return true
+    }
+
+    if (this.config.display === 'herdr') {
+      const meta = planWorkerHerdrMeta({
+        claim,
+        projectId,
+        role: herdrRole,
+        taskId: herdrTaskId,
+        retry: herdrRetry,
+      })
+      const { paneId, tabId, tabLabel } = spawnAgent(meta.agentName, [process.execPath, ...argv], {
+        cwd: meta.cwd,
+        layoutLockDir: herdrLayoutLock,
+        taskId: meta.taskId,
+        role: meta.role,
+        project: meta.project,
+        retry: meta.retry,
+        env: governorEnv,
+      })
+      reportHarnessAgent(paneId, meta.agentName, 'working', mode === 'goal-review' ? 'goal review starting' : 'orchestrator starting')
+      this.workers.set(key, {
+        type: 'herdr', paneId, tabId, tabLabel, agentName: meta.agentName,
+        ...workerBase,
+      })
+      const eventPayload = startedEvent === 'goal_review_started'
+        ? { paneId, tabId, tabLabel, display: 'herdr' }
+        : { context: claim.context, featureIds: claim.featureIds, paneId, tabId, tabLabel, display: 'herdr' }
+      await this.emit(startedEvent || 'worker_started', eventPayload)
+      await this.save()
+      return true
+    }
+
+    const child = spawn(process.execPath, argv, {
+      cwd: claim.worktree,
+      env: { ...process.env, ...governorEnv },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
+    })
+    if (child.pid) {
+      workerBase.ownedResources.processGroup = child.pid
+      workerBase.childPid = child.pid
+    }
+    const log = createWriteStream(logFile, { flags: 'w' })
+    let tail = ''
+    const collect = (chunk) => { const text = String(chunk); log.write(text); tail = `${tail}${text}`.slice(-64_000) }
+    child.stdout.on('data', collect); child.stderr.on('data', collect)
+    child.on('error', (error) => collect(`${error.stack || error.message}\n`))
+    this.workers.set(key, { type: 'background', child, log, ...workerBase })
+    const eventPayload = startedEvent === 'goal_review_started'
+      ? {}
+      : { context: claim.context, featureIds: claim.featureIds, pid: child.pid }
+    await this.emit(startedEvent || 'worker_started', eventPayload)
+    await this.save()
+    child.on('close', (code) => this.trackClose(this.workerClosed(key, code, tail).catch((error) => this.crash(error))))
+    return true
   }
 
   async input(scope, reason, detail, context = null, choices = ['retry', 'pause', 'abort']) {
@@ -297,7 +461,8 @@ class Supervisor {
     if (previous.supervisorPid !== process.pid && (localLive || remoteLive)) {
       fatal(`supervisor already running on ${previous.supervisorHost} as pid ${previous.supervisorPid}`)
     }
-    await acquireSupervisorLock(this.leaseToken, process.pid, 'running', this.config.supervisorLeaseSeconds)
+    const acquired = await acquireSupervisorLock(this.leaseToken, process.pid, 'running', this.config.supervisorLeaseSeconds)
+    this.fenceGeneration = acquired?.fenceGeneration || 1
     const control = await readJson(controlFile, {})
     const paused = previous.status === 'paused' && control.status !== 'running'
     const goalPending = Object.values(previous.pendingInputs || {}).some((item) => item.status === 'pending' && item.scope === 'goal')
@@ -364,12 +529,18 @@ class Supervisor {
         worktree: saved.worktree || claim.worktree,
         port: saved.port || claim.port,
         startedAt: saved.startedAt || new Date().toISOString(),
+        ownedResources: {
+          port: saved.port || claim.port,
+          worktree: saved.worktree || claim.worktree,
+          profileDir: null,
+          processGroup: runState.childPid || runState.ownerPid || null,
+        },
       })
     }
   }
 
   async snapshot() {
-    const queue = await readJson(join(repo, 'feature_list.json'), [])
+    const queue = await queueWithLedger()
     const claims = await ownClaims()
     const counts = { total: queue.length, implemented: 0, qa: 0, integrated: 0, blocked: 0 }
     for (const item of queue) {
@@ -449,61 +620,22 @@ class Supervisor {
 
   async spawnWorker(claim, guidance = '') {
     const key = claim.context
-    if (this.workers.has(key)) return
-    const args = [orchestrator, '--host', this.config.host, '--repo', repo, '--workdir', claim.worktree,
-      '--context', claim.context, '--port', String(claim.port), '--features', claim.featureIds.join(',')]
-    if (guidance) args.push('--guidance', guidance)
-    const logFile = join(logDir, `${key.replace(/[^a-zA-Z0-9_-]/g, '_')}-${Date.now()}.log`)
-    // Deterministic CI hook: skip the real orchestrator and close as if the worker
-    // reported a provider usage limit. Avoids macOS races where stderr is lost before close.
+    const runState = await readJson(runStateFile(key), {})
+    const herdrRetry = Math.max(1, Number(runState.attempt) || Number(this.state.retryQueue?.[key]?.attempts) || 1)
+    const herdrTaskId = (claim.featureIds && claim.featureIds[0]) || claim.context || key
+    const herdrRole = roleFromPhase(runState.phase || 'coding')
     if (process.env.HARNESS_TEST_SUPERVISOR_QUOTA === '1') {
       const quotaTail = "ERROR: You've hit your usage limit. Try again at Jul 9th, 2026 12:17 AM.\n"
-      await mkdir(logDir, { recursive: true })
-      await writeFile(logFile, quotaTail)
-      this.workers.set(key, {
-        type: 'background', child: null, log: null, logFile,
-        context: claim.context, featureIds: claim.featureIds,
-        worktree: claim.worktree, port: claim.port, startedAt: new Date().toISOString(),
+      return this.startWorkerRuntime({
+        claim,
+        guidance,
+        herdrRole,
+        herdrTaskId,
+        herdrRetry,
+        quotaTestTail: quotaTail,
       })
-      await this.emit('worker_started', { context: claim.context, featureIds: claim.featureIds, pid: null })
-      await this.save()
-      await this.trackClose(this.workerClosed(key, 1, quotaTail).catch((error) => this.crash(error)))
-      return
     }
-    if (this.config.display === 'herdr') {
-      const agentName = `worker-${claim.project || projectId}-${key}`
-      const runState = await readJson(runStateFile(key), {})
-      const retry = Math.max(1, Number(runState.attempt) || Number(this.state.retryQueue?.[key]?.attempts) || 1)
-      const taskId = (claim.featureIds && claim.featureIds[0]) || claim.context || key
-      const role = roleFromPhase(runState.phase || 'coding')
-      const project = claim.project || projectId
-      const { paneId, tabId, tabLabel } = spawnAgent(agentName, [process.execPath, ...args], {
-        cwd: claim.worktree,
-        layoutLockDir: herdrLayoutLock,
-        taskId,
-        role,
-        project,
-        retry,
-      })
-      reportHarnessAgent(paneId, agentName, 'working', 'orchestrator starting')
-      this.workers.set(key, {
-        type: 'herdr', paneId, tabId, tabLabel, agentName, logFile, context: claim.context, featureIds: claim.featureIds,
-        worktree: claim.worktree, port: claim.port, startedAt: new Date().toISOString(),
-      })
-      await this.emit('worker_started', { context: claim.context, featureIds: claim.featureIds, paneId, tabId, tabLabel, display: 'herdr' })
-      await this.save()
-      return
-    }
-    const child = spawn(process.execPath, args, { cwd: claim.worktree, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] })
-    const log = createWriteStream(logFile, { flags: 'w' })
-    let tail = ''
-    const collect = (chunk) => { const text = String(chunk); log.write(text); tail = `${tail}${text}`.slice(-64_000) }
-    child.stdout.on('data', collect); child.stderr.on('data', collect)
-    child.on('error', (error) => collect(`${error.stack || error.message}\n`))
-    this.workers.set(key, { type: 'background', child, log, logFile, context: claim.context, featureIds: claim.featureIds, worktree: claim.worktree, port: claim.port, startedAt: new Date().toISOString() })
-    await this.emit('worker_started', { context: claim.context, featureIds: claim.featureIds, pid: child.pid })
-    await this.save()
-    child.on('close', (code) => this.trackClose(this.workerClosed(key, code, tail).catch((error) => this.crash(error))))
+    return this.startWorkerRuntime({ claim, guidance, herdrRole, herdrTaskId, herdrRetry })
   }
 
   async completeGoal(result) {
@@ -641,10 +773,10 @@ class Supervisor {
         phase: runState.phase,
         health,
       }, true)
-      if (worker.type === 'herdr') closeWorkerDisplay(worker.paneId, worker.tabId)
-      else try { worker.child.kill('SIGTERM') } catch {}
+      if (worker.type === 'herdr') this.applyWorkerStop(worker)
+      else this.applyWorkerStop(worker, 'SIGTERM')
       if (worker.type !== 'herdr') {
-        setTimeout(() => { try { worker.child.kill('SIGKILL') } catch {} }, 5000)
+        setTimeout(() => this.applyWorkerStop(worker, 'SIGKILL'), 5000)
       }
       this.state.retryQueue ||= {}
       this.state.retryQueue[key] = {
@@ -702,12 +834,13 @@ class Supervisor {
   async workerClosed(key, code, capturedTail) {
     const worker = this.workers.get(key)
     if (!worker) return
+    await this.releaseWorkerAdmission(worker.governorReservationId)
     if (this.stopping) {
       if (worker.log) {
         await new Promise((done) => { worker.log.once('finish', done); worker.log.end() })
       }
       this.workers.delete(key)
-      cleanupBrowserOrphans({ port: worker.port, workdir: worker.worktree })
+      this.cleanupWorkerResources(worker)
       return
     }
     if (worker.log) {
@@ -715,9 +848,13 @@ class Supervisor {
     }
     let tail = capturedTail
     try { tail = (await readFile(worker.logFile, 'utf8')).slice(-64_000) || tail } catch {}
-    const persisted = await readWorkerResult(runStateFile(key))
     const runState = await readJson(runStateFile(key), {})
-    const queue = await readJson(join(repo, 'feature_list.json'), [])
+    const persisted = await readWorkerResult(runStateFile(key), {
+      expectedLeaseToken: runState.leaseToken || null,
+      expectedReviewedHead: runState.reviewedHead || null,
+      expectedInvocationId: runState.invocationId || null,
+    })
+    const queue = await queueWithLedger()
     const result = interpretWorkerOutcome({
       key,
       exitCode: code,
@@ -758,7 +895,7 @@ class Supervisor {
         if (plan.clearCrashCount) delete this.state.crashCounts?.[key]
         await this.save()
         this.workers.delete(key)
-        cleanupBrowserOrphans({ port: worker.port, workdir: worker.worktree })
+        this.cleanupWorkerResources(worker)
         return
       }
       case 'goal_complete':
@@ -787,7 +924,7 @@ class Supervisor {
         if (plan.clearCrashCount) delete this.state.crashCounts?.[key]
         await this.save()
         this.workers.delete(key)
-        cleanupBrowserOrphans({ port: worker.port, workdir: worker.worktree })
+        this.cleanupWorkerResources(worker)
         return
       case 'crash_input':
         this.state.crashCounts = this.state.crashCounts || {}
@@ -800,7 +937,7 @@ class Supervisor {
         break
     }
     this.workers.delete(key)
-    cleanupBrowserOrphans({ port: worker.port, workdir: worker.worktree })
+    this.cleanupWorkerResources(worker)
     await this.save()
   }
 
@@ -884,45 +1021,18 @@ class Supervisor {
     }
     const queued = this.state.retryQueue?.['goal-review']
     const reviewGuidance = guidance || queued?.guidance || ''
+    if (queued) delete this.state.retryQueue['goal-review']
     const worktree = await integrationCheckout()
     const claim = { context: 'goal-review', worktree, port: 5170, featureIds: [] }
-    const args = [orchestrator, '--host', this.config.host, '--repo', repo, '--workdir', worktree,
-      '--mode', 'goal-review', '--context', 'goal-review', '--port', '5170']
-    if (reviewGuidance) args.push('--guidance', reviewGuidance)
-    const logFile = join(logDir, `goal-review-${Date.now()}.log`)
-    if (queued) {
-      delete this.state.retryQueue['goal-review']
-    }
-    if (this.config.display === 'herdr') {
-      const agentName = `worker-${projectId}-goal-review`
-      const { paneId, tabId, tabLabel } = spawnAgent(agentName, [process.execPath, ...args], {
-        cwd: worktree,
-        layoutLockDir: herdrLayoutLock,
-        taskId: 'goal-review',
-        role: 'goal-review',
-        project: projectId,
-        retry: Math.max(1, Number(queued?.attempts) || 1),
-      })
-      reportHarnessAgent(paneId, agentName, 'working', 'goal review starting')
-      this.workers.set('goal-review', {
-        type: 'herdr', paneId, tabId, tabLabel, agentName, logFile, ...claim, startedAt: new Date().toISOString(),
-      })
-      await this.emit('goal_review_started', { paneId, tabId, tabLabel, display: 'herdr' })
-      await this.save()
-      return true
-    }
-    const child = spawn(process.execPath, args,
-      { cwd: worktree, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] })
-    const log = createWriteStream(logFile, { flags: 'w' })
-    let tail = ''
-    const collect = (chunk) => { const text = String(chunk); log.write(text); tail = `${tail}${text}`.slice(-64_000) }
-    child.stdout.on('data', collect); child.stderr.on('data', collect)
-    child.on('error', (error) => collect(`${error.stack || error.message}\n`))
-    this.workers.set('goal-review', { type: 'background', child, log, logFile, ...claim, startedAt: new Date().toISOString() })
-    child.on('close', (code) => this.trackClose(this.workerClosed('goal-review', code, tail).catch((error) => this.crash(error))))
-    await this.emit('goal_review_started')
-    await this.save()
-    return true
+    return this.startWorkerRuntime({
+      claim,
+      guidance: reviewGuidance,
+      mode: 'goal-review',
+      herdrRole: 'goal-review',
+      herdrTaskId: 'goal-review',
+      herdrRetry: Math.max(1, Number(queued?.attempts) || 1),
+      startedEvent: 'goal_review_started',
+    })
   }
 
   async summary(snapshot, cap) {
@@ -960,6 +1070,10 @@ class Supervisor {
     const snapshot = await this.snapshot()
     await this.summary(snapshot, cap)
     await this.save({ capacity: cap, progress: snapshot.counts })
+    try {
+      const { compactControlJournal } = await importLib('control-journal.mjs')
+      await compactControlJournal(root, { minTail: 100, lease: this.lease() })
+    } catch {}
     if (this.state.status === 'paused' || this.state.status === 'needs_input') return
     let slots = cap.available
     const { attempts: retryAttempts } = drainRetryQueue(this.state.retryQueue, slots)
@@ -992,14 +1106,8 @@ class Supervisor {
         await this.save()
         continue
       }
-      // Without a free slot we cannot spawn a resumed worker. Still advance failed attempts
-      // so exhaustion can raise Input Requests on memory-starved hosts (macOS CI).
+      // Without a free slot, defer without burning retry attempts (ADR-0012).
       if (slots < 1) {
-        const outcome = applyRetryResumeOutcome(this.state.retryQueue, context, retry, false)
-        this.state.retryQueue = outcome.updatedQueue
-        if (outcome.exhausted) {
-          await this.input('context', 'Retry could not resume the Claim Lease', { attempts: outcome.exhausted.attempts }, context)
-        }
         await this.save()
         continue
       }
@@ -1044,7 +1152,7 @@ class Supervisor {
           for (; slots > 0; slots--) {
             const claim = await this.claim()
             if (!claim) break
-            await this.spawnWorker(claim)
+            if (!(await this.spawnWorker(claim))) break
           }
           break
         default:
@@ -1092,11 +1200,9 @@ class Supervisor {
       // or the shell is idle. Background children still get SIGTERM.
       for (const worker of this.workers.values()) {
         if (worker.type === 'herdr') continue
-        if (worker.child) {
-          try { worker.child.stdout?.destroy?.() } catch {}
-          try { worker.child.stderr?.destroy?.() } catch {}
-          try { worker.child.kill('SIGTERM') } catch {}
-        }
+        try { worker.child?.stdout?.destroy?.() } catch {}
+        try { worker.child?.stderr?.destroy?.() } catch {}
+        this.applyWorkerStop(worker, 'SIGTERM')
       }
       const deadline = Date.now() + 5000
       while ([...this.workers.values()].some((worker) => worker.type !== 'herdr') && Date.now() < deadline) {
@@ -1118,7 +1224,7 @@ class Supervisor {
     // and the next supervisor start rehydrates them.
     for (const worker of this.workers.values()) {
       if (worker.type === 'herdr') continue
-      try { worker.child.kill('SIGTERM') } catch {}
+      this.applyWorkerStop(worker, 'SIGTERM')
     }
     await this.emit('supervisor_stopped', { signal }, true)
     const control = await readJson(controlFile, {})
@@ -1151,7 +1257,7 @@ async function start() {
     && (current.supervisorPid || current.status === 'starting') && heartbeatAge < leaseSeconds
   if (localLive || remoteLive) fatal(`already running on ${current.supervisorHost} as pid ${current.supervisorPid}`)
   const token = randomUUID()
-  await acquireSupervisorLock(token, null, 'starting', leaseSeconds)
+  const acquired = await acquireSupervisorLock(token, null, 'starting', leaseSeconds)
   try {
     await atomicJson(controlFile, { status: 'running', at: new Date().toISOString() })
     await atomicJson(stateFile, {
@@ -1167,7 +1273,7 @@ async function start() {
     try { await new Promise((done, reject) => { child.once('spawn', done); child.once('error', reject) }) }
     finally { await log.close() }
     child.unref()
-    await updateSupervisorLock(token, 'starting', child.pid)
+    await updateSupervisorLock(token, acquired?.fenceGeneration || 1, 'starting', child.pid)
     const latest = await readJson(stateFile, {})
     await atomicJson(stateFile, { ...latest, repo, supervisorPid: child.pid, supervisorHost: hostname() })
     process.stdout.write(`${JSON.stringify({ started: true, pid: child.pid, stateFile, eventFile })}\n`)
@@ -1203,6 +1309,107 @@ async function setStatus(status) {
   await atomicJson(controlFile, { status, at: new Date().toISOString() })
   if (status === 'stopped' && state.supervisorHost === hostname() && processAlive(state.supervisorPid)) process.kill(state.supervisorPid, 'SIGTERM')
   process.stdout.write(`${JSON.stringify({ status })}\n`)
+}
+
+async function fleetAuth() {
+  const { authorizeFleetRecovery } = await importLib('supervisor-lease.mjs')
+  const state = await readJson(stateFile, {})
+  const token = process.env.HARNESS_SUPERVISOR_TOKEN || options.token || ''
+  const force = options.force === 'true'
+  const leaseSeconds = Math.max(10, number('supervisor-lease-seconds', 30))
+  return authorizeFleetRecovery(root, { state, token, force, leaseSeconds })
+}
+
+async function killSupervisor() {
+  await fleetAuth()
+  const state = await readJson(stateFile, {})
+  const pid = Number(state.supervisorPid)
+  if (!pid) fatal('no supervisorPid in state')
+  const signal = options.signal === 'SIGTERM' ? 'SIGTERM' : 'SIGKILL'
+  if (state.supervisorHost && state.supervisorHost !== hostname()) {
+    fatal(`supervisor runs on ${state.supervisorHost}, not this host`)
+  }
+  if (!processAlive(pid)) {
+    process.stdout.write(`${JSON.stringify({ killed: false, reason: 'not-running', pid })}\n`)
+    return
+  }
+  process.kill(pid, signal)
+  process.stdout.write(`${JSON.stringify({ killed: true, pid, signal })}\n`)
+}
+
+async function releaseSupervisorLockCmd() {
+  const auth = await fleetAuth()
+  const { clearStaleSupervisorLock, releaseSupervisorLease } = await importLib('supervisor-lease.mjs')
+  const leaseSeconds = Math.max(10, number('supervisor-lease-seconds', 30))
+  if (auth.mode === 'token' && auth.owner?.token) {
+    await releaseSupervisorLease(root, auth.owner.token)
+    process.stdout.write(`${JSON.stringify({ released: true, mode: 'token' })}\n`)
+    return
+  }
+  const result = await clearStaleSupervisorLock(root, { leaseSeconds })
+  process.stdout.write(`${JSON.stringify(result)}\n`)
+}
+
+async function killWorker() {
+  await fleetAuth()
+  const context = options.context
+  if (!context) fatal('--context is required')
+  const state = await readJson(stateFile, {})
+  const saved = state.workers?.[context]
+  const runState = await readJson(runStateFile(context), {})
+  const worker = saved
+    ? {
+      ...saved,
+      type: saved.display === 'herdr' ? 'herdr' : 'background',
+      childPid: runState.childPid || null,
+      ownedResources: {
+        port: saved.port,
+        worktree: saved.worktree,
+        processGroup: saved.pid || runState.childPid || runState.ownerPid || null,
+      },
+    }
+    : {
+      type: runState.childPid ? 'background' : 'herdr',
+      paneId: null,
+      tabId: null,
+      childPid: runState.childPid || runState.ownerPid || null,
+      port: runState.port,
+      worktree: runState.worktree,
+      ownedResources: {
+        port: runState.port,
+        worktree: runState.worktree,
+        processGroup: runState.childPid || runState.ownerPid || null,
+      },
+    }
+  const signal = options.signal === 'SIGKILL' ? 'SIGKILL' : 'SIGTERM'
+  const stopPlan = planWorkerStop(worker, { signal })
+  if (stopPlan.kind === 'close_display') closeWorkerDisplay(stopPlan.paneId, stopPlan.tabId)
+  else if (stopPlan.kind === 'terminate_tree') terminateProcessTree(stopPlan.pid, stopPlan.signal)
+  cleanupBrowserOrphans(planWorkerCleanupTargets(worker))
+  if (state.workers?.[context]) {
+    const nextWorkers = { ...state.workers }
+    delete nextWorkers[context]
+    await atomicJson(stateFile, { ...state, workers: nextWorkers })
+  }
+  process.stdout.write(`${JSON.stringify({ context, stop: stopPlan })}\n`)
+}
+
+async function releaseLease() {
+  await fleetAuth()
+  const context = options.context
+  if (!context) fatal('--context is required')
+  if (context === 'goal-review') fatal('goal-review has no Claim Lease to release')
+  const message = releaseClaim(repo, context)
+  process.stdout.write(`${JSON.stringify({ context, message })}\n`)
+}
+
+async function clearDeadLockCmd() {
+  await fleetAuth()
+  const lock = options.lock
+  if (!lock) fatal('--lock merge|state is required')
+  const force = options.force === 'true'
+  const result = clearDeadLock(repo, lock, { force })
+  process.stdout.write(`${JSON.stringify(result)}\n`)
 }
 
 async function main() {
@@ -1247,6 +1454,11 @@ async function main() {
   if (commandName === 'pause') return setStatus('paused')
   if (commandName === 'resume') return setStatus('running')
   if (commandName === 'stop') return setStatus('stopped')
+  if (commandName === 'kill-supervisor') return killSupervisor()
+  if (commandName === 'release-supervisor-lock') return releaseSupervisorLockCmd()
+  if (commandName === 'kill-worker') return killWorker()
+  if (commandName === 'release-lease') return releaseLease()
+  if (commandName === 'clear-dead-lock') return clearDeadLockCmd()
   if (commandName === 'run') {
     const supervisor = new Supervisor(baseConfig())
     process.on('SIGINT', () => supervisor.stop('SIGINT'))

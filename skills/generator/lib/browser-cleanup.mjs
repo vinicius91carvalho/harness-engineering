@@ -12,29 +12,22 @@ function killPatterns(patterns) {
   return killed
 }
 
-/** Tear down headless browsers Playwright MCP, Codex, and agents leave behind. */
-export function cleanupBrowserOrphans({ port, workdir } = {}) {
+/**
+ * Tear down browsers owned by this run only.
+ * Requires port and/or workdir; never matches global headless chromium.
+ */
+export function cleanupBrowserOrphans({ port, workdir, profileDir } = {}) {
   if (process.platform === 'win32') return { killed: 0 }
+  if (!port && !workdir && !profileDir) return { killed: 0 }
   const patterns = [
     port && `-remote-debugging-port=${port}`,
     port && `--remote-debugging-port=${port}`,
     port && `playwright.*${port}`,
-    'playwright.*chromium',
-    'playwright.*chrome',
-    'ms-playwright.*chrome',
-    'ms-playwright.*chromium',
-    'chromium.*--headless',
-    'chrome.*--headless',
-    'google-chrome.*--headless',
-    'chrome.*--user-data-dir=.*/playwright',
-    'chrome.*--user-data-dir=/tmp/playwright',
-    'chromium.*--user-data-dir=/tmp/playwright',
-    'chrome.*--user-data-dir=.*/.cache/ms-playwright',
-    'chromium.*--user-data-dir=.*/.cache/ms-playwright',
-    'chrome.*--user-data-dir=.*/cursor-browser',
-    'chrome.*--user-data-dir=.*/cursor-playwright',
+    profileDir && `chrome.*--user-data-dir=${profileDir}`,
+    profileDir && `chromium.*--user-data-dir=${profileDir}`,
     workdir && `chrome.*${workdir}`,
     workdir && `chromium.*${workdir}`,
+    workdir && `playwright.*${workdir}`,
   ]
   return { killed: killPatterns(patterns) }
 }

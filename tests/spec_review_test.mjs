@@ -28,7 +28,15 @@ const draft = {
   version: 1,
   revision: 1,
   project_name: 'Demo',
-  xml_draft: '<project_specification><project_name>Demo</project_name></project_specification>',
+  xml_draft: `<project_specification>
+  <project_name>Demo</project_name>
+  <project_goal>Users can publish notes.</project_goal>
+  <acceptance_checks>
+    <acceptance_check id="AC-001" context="notes" category="functional" depends_on="">
+      <description>POST /notes returns 201.</description>
+    </acceptance_check>
+  </acceptance_checks>
+</project_specification>`,
   items: [
     { id: 'project_goal', kind: 'section', title: 'Project Goal', summary: 'Ship notes', body: 'Users can publish notes.' },
     { id: 'AC-001', kind: 'acceptance_check', title: 'AC-001', summary: 'Publish works', body: 'POST /notes returns 201.' },
@@ -73,5 +81,21 @@ const finalize = run(['finalize', tmp])
 assert(finalize.status === 0, 'finalize succeeds')
 assert(existsSync(join(tmp, 'project_specs.xml')), 'project_specs.xml written')
 assert(!existsSync(join(harness, 'project_specs.draft.json')), 'draft removed after finalize')
+
+const invalidHarness = join(tmp, 'invalid')
+mkdirSync(join(invalidHarness, '.harness'), { recursive: true })
+writeFileSync(join(invalidHarness, '.harness', 'project_specs.draft.json'), `${JSON.stringify({
+  revision: 1,
+  project_name: 'Bad',
+  xml_draft: '<project_specification><project_name>Bad</project_name></project_specification>',
+  items: [{ id: 'project_goal', kind: 'section', title: 'Project Goal', summary: 'Missing goal tag', body: 'Invalid draft.' }],
+}, null, 2)}\n`)
+writeFileSync(join(invalidHarness, '.harness', 'spec-review-feedback.json'), `${JSON.stringify({
+  revision: 1,
+  items: [{ id: 'project_goal', confirmed: true, comment: '' }],
+}, null, 2)}\n`)
+const invalidFinalize = run(['finalize', invalidHarness])
+assert(invalidFinalize.status !== 0, 'finalize rejects invalid specification')
+assert(invalidFinalize.stderr.includes('invalid project specification'), 'finalize reports validation error')
 
 console.log('ok - spec review render, status, and finalize')

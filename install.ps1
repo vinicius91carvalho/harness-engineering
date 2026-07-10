@@ -14,7 +14,14 @@ $MarketplaceRepo = "vinicius91carvalho/harness-engineering"
 $ClaudeMarketplace = "harness-engineering"
 $CodexMarketplace = "harness-engineering"
 $MemoryInstaller = "https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.ps1"
-$Optional = @("ponytail", "skill-creator", "codebase-memory-mcp", "context7", "playwright", "crawl4ai", "status-line", "shared-config", "mcp-servers")
+$RepoRoot = if ($PSScriptRoot) { $PSScriptRoot } else { $null }
+$DefaultOptional = @("ponytail", "skill-creator", "codebase-memory-mcp", "context7", "playwright", "crawl4ai", "status-line", "shared-config", "mcp-servers")
+$Optional = $DefaultOptional
+if ($RepoRoot -and (Test-Path (Join-Path $RepoRoot "config/installable-catalog.json")) -and (Get-Command node -ErrorAction SilentlyContinue)) {
+  $catalogOptional = & node (Join-Path $RepoRoot "scripts/install-reconcile.mjs") optional-ids 2>$null
+  if ($LASTEXITCODE -eq 0 -and $catalogOptional) { $Optional = $catalogOptional -split '\s+' }
+}
+$ReceiptDir = Join-Path $HOME ".local/share/harness"
 $PluginClis = @{
   harness = @("claude", "codex", "opencode", "agent")
   ponytail = @("claude", "codex", "opencode", "agent")
@@ -181,6 +188,41 @@ function Resolve-InstallRef {
   return ($tags | Sort-Object { [version]($_ -replace '^v', '') } | Select-Object -Last 1)
 }
 
+function Get-CatalogRepo {
+  if ($script:StagedRepo -and (Test-Path (Join-Path $script:StagedRepo "config/installable-catalog.json"))) {
+    return $script:StagedRepo
+  }
+  if ($RepoRoot -and (Test-Path (Join-Path $RepoRoot "config/installable-catalog.json"))) {
+    return $RepoRoot
+  }
+  return $null
+}
+
+function Get-ModuleHosts([string]$Name) {
+  $repo = Get-CatalogRepo
+  if ($repo -and (Test-Path (Join-Path $repo "scripts/install-reconcile.mjs"))) {
+    $hosts = & node (Join-Path $repo "scripts/install-reconcile.mjs") hosts $Name 2>$null
+    if ($LASTEXITCODE -eq 0 -and $hosts) { return $hosts -split '\s+' }
+  }
+  return $PluginClis[$Name]
+}
+
+function Write-InstallReceipt([string]$Module, $Payload) {
+  if ($DryRun) { return }
+  $repo = Get-CatalogRepo
+  if (-not $repo) { return }
+  $json = ($Payload | ConvertTo-Json -Compress)
+  New-Item -ItemType Directory -Force $ReceiptDir | Out-Null
+  & node (Join-Path $repo "scripts/install-reconcile.mjs") record-receipt $ReceiptDir $Module $json *> $null
+}
+
+function Invoke-Reconcile([string[]]$Arguments) {
+  $repo = Get-Repository
+  if ($repo -eq "<staged harness repository>") { return }
+  & node (Join-Path $repo "scripts/install-reconcile.mjs") @Arguments
+  if ($LASTEXITCODE -ne 0) { throw "install reconcile failed: $($Arguments -join ' ')" }
+}
+
 function Get-Repository {
   if ($script:StagedRepo) { return $script:StagedRepo }
   if ($PSScriptRoot -and (Test-Path (Join-Path $PSScriptRoot ".claude-plugin/marketplace.json"))) {
@@ -215,20 +257,7 @@ function Install-AgentPlugin([string]$Name) {
   if (-not (Test-CliInstalled agent)) { throw "agent is required to install the harness Cursor Agent plugin" }
   $source = Get-Repository
   $dest = Join-Path $HOME ".cursor/plugins/local/$Name"
-  New-Item -ItemType Directory -Force (Join-Path $dest ".cursor-plugin"), (Join-Path $dest "skills"), (Join-Path $dest "agents"), (Join-Path $dest "commands"), (Join-Path $dest "assets") | Out-Null
-  Copy-Item (Join-Path $source ".cursor-plugin/plugin.json") (Join-Path $dest ".cursor-plugin/") -Force
-  Copy-Item (Join-Path $source "skills/*") (Join-Path $dest "skills") -Recurse -Force
-  Get-ChildItem (Join-Path $source "agents/*.md") -ErrorAction SilentlyContinue | ForEach-Object {
-    Copy-Item $_.FullName (Join-Path $dest "agents/") -Force
-  }
-  if (Test-Path (Join-Path $source "assets/banner.svg")) {
-    Copy-Item (Join-Path $source "assets/banner.svg") (Join-Path $dest "assets/") -Force
-  }
-  if (Test-Path (Join-Path $source ".mcp.json")) { Copy-Item (Join-Path $source ".mcp.json") $dest -Force }
-  if (Test-Path (Join-Path $source "AGENTS.md")) { Copy-Item (Join-Path $source "AGENTS.md") $dest -Force }
-  Get-ChildItem (Join-Path $source "skills/*/SKILL.md") -ErrorAction SilentlyContinue | ForEach-Object {
-    Copy-Item $_.FullName (Join-Path $dest "commands/harness-$($_.Directory.Name).md") -Force
-  }
+  Invoke-Reconcile @("project-agent", $Name, $source, $dest)
 }
 
 function Set-CursorMcp([string]$Name, $Entry) {
@@ -257,6 +286,8 @@ function Install-OpenCodePlugin([string]$Name) {
   if ($Name -eq "ponytail") {
     if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { throw "npm is required to install the ponytail OpenCode plugin" }
     Invoke-Native npm @("install", "-g", "@dietrichgebert/ponytail")
+    $ponytailVersion = (& npm list -g @dietrichgebert/ponytail --json 2>$null | ConvertFrom-Json).dependencies.'@dietrichgebert/ponytail'.version
+    Write-InstallReceipt ponytail @{ npm = "@dietrichgebert/ponytail"; version = ($ponytailVersion ?? "unknown") }
     Remove-OpenCodePluginFiles ponytail
     Set-OpenCodePlugin ponytail "@dietrichgebert/ponytail"
     return
@@ -264,6 +295,14 @@ function Install-OpenCodePlugin([string]$Name) {
   $source = Get-Repository
   $base = Join-Path $HOME ".config/opencode"
   @("skills", "agents", "commands") | ForEach-Object { New-Item -ItemType Directory -Force (Join-Path $base $_) | Out-Null }
+  if (Test-Path (Join-Path $source "packages/$Name")) {
+    Invoke-Reconcile @("project-bundle", $Name, (Join-Path $base "skills/$Name"))
+    return
+  }
+  if ($Name -eq "harness") {
+    Invoke-Reconcile @("project-harness-opencode", $source, $base)
+    return
+  }
   Get-ChildItem (Join-Path $source "skills") -Directory -ErrorAction SilentlyContinue | ForEach-Object {
     Copy-Item $_.FullName (Join-Path $base "skills/$Name-$($_.Name)") -Recurse -Force
   }
@@ -272,11 +311,6 @@ function Install-OpenCodePlugin([string]$Name) {
   }
   Get-ChildItem (Join-Path $source "commands/*.md") -ErrorAction SilentlyContinue | ForEach-Object {
     Copy-Item $_.FullName (Join-Path $base "commands/$Name-$($_.Name)") -Force
-  }
-  if ($Name -eq "harness") {
-    Get-ChildItem (Join-Path $source "skills/*/SKILL.md") -ErrorAction SilentlyContinue | ForEach-Object {
-      Copy-Item $_.FullName (Join-Path $base "commands/harness-$($_.Directory.Name).md") -Force
-    }
   }
 }
 
@@ -374,7 +408,7 @@ function Apply-ClaudeSharedConfig {
 }
 
 function Read-PasteableSecret([string]$Prompt) {
-  Write-Host -NoNewline "${Prompt}: "
+  Write-Host -NoNewline "${Prompt} (hidden): "
   $value = [Text.StringBuilder]::new()
   while ($true) {
     $key = [Console]::ReadKey($true)
@@ -389,7 +423,7 @@ function Read-PasteableSecret([string]$Prompt) {
     }
     if (-not [char]::IsControl($key.KeyChar)) {
       [void]$value.Append($key.KeyChar)
-      Write-Host -NoNewline $key.KeyChar
+      Write-Host -NoNewline "*"
     }
   }
 }
@@ -404,13 +438,25 @@ function Install-McpInventory {
     if ((Read-Host "Configure MCP server $($property.Name)? [y/N]") -notmatch '^(y|yes)$') { continue }
     $json = $property.Value | ConvertTo-Json -Depth 20 -Compress
     $skip = $false
-    foreach ($match in [regex]::Matches($json, '\$\{([A-Za-z0-9_]+)\}')) {
-      $value = Read-PasteableSecret "Value for $($match.Groups[1].Value) (paste supported; Enter skips server)"
+    $obj = $json | ConvertFrom-Json
+    $placeholders = [regex]::Matches(($obj | ConvertTo-Json -Depth 20 -Compress), '\$\{([A-Za-z0-9_]+)\}') |
+      ForEach-Object { $_.Value } | Select-Object -Unique
+    foreach ($placeholder in $placeholders) {
+      $key = $placeholder.Trim('${}')
+      $value = Read-PasteableSecret "Value for $key (paste supported; Enter skips server)"
       if (-not $value) { $skip = $true; break }
-      $json = $json.Replace($match.Value, $value)
+      $jsonText = $obj | ConvertTo-Json -Depth 20 -Compress
+      # Escape for JSON string embedding, then split/join via ConvertFrom-Json round-trip on strings only.
+      $escaped = ($value | ConvertTo-Json)
+      $escaped = $escaped.Substring(1, $escaped.Length - 2)
+      $from = [regex]::Escape($placeholder)
+      $jsonText = [regex]::Replace($jsonText, $from, [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $escaped })
+      try { $obj = $jsonText | ConvertFrom-Json }
+      catch { throw "Secret substitution produced invalid JSON for $($property.Name)" }
     }
     if ($skip) { continue }
-    $server = $json | ConvertFrom-Json
+    $json = $obj | ConvertTo-Json -Depth 20 -Compress
+    $server = $obj
     foreach ($target in $Targets) {
       switch ($target) {
         claude {
@@ -470,6 +516,8 @@ function Install-Memory {
     $binary = Get-Command codebase-memory-mcp -ErrorAction SilentlyContinue
   }
   if (-not $binary) { throw "codebase-memory-mcp binary was not found after installation; add it to PATH and retry" }
+  $memoryVersion = try { & $binary.Source --version 2>$null } catch { $null }
+  Write-InstallReceipt codebase-memory-mcp @{ binary = $binary.Source; version = ($memoryVersion ?? "unknown") }
   & $binary.Source config set auto_index true
   if ($LASTEXITCODE -ne 0) { throw "Could not enable codebase-memory-mcp auto-indexing" }
   foreach ($target in $Targets) {
@@ -487,15 +535,13 @@ function Install-Memory {
 
 function Install-SkillCreator {
   foreach ($target in $Targets) {
-    if ($PluginClis["skill-creator"] -notcontains $target) { continue }
+    if ((Get-ModuleHosts "skill-creator") -notcontains $target) { continue }
     switch ($target) {
       claude {
         if ($DryRun) { Write-Host "DRY RUN - install skill-creator to ~/.claude/skills/"; continue }
-        $source = Join-Path (Get-Repository) "skills/skill-creator"
         $dest = Join-Path $HOME ".claude/skills/skill-creator"
-        Remove-Item $dest -Recurse -Force -ErrorAction SilentlyContinue
         New-Item -ItemType Directory -Force (Split-Path $dest -Parent) | Out-Null
-        Copy-Item $source $dest -Recurse -Force
+        Invoke-Reconcile @("project-bundle", "skill-creator", $dest)
       }
       opencode { Install-OpenCodePlugin "skill-creator" }
       codex {
@@ -508,11 +554,8 @@ function Install-SkillCreator {
 }
 
 function Install-Crawl4AiSkill([string]$Destination) {
-  $source = Join-Path (Get-Repository) "skills/crawl4ai"
-  if (-not (Test-Path $source)) { throw "crawl4ai skill bundle missing from harness repository" }
-  Remove-Item $Destination -Recurse -Force -ErrorAction SilentlyContinue
   New-Item -ItemType Directory -Force (Split-Path $Destination -Parent) | Out-Null
-  Copy-Item $source $Destination -Recurse -Force
+  Invoke-Reconcile @("project-bundle", "crawl4ai", $Destination)
 }
 
 function Install-Crawl4AiPip {
@@ -556,12 +599,17 @@ function Install-Crawl4AiPip {
   $doctor = Get-Command crawl4ai-doctor -ErrorAction SilentlyContinue
   if (-not $doctor) { throw "crawl4ai-doctor not found after pip install" }
   Invoke-Native $doctor.Source
+  $crawlVersion = try {
+    if ($pip) { (& $pip.Source show crawl4ai 2>$null | Select-String '^Version:' | ForEach-Object { $_.Line.Split(':')[1].Trim() }) }
+    elseif ($python) { (& $python.Source -m pip show crawl4ai 2>$null | Select-String '^Version:' | ForEach-Object { $_.Line.Split(':')[1].Trim() }) }
+  } catch { $null }
+  Write-InstallReceipt crawl4ai @{ pip = "crawl4ai"; version = ($crawlVersion ?? "unknown") }
 }
 
 function Install-Crawl4Ai {
   Install-Crawl4AiPip
   foreach ($target in $Targets) {
-    if ($PluginClis["crawl4ai"] -notcontains $target) { continue }
+    if ((Get-ModuleHosts "crawl4ai") -notcontains $target) { continue }
     switch ($target) {
       claude {
         if ($DryRun) { Write-Host "DRY RUN - install crawl4ai skill to ~/.claude/skills/crawl4ai"; continue }
@@ -620,7 +668,7 @@ $Selected = if ($No) {
 } elseif ([Console]::IsInputRedirected) {
   @("harness")
 } else {
-  $candidates = @("harness") + @($Optional | Where-Object { @($PluginClis[$_] | Where-Object { $Targets -contains $_ }).Count -gt 0 })
+  $candidates = @("harness") + @($Optional | Where-Object { @((Get-ModuleHosts $_) | Where-Object { $Targets -contains $_ }).Count -gt 0 })
   @(Select-Menu -Mode multi -Items $candidates -Checked @("harness") -Title "Select what to install (harness recommended):" -LabelKind install)
 }
 
@@ -661,7 +709,7 @@ foreach ($item in $Selected) {
   if ($item -eq "shared-config") { Apply-ClaudeSharedConfig; continue }
   if ($item -eq "mcp-servers") { Install-McpInventory; continue }
   foreach ($target in $Targets) {
-    if ($PluginClis[$item] -notcontains $target) { continue }
+    if ((Get-ModuleHosts $item) -notcontains $target) { continue }
     switch ($target) {
       claude {
         if ($DryRun) { Invoke-Native claude @("plugin", "update", "$item@$ClaudeMarketplace", "--scope", $Scope) }

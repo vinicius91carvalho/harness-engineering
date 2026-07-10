@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse, json, random, sys, tempfile, time, webbrowser
 from pathlib import Path
+from scripts.artifact_contract import load_optimizer_checkpoint, write_artifact
 from scripts.generate_report import generate_html
 from scripts.improve_description import improve_description
 from scripts.run_eval import find_project_root, run_eval
@@ -18,10 +19,20 @@ def split_eval_set(eval_set, holdout, seed=42):
     train_set = trigger[n_trigger_test:] + no_trigger[n_no_trigger_test:]
     return train_set, test_set
 
-def run_loop(eval_set, skill_path, description_override, num_workers, timeout, max_iterations, runs_per_query, trigger_threshold, holdout, model, verbose, live_report_path=None, log_dir=None):
+def run_loop(eval_set, skill_path, description_override, num_workers, timeout, max_iterations, runs_per_query, trigger_threshold, holdout, model, verbose, live_report_path=None, log_dir=None, checkpoint_path=None, resume=False):
     project_root = find_project_root()
     name, original_description, content = parse_skill_md(skill_path)
     current_description = description_override or original_description
+    history = []
+    start_iteration = 1
+    if checkpoint_path and resume:
+        existing = load_optimizer_checkpoint(checkpoint_path)
+        if existing:
+            history = existing.get("history", [])
+            current_description = existing.get("description", current_description)
+            start_iteration = int(existing.get("iteration", 0)) + 1
+            if verbose:
+                print(f"Resuming from checkpoint at iteration {start_iteration}", file=sys.stderr)
     if holdout > 0:
         train_set, test_set = split_eval_set(eval_set, holdout)
         if verbose:
@@ -29,9 +40,8 @@ def run_loop(eval_set, skill_path, description_override, num_workers, timeout, m
     else:
         train_set = eval_set
         test_set = []
-    history = []
     exit_reason = "unknown"
-    for iteration in range(1, max_iterations + 1):
+    for iteration in range(start_iteration, max_iterations + 1):
         if verbose:
             print(f"\n{'='*60}", file=sys.stderr)
             print(f"Iteration {iteration}/{max_iterations}", file=sys.stderr)
@@ -57,6 +67,12 @@ def run_loop(eval_set, skill_path, description_override, num_workers, timeout, m
             test_results = None
             test_summary = None
         history.append({"iteration": iteration, "description": current_description, "train_passed": train_summary["passed"], "train_failed": train_summary["failed"], "train_total": train_summary["total"], "train_results": train_results["results"], "test_passed": test_summary["passed"] if test_summary else None, "test_failed": test_summary["failed"] if test_summary else None, "test_total": test_summary["total"] if test_summary else None, "test_results": test_results["results"] if test_results else None, "passed": train_summary["passed"], "failed": train_summary["failed"], "total": train_summary["total"], "results": train_results["results"]})
+        if checkpoint_path:
+            write_artifact(checkpoint_path, "optimizer_checkpoint", {
+                "iteration": iteration,
+                "history": history,
+                "description": current_description,
+            })
         if live_report_path:
             partial_output = {"original_description": original_description, "best_description": current_description, "best_score": "in progress", "iterations_run": len(history), "holdout": holdout, "train_size": len(train_set), "test_size": len(test_set), "history": history}
             live_report_path.write_text(generate_html(partial_output, auto_refresh=True, skill_name=name))
@@ -127,6 +143,7 @@ def main():
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--report", default="auto")
     parser.add_argument("--results-dir", default=None)
+    parser.add_argument("--resume", action="store_true", help="Resume from optimizer_checkpoint.json in results-dir")
     args = parser.parse_args()
     eval_set = json.loads(Path(args.eval_set).read_text())
     skill_path = Path(args.skill_path)
@@ -150,7 +167,8 @@ def main():
     else:
         results_dir = None
     log_dir = results_dir / "logs" if results_dir else None
-    output = run_loop(eval_set=eval_set, skill_path=skill_path, description_override=args.description, num_workers=args.num_workers, timeout=args.timeout, max_iterations=args.max_iterations, runs_per_query=args.runs_per_query, trigger_threshold=args.trigger_threshold, holdout=args.holdout, model=args.model, verbose=args.verbose, live_report_path=live_report_path, log_dir=log_dir)
+    checkpoint_path = results_dir / "optimizer_checkpoint.json" if results_dir else None
+    output = run_loop(eval_set=eval_set, skill_path=skill_path, description_override=args.description, num_workers=args.num_workers, timeout=args.timeout, max_iterations=args.max_iterations, runs_per_query=args.runs_per_query, trigger_threshold=args.trigger_threshold, holdout=args.holdout, model=args.model, verbose=args.verbose, live_report_path=live_report_path, log_dir=log_dir, checkpoint_path=checkpoint_path, resume=args.resume)
     json_output = json.dumps(output, indent=2)
     print(json_output)
     if results_dir:

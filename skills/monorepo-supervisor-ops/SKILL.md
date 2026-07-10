@@ -36,7 +36,19 @@ cp skills/monorepo-supervisor-ops/SKILL.md ~/.agents/skills/monorepo-supervisor-
 ```
 
 Recycle orchestrators (`SIGTERM`) so new spawn/stream/prompt code loads.
-Prefer `kill -9` on old supervisors so their `stop()` path does not close tabs.
+kill -9 on old supervisors so their `stop()` path does not close tabs.
+Use guarded harness-control fleet commands instead of raw `kill`/`rm`:
+
+```bash
+node "$CONTROL" kill-supervisor --repo "$REPO" --force
+node "$CONTROL" release-supervisor-lock --repo "$REPO" --force
+node "$CONTROL" clear-dead-lock --repo "$REPO" --lock merge
+node "$CONTROL" kill-worker --repo "$REPO" --context <context> --force
+node "$CONTROL" release-lease --repo "$REPO" --context <context> --force
+```
+
+`--force` is required when a local supervisor PID is still recorded as live.
+Pass `HARNESS_SUPERVISOR_TOKEN` instead when you hold the active lease.
 
 ## Restart one subproject supervisor (keep workers)
 
@@ -50,8 +62,8 @@ TOP=$(git -C "$REPO" rev-parse --show-toplevel)
 # Set retryQueue[context].guidance in state.json, clear workers={}, supervisorPid=null
 # Neutralize pending inputs for that context so auto-respond cannot race.
 
-kill -9 "$(jq -r .supervisorPid "$STATE")"
-rm -rf "$TOP/.git/harness-control/<subproject>/supervisor.lock"
+node "$CONTROL" kill-supervisor --repo "$REPO" --force
+node "$CONTROL" release-supervisor-lock --repo "$REPO" --force
 # Prefer `run` + setsid/nohup for long-lived supervisors; `start` may exit after spawn.
 # CauseFlow ops: --host agent (composer-2.5). Use pi only when the operator asks.
 setsid -f env HERDR_ENV=1 node "$CONTROL" run --repo "$REPO" --host agent --display herdr \
@@ -68,7 +80,7 @@ When `status=running` but `workers={}`, herdr has only the default tab, or
 
 1. **Dead merge lock** — `mergeLock.holderAlive=false` or owner PID gone:
    ```bash
-   rm -rf "$TOP/.git/harness-locks/generator-merge"
+   node "$CONTROL" clear-dead-lock --repo "$REPO" --lock merge --force
    ```
 2. **Dead state lock** — same for `generator-state` if owner PID is dead.
 3. **Quota pause** — rate-limit sets `quota.pauseUntil` → slots 0:
@@ -91,8 +103,8 @@ Only when the operator asks and host memory allows. Cap by free RAM:
 `slots ≈ floor((MemAvailableMB - reserve) / memory-per-worker-mb)`.
 
 ```bash
-kill -9 "$(jq -r .supervisorPid "$STATE")"   # preserve herdr tabs
-rm -rf .../harness-control/<subproject>/supervisor.lock
+node "$CONTROL" kill-supervisor --repo "$REPO" --force   # preserve herdr tabs
+node "$CONTROL" release-supervisor-lock --repo "$REPO" --force
 setsid -f env HERDR_ENV=1 node "$CONTROL" run --repo "$REPO" --host agent --display herdr \
   --max-workers 4 --quota-workers 4 --cpu-per-worker 1 \
   --memory-per-worker-mb 768 --reserve-memory-mb 1024 --max-load-ratio 0.9 \

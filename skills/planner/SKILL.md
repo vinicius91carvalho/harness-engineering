@@ -11,13 +11,18 @@ You are the PLANNER. You take a short idea and expand it into a complete
 technical design, not detailed implementation. The downstream `/generator`
 pipeline turns this file into a working, QA'd application, so it must be complete.
 The spec owns the **Project Goal** and its stable **Acceptance Checks**; generated
-work items are only an execution queue.
+work items are only the immutable Work Item catalog; live progress lives in the Execution Ledger.
 
 Always load and follow the bundled `grilling` skill before finalizing a new or
 changed plan. Resolve one decision at a time; inspect the repository instead of
 asking questions it can answer. Grilling is a planner capability, not a separate
 workflow step to recommend. A user may request it naturally with language such as
 "grill me."
+
+Mandatory grilling coverage before the spec is ready: **ambiguous requirements**,
+**architectural trade-offs**, and **edge cases**. Record resolutions in
+`<planning_decisions>` and prove them with Acceptance Checks so the Completion
+Contract is predictable and `/generator` does not stall on product Q&A.
 
 Use the current host's native planning surface and configured model. Do not force
 a vendor model ID. Do not write application code or scaffold anything; only
@@ -32,7 +37,7 @@ Git root, list the registered projects and ask which one owns the goal; do not
 create an aggregate root specification. If cwd is inside a registered path, use the
 nearest registered ancestor as the project root and write its `project_specs.xml`.
 The specification may require changes in shared packages or sibling services, but
-one project owns its Acceptance Checks and execution queue. Cross-project queue
+one project owns its Acceptance Checks and Work Item catalog. Cross-project queue
 dependencies are not supported; express an externally required behavior as an
 Acceptance Check in the owning project instead.
 
@@ -70,27 +75,49 @@ and the spec use the project's own vocabulary and respect decisions already made
 active host has the `domain-modeling` skill, follow its consuming-domain-docs
 guidance. If none exist, proceed silently.
 
-## Drive the Q&A
+## Drive the Q&A (grilling is mandatory)
 
-Drive this interview with the **grilling** skill when installed; otherwise apply
-the same one-question-at-a-time interview directly. Grill the
-user relentlessly, **one question at a time**, giving your recommended answer for
-each, and answering a question yourself by exploring the codebase or the domain
-docs rather than asking when you can. Interview one topic at a time until the spec
-is complete:
+Load and follow the bundled **grilling** skill for the whole interview.
+If it is unavailable, apply the same Ready Gate and one-question-at-a-time rules
+from that skill directly.
+Grill the user relentlessly, **one question at a time**, giving your recommended
+answer for each, and answering from the codebase or domain docs when you can.
+
+The interview is not done when sections look filled.
+It is done when the grilling **Ready Gate** passes: ambiguous requirements,
+architectural trade-offs, and edge cases are resolved enough that a fresh agent
+can implement and QA the Completion Contract without further product Q&A.
+
+Cover these three topics explicitly (see grilling skill for examples):
+
+1. **Ambiguous requirements** — anything a second reader could interpret two ways
+   that would change Acceptance Checks, UX, data, auth, or failure behavior.
+2. **Architectural trade-offs** — stack, boundaries, persistence, integrations,
+   and operational cost where two or more approaches are viable.
+3. **Edge cases** — empty/invalid input, duplicates, auth expiry, not-found,
+   partial integration failure, concurrency, first-run vs returning user, and
+   similar in-scope boundaries.
+
+Interview loop:
 
 1. Start from their idea. Restate your understanding, then ask about the next gap.
 2. **When the user doesn't know something, propose 2-3 concrete approaches with
    trade-offs** (via the host's native question tool) and let them choose — don't make them
    architect it alone. Be ambitious about scope and product polish.
-3. Capture decisions into the matching spec section as you go.
-4. Keep going until **every** top-level section has real content.
+3. Capture each resolved decision into `<planning_decisions>` **and** into the
+   matching product section (`technology_stack`, `integrations`, `core_features`,
+   `acceptance_checks`, …). Link every decision to Acceptance Check IDs.
+4. Turn every in-scope edge case into an observable Acceptance Check
+   (`category="edge-case"` or an explicit expected result on a functional check).
+5. Keep going until **every** top-level section has real content **and** the
+   Ready Gate passes.
 
 Write for a fresh agent with no memory of this interview. Define project-specific
 terms in plain language, state environment assumptions in `prerequisites`, make
 `implementation_steps` incremental and independently verifiable, and phrase
 `success_criteria` as behavior a user can observe. Where a decision has meaningful
-alternatives, include the chosen approach and its reason in the relevant section.
+alternatives, include the chosen approach and its reason in the relevant section
+and in `<planning_decisions>`.
 
 Identify runtime blockers before product work. A runtime blocker is anything that
 prevents a clean local or Docker deployment from starting and being tested, such
@@ -102,12 +129,19 @@ the removed service and its primary smoke path succeeds.
 
 Required top-level sections (must all be present):
 `project_goal`, `overview`, `technology_stack`, `integrations`, `prerequisites`, `core_features`, `acceptance_checks`,
-`database_schema`, `api_endpoints_summary`, `ui_layout`, `design_system`,
+`planning_decisions`, `database_schema`, `api_endpoints_summary`, `ui_layout`, `design_system`,
 `key_interactions`, `implementation_steps`, `success_criteria`.
 
 **Every section must be filled. If the user explicitly does NOT want something,
 write its content as `removed` (e.g. `<projects>removed</projects>`) — do not
 delete the section.** This makes "we decided against X" explicit and auditable.
+
+`<planning_decisions>` is the audit trail of grilling.
+It must include at least one `<decision>` for each topic that applies
+(`ambiguous-requirement`, `architectural-tradeoff`, `edge-case`), or record
+explicit deferrals under `<deferred>` with reasons.
+Never finalize a spec whose Acceptance Checks would still change if an open
+ambiguity or trade-off were resolved later.
 
 `core_features` is the spine of the whole pipeline: group features into clearly
 named areas (these become the `context` values the generator builds and the
@@ -121,10 +155,17 @@ work remains runnable; only declared dependents wait. The richer this section, t
 better the build.
 
 `acceptance_checks` is the completion contract. Give every check a stable,
-append-only ID (`AC-001`, `AC-002`, ...), the matching `context`, a category, and
-only real prerequisite check IDs in `depends_on`. Each description must state an
-observable input/action and expected result. Cover every part of the Project Goal;
-the generator rejects missing mappings, unknown dependencies, and dependency cycles.
+append-only ID (`AC-001`, `AC-002`, ...), the matching `context`, a category
+(`foundation` / `functional` / `style` / `edge-case`), and only real prerequisite
+check IDs in `depends_on`. Each description must state an observable input/action
+and expected result. Cover every part of the Project Goal **and** every in-scope
+edge case resolved during grilling; the generator rejects missing mappings,
+unknown dependencies, and dependency cycles.
+
+After reconcile, `feature_list.json` is the immutable Work Item catalog derived
+from those checks. Edge-case and decision-linked checks become Work Items like
+any other — that is how the JSON artifact inherits the grilled contract. Do not
+leave edge cases only in prose outside Acceptance Checks.
 
 ## Spec review (required before `project_specs.xml`)
 
@@ -133,7 +174,8 @@ specification item in the interactive HTML review loop.
 
 1. As you interview, assemble the full specification as `xml_draft` (valid XML
    matching `project_specs.template.xml`) and a parallel `items` array — one
-   review card per top-level section, feature area, and acceptance check.
+   review card per top-level section, feature area, acceptance check, **and**
+   planning decision (ambiguity / trade-off / edge case).
 2. Write `.harness/project_specs.draft.json` in the resolved project root:
 
 ```json
@@ -164,11 +206,22 @@ specification item in the interactive HTML review loop.
       "summary": "Observable behavior in one line",
       "body": "Full acceptance check description",
       "meta": { "context": "foundation", "category": "foundation", "depends_on": "" }
+    },
+    {
+      "id": "D-001",
+      "kind": "planning_decision",
+      "title": "D-001 — soft vs hard delete",
+      "summary": "Ambiguity: deleted notes are soft-deleted and restorable",
+      "body": "Options considered… Choice… Rationale… Proved by AC-004",
+      "meta": { "topic": "ambiguous-requirement", "acceptance_checks": "AC-004" }
     }
   ]
 }
 ```
 
+Do not open the review page until the grilling Ready Gate passes.
+Review cards for `planning_decision` items are how the user confirms that
+ambiguities, trade-offs, and edge cases were actually resolved.
 3. Render and open the review page (skill directory = `PLANNER`):
 
 ```bash
@@ -206,6 +259,9 @@ passes and `finalize` writes `project_specs.xml`.
 
 - After `finalize`, `project_specs.xml` exists in the resolved project root.
   Do not hand-edit the file to bypass review.
+- Confirm the Ready Gate still holds: ambiguities, trade-offs, and edge cases are
+  recorded under `<planning_decisions>` and proved by Acceptance Checks that
+  reconcile into `feature_list.json`.
 - **New Project**: tell the user to review the file, then open a NEW session and
   run **`/generator`** — it scaffolds the project (via the initializer agent) on
   first run, then implements and QA's features. Multiple `/generator` sessions can
@@ -214,7 +270,8 @@ passes and `finalize` writes `project_specs.xml`.
   validation pass by default. If the user asks for an audit, tell them to run
   `/generator` and select one task, a set, or all.
 - **Feature**: tell the user the new `context`(s) added; `/generator` will pick
-  them up on its next run.
+  them up on its next run. New feature work must grill and record decisions for
+  the delta (new ambiguities, trade-offs, edge cases) before finalize.
 - If a check reads weak or wrong, edit `project_specs.xml` directly and re-run
   `/generator` — its reconcile step validates every check before any work is
   claimed.

@@ -5,8 +5,6 @@ import { hostname } from 'node:os'
 import {
   git,
   gitRoot,
-  gitCommonDir,
-  projectPrefix,
   readFeatureListFromIntegration,
   portInUse,
   processAlive,
@@ -14,8 +12,10 @@ import {
   writeJsonAtomic,
 } from './git-repo.mjs'
 import { integrationBranchName, integrationBranchRef } from './integration-branch.mjs'
-import { claimKey, projectIdFromPrefix, sanitizeKey } from './project-keys.mjs'
+import { claimKey, sanitizeKey } from './project-keys.mjs'
+import { resolveProjectTopology } from './project-topology.mjs'
 import { readyWorkItems } from './ready-work-items.mjs'
+import { ledgerPath, readLedgerSync } from './execution-ledger.mjs'
 
 export const DEFAULT_BASE_PORT = Number(process.env.GEN_BASE_PORT || 5170)
 export const LEASE_TIMEOUT_SECONDS = Number(process.env.HARNESS_LEASE_TIMEOUT_SECONDS || 60)
@@ -59,9 +59,10 @@ function stealDeadStateLock(lockDir) {
 }
 
 export function repoPaths(repo) {
-  const commonGit = gitCommonDir(repo)
-  const prefix = projectPrefix(repo)
-  const projectId = projectIdFromPrefix(prefix)
+  const topology = resolveProjectTopology(repo)
+  const commonGit = topology.commonGit
+  const prefix = topology.projectPrefix
+  const projectId = topology.projectId
   return {
     repo,
     commonGit,
@@ -70,9 +71,9 @@ export function repoPaths(repo) {
     claimsFile: join(commonGit, 'generator-claims.json'),
     stateLockDir: join(commonGit, 'harness-locks', 'generator-state'),
     mergeLockDir: join(commonGit, 'harness-locks', 'generator-merge'),
-    runDir: join(commonGit, 'harness-runs'),
-    strikeFile: join(commonGit, 'harness-runs', `strikes--${projectId}.json`),
-    runStateFile: (key) => join(commonGit, 'harness-runs', `${sanitizeKey(key)}.json`),
+    runDir: topology.runsDir,
+    strikeFile: join(topology.runsDir, `strikes--${projectId}.json`),
+    runStateFile: (key) => join(topology.runsDir, `${sanitizeKey(key)}.json`),
     claimKey: (context) => claimKey(projectId, context),
   }
 }
@@ -153,9 +154,11 @@ export function pickClaimCandidate(repo, mode, selector, claims) {
   const queue = readFeatureListFromIntegration(repo)
   if (!queue) return null
 
+  const ledger = readLedgerSync(ledgerPath(paths.commonGit, paths.projectId))
   const ready = readyWorkItems(queue, {
     mode: readyModeForClaim(mode),
     taskId: mode === 'task' && selector ? selector : null,
+    ledger,
   })
 
   let context = null
@@ -690,4 +693,58 @@ export function strike(repo, key, delta) {
   } finally {
     releaseStateLock(repo)
   }
+}
+
+function readLockHolder(lockDir) {
+  const ownerRaw = existsSync(join(lockDir, 'owner'))
+    ? readFileSync(join(lockDir, 'owner'), 'utf8').trim()
+    : ''
+  const ownerHost = existsSync(join(lockDir, 'host'))
+    ? readFileSync(join(lockDir, 'host'), 'utf8').trim()
+    : ''
+  const ownerPid = Number(ownerRaw.split('.')[0])
+  return { ownerRaw, ownerHost, ownerPid }
+}
+
+/**
+ * Remove a generator merge/state lock when its holder PID is not alive.
+ * Used by harness-control fleet recovery instead of raw rm -rf.
+ */
+export function clearDeadLock(repo, kind, { force = false } = {}) {
+  const paths = repoPaths(repo)
+  const lockDir = kind === 'merge'
+    ? paths.mergeLockDir
+    : kind === 'state'
+      ? paths.stateLockDir
+      : null
+  if (!lockDir) throw new Error(`unknown lock kind: ${kind}`)
+  if (!existsSync(lockDir)) return { cleared: false, reason: 'absent', lock: kind }
+
+  const holder = readLockHolder(lockDir)
+  if (holder.ownerPid && processAlive(holder.ownerPid)) {
+    const err = new Error(`${kind} lock is held by live pid ${holder.ownerPid}`)
+    err.code = 'LOCK_HELD'
+    throw err
+  }
+  if (holder.ownerHost && holder.ownerHost !== currentHost() && holder.ownerRaw && !force) {
+    const err = new Error(`${kind} lock owner host is ${holder.ownerHost}; pass force to clear`)
+    err.code = 'LOCK_REMOTE'
+    throw err
+  }
+
+  if (kind === 'merge' && stealDeadMergeLock(lockDir)) {
+    return { cleared: true, lock: kind, reason: 'stale-local' }
+  }
+  if (kind === 'state' && stealDeadStateLock(lockDir)) {
+    return { cleared: true, lock: kind, reason: 'stale-local' }
+  }
+
+  rmSync(join(lockDir, 'owner'), { force: true })
+  rmSync(join(lockDir, 'host'), { force: true })
+  try {
+    rmSync(lockDir, { recursive: true })
+  } catch {
+    /* ignore */
+  }
+  return { cleared: true, lock: kind, reason: force ? 'forced' : 'dead-holder' }
 }

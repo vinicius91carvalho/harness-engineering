@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "modules": [
+    {
+      "id": "harness",
+      "kind": "core",
+      "sourceRoot": ".",
+      "optional": false,
+      "hosts": ["claude", "codex", "opencode", "pi", "agent"],
+      "description": "Spec→build→QA→Goal Review workflow plugin"
+    },
+    {
+      "id": "skill-creator",
+      "kind": "optional-bundle",
+      "sourceRoot": "packages/skill-creator",
+      "optional": true,
+      "hosts": ["claude", "codex", "opencode", "pi", "agent"],
+      "description": "Create and evaluate agent skills"
+    },
+    {
+      "id": "crawl4ai",
+      "kind": "optional-bundle",
+      "sourceRoot": "packages/crawl4ai",
+      "optional": true,
+      "hosts": ["claude", "codex", "opencode", "pi", "agent"],
+      "description": "Crawl4AI web extraction skill",
+      "runtime": { "pip": ["crawl4ai"] }
+    },
+    {
+      "id": "ponytail",
+      "kind": "external",
+      "optional": true,
+      "hosts": ["claude", "codex", "opencode", "agent"],
+      "description": "Minimal-solution coding skill",
+      "acquisition": { "npm": "@dietrichgebert/ponytail", "github": "DietrichGebert/ponytail" }
+    },
+    {
+      "id": "codebase-memory-mcp",
+      "kind": "external",
+      "optional": true,
+      "hosts": ["claude", "codex", "opencode", "agent"],
+      "description": "Codebase memory MCP server",
+      "acquisition": { "installer": "https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh" }
+    },
+    {
+      "id": "context7",
+      "kind": "mcp",
+      "optional": true,
+      "hosts": ["claude", "codex", "opencode", "agent"],
+      "description": "Context7 docs MCP"
+    },
+    {
+      "id": "playwright",
+      "kind": "mcp",
+      "optional": true,
+      "hosts": ["claude", "codex", "opencode", "agent"],
+      "description": "Playwright browser MCP"
+    },
+    {
+      "id": "status-line",
+      "kind": "extra",
+      "optional": true,
+      "hosts": ["claude", "codex"],
+      "description": "Status line helpers"
+    },
+    {
+      "id": "shared-config",
+      "kind": "extra",
+      "optional": true,
+      "hosts": ["claude"],
+      "description": "Shared Claude settings merge"
+    },
+    {
+      "id": "mcp-servers",
+      "kind": "extra",
+      "optional": true,
+      "hosts": ["claude", "codex", "opencode", "agent"],
+      "description": "Restore MCP inventory with secret prompts"
+    }
+  ]
+}

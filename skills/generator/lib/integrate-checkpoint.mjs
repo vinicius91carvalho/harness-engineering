@@ -82,7 +82,7 @@ export async function integrateCheckpoint(ctx) {
         Attempt: `${attempt}/${maxAttempts}`, WorkItem: feature.id, AcceptanceChecks: feature.acceptance_checks || [],
         Outcome: 'passed on integrated branch', Evidence: verified.artifact, NextAction: 'next Ready Work Item',
       })
-      commitPaths(integrationDir, [join(integrationDir, 'feature_list.json'), file], `verify(harness): integrate ${feature.id}`)
+      commitPaths(integrationDir, [file], `verify(harness): integrate ${feature.id}`)
       syncWorkdirWithIntegration(workdir)
       await writeState({ phase: 'integrated', nextAction: 'next-work-item', lastResult: 'Integrated Verification passed' })
       return { passed: true }
@@ -93,7 +93,7 @@ export async function integrateCheckpoint(ctx) {
     const file = await journal(integrationDir, 'Integrated Verification defect', {
       Attempt: `${attempt}/${maxAttempts}`, WorkItem: feature.id, Defects: defects, Evidence: verified.artifact, NextAction: 'Repair Plan',
     })
-    commitPaths(integrationDir, [join(integrationDir, 'feature_list.json'), file], `qa(${feature.context}): ${feature.id} integration defect`)
+    commitPaths(integrationDir, [file], `qa(${feature.context}): ${feature.id} integration defect`)
     syncWorkdirWithIntegration(workdir)
     return { passed: false, defects, evidence: verified.artifact }
   } finally {

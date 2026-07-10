@@ -8,11 +8,11 @@ Everything below is a row in the installer's checklist. Toggle whatever you want
 | --- | --- | --- | --- | --- |
 | `harness` | claude, opencode, codex, agent | `/harness:*` or `/harness-*` | this repo | My own skills, agents, and scripts — the [spec→build→QA pipeline](../README.md#framework) (`planner`/`generator`/`evaluator` + agents), the [learning loop](../README.md#maintenance), `/harness:update-project`, and the status line. |
 | `ponytail` | claude, opencode, codex | `/ponytail:*` | [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail) | Lazy senior-dev mode — forces the simplest solution that works (YAGNI, stdlib first, no unrequested abstractions). |
-| `skill-creator` | claude, opencode, codex | agent-based | [anthropics/skills](https://github.com/anthropics/skills) | Multi-agent pipeline to create, evaluate, benchmark, and refine AI coding skills. |
+| `skill-creator` | claude, opencode, codex | agent-based | `packages/skill-creator` in this repo | Multi-agent pipeline to create, evaluate, benchmark, and refine AI coding skills. |
 | `codebase-memory-mcp` | claude, opencode, codex | MCP/tool integration | [DeusData/codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) | Signed local code-intelligence binary for 158 languages. Replaces the Claude-only TypeScript, Pyright, and Rust LSP plugins; auto-indexing is enabled during install. |
 | `context7` | claude, opencode, codex | MCP server | [upstash/context7](https://github.com/upstash/context7) | Up-to-date, version-specific library docs through the host-neutral MCP endpoint. |
 | `playwright` | claude, opencode, codex | MCP server | [microsoft/playwright-mcp](https://github.com/microsoft/playwright-mcp) | Browser automation and E2E testing through Microsoft's MCP server. |
-| `crawl4ai` | claude, opencode, codex, pi, agent | skill | [unclecode/crawl4ai](https://github.com/unclecode/crawl4ai) | Web crawling and structured extraction: installs the Python package (`pip install -U crawl4ai`, `crawl4ai-setup`, `crawl4ai-doctor`) and copies the bundled crawl4ai skill into each selected host. |
+| `crawl4ai` | claude, opencode, codex, pi, agent | skill | `packages/crawl4ai` in this repo | Web crawling and structured extraction: installs the Python package (`pip install -U crawl4ai`, `crawl4ai-setup`, `crawl4ai-doctor`) and copies the bundled crawl4ai skill into each selected host. |
 
 Optional role routing uses `config/roles.example.json` copied to `.harness/roles.json`.
 Optional worker visibility uses [herdr](https://herdr.dev/), auto-selected when the supervisor starts inside a herdr workspace with `herdr` installed, or forced with `--display herdr`/`--display background`.

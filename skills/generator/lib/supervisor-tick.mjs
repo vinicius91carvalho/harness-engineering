@@ -19,8 +19,14 @@ export const DEFAULT_RETRY_MAX_ATTEMPTS = 5
  * A failed resume does not consume a slot; a successful resume consumes one.
  */
 export function drainRetryQueue(retryQueue, slots) {
-  const attempts = Object.entries(retryQueue || {}).map(([context, retry]) => ({ context, retry: { ...retry } }))
-  return { attempts, slots }
+  const available = Math.max(0, Number(slots) || 0)
+  const attempts = Object.entries(retryQueue || {})
+    .map(([context, retry]) => ({ context, retry: { ...retry } }))
+  if (available < 1) {
+    // Defer: do not surface attempts that would burn counters without capacity.
+    return { attempts: [], slots: 0, deferred: attempts.map((row) => row.context) }
+  }
+  return { attempts: attempts.slice(0, available), slots: available, deferred: attempts.slice(available).map((row) => row.context) }
 }
 
 /** Apply the outcome of one retry-queue resume attempt. */

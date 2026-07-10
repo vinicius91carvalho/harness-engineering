@@ -2,6 +2,15 @@
 set -euo pipefail
 unset HARNESS_INTEGRATION_BRANCH
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+# Relax host-wide governor gates so stub orchestrator runs stay deterministic in CI.
+export HARNESS_MAX_WORKERS=4
+export HARNESS_QUOTA_WORKERS=4
+export HARNESS_MAX_LOAD_RATIO=100
+export HARNESS_RESERVE_MEMORY_MB=0
+export HARNESS_MEMORY_PER_WORKER_MB=1
+export HARNESS_CPU_PER_WORKER=0.25
+# shellcheck source=tests/lib/ledger-helper.sh
+. "$ROOT/tests/lib/ledger-helper.sh"
 TMP=${TMPDIR:-/tmp}/harness-orchestrator-test.$$
 ORCHESTRATOR_PID=""
 trap 'kill "$ORCHESTRATOR_PID" 2>/dev/null || true; rm -rf "$TMP" 2>/dev/null || true' EXIT
@@ -22,15 +31,11 @@ prompt=""; for arg in "$@"; do prompt=$arg; done
 printf '%s' "$prompt" | grep -q "$PWD/project_specs.xml"
 printf '%s' "$prompt" | grep -q 'verify that the repository contains every structure and file it requires'
 if printf '%s' "$prompt" | grep -q '<injected_project_specs>'; then exit 1; fi
-tmp="$PWD/feature_list.json.tmp"
-commit() { git add feature_list.json; git commit -qm "$1"; }
 case "$prompt" in
   *"orchestrator repair planner"*)
     printf '%s\n' '{"summary":"fix the health response","rootCause":"wrong response","actions":["return ready"],"validation":["request health"]}'
     ;;
   *"Integrated Verification"*)
-    jq 'map(if .id=="WI-AC-001" then .integration=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
-    commit integration
     printf '%s\n' '{"id":"WI-AC-001","integration":true,"implementation":true,"defects":[]}'
     ;;
   *"independent Goal Review agent"*)
@@ -50,20 +55,14 @@ case "$prompt" in
       echo '429: {"message":"Rate limit exceeded"}' >&2; exit 1
     fi
     if [ "$code_count" -eq 2 ]; then printf '%s' "$prompt" | grep -q 'fix the health response'; fi
-    jq 'map(if .id=="WI-AC-001" then .implementation=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
-    commit coding
     printf '%s\n' '{"id":"WI-AC-001","implementation":true,"notes":"implemented"}'
     ;;
   *"qa-agent"*)
     count=0; [ ! -f "$HARNESS_TEST_QA_COUNT" ] || count=$(cat "$HARNESS_TEST_QA_COUNT")
     count=$((count + 1)); printf '%s' "$count" >"$HARNESS_TEST_QA_COUNT"
     if [ "${HARNESS_TEST_ALWAYS_FAIL:-}" = 1 ] || [ "$count" -eq 1 ]; then
-      jq 'map(if .id=="WI-AC-001" then .implementation=false | .qa=false else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
-      commit qa-defect
       printf '%s\n' '{"id":"WI-AC-001","qa":false,"implementation":false,"defects":["expected ready; observed down; evidence response"]}'
     else
-      jq 'map(if .id=="WI-AC-001" then .qa=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
-      commit qa-pass
       printf '%s\n' '{"id":"WI-AC-001","qa":true,"implementation":true,"defects":[]}'
     fi
     ;;
@@ -103,7 +102,9 @@ PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" HARNESS_TEST_QA_COUNT="$TMP/qa-
   --claim-script "$ROOT/skills/generator/claim.sh" >"$TMP/result.json"
 
 jq -e '.passed == 1 and (.stuck | length) == 0' "$TMP/result.json" >/dev/null
-jq -e '.[0].implementation and .[0].qa and .[0].integration and .[0].retries == 1' "$TMP/repo/feature_list.json" >/dev/null
+jq -e '.items["WI-AC-001"].implementation and .items["WI-AC-001"].qa and .items["WI-AC-001"].integration and .items["WI-AC-001"].retries == 1' \
+  "$(harness_ledger_file "$TMP/repo")" >/dev/null
+jq -e '.[0].implementation == false and .[0].qa == false and .[0].integration == false' "$TMP/repo/feature_list.json" >/dev/null
 grep -q 'Repair Plan' "$WORKTREE/harness-progress/core.md"
 grep -q 'expected ready; observed down' "$WORKTREE/harness-progress/core.md"
 STATE="$TMP/repo/.git/harness-runs/core.json"
@@ -137,7 +138,8 @@ PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" HARNESS_TEST_QA_COUNT="$TMP/qa-
   --workdir "$TMP/repo" --mode goal-review --context goal-review --port 5170 \
   --claim-script "$ROOT/skills/generator/claim.sh" >"$TMP/goal-defect.json"
 jq -e '.goal == false and .reopened == ["WI-AC-001"]' "$TMP/goal-defect.json" >/dev/null
-jq -e '.[0].implementation == false and .[0].qa == false and .[0].integration == false and .[0].retries == 2' "$TMP/repo/feature_list.json" >/dev/null
+jq -e '.items["WI-AC-001"].implementation == false and .items["WI-AC-001"].qa == false and .items["WI-AC-001"].integration == false and .items["WI-AC-001"].retries == 2' \
+  "$(harness_ledger_file "$TMP/repo")" >/dev/null
 echo 'ok - Goal Review defects reopen linked Work Items within the Attempt budget'
 
 mkdir -p "$TMP/blocked"
@@ -237,8 +239,12 @@ jq -e '[.routeHistory[] | select(.kind=="CODING" and .outcome=="fallback") | .fa
 jq -e '.routeHistory | any(.kind=="CODING" and .harness=="codex" and .outcome=="selected")' "$OMNI_STATE" >/dev/null
 jq -e '.routeHistory | any((.kind=="QA" or .kind=="INTEGRATION_QA") and .harness=="claude" and .independence=="independent-harness")' "$OMNI_STATE" >/dev/null
 test "$(grep -c '^qa claude ' "$TMP/omni.log")" -eq 2
-grep -q 'route=.*"harness":"claude"' "$TMP/omni/.git/harness-runs/evidence/core/WI-AC-001-2-qa.log"
-grep -q 'command not found' "$TMP/omni/.git/harness-runs/evidence/core/WI-AC-001-2-coding.log"
+OMNI_QA_EVIDENCE=$(harness_evidence_file "$TMP/omni" 'WI-AC-001-2-qa-*.log')
+OMNI_CODING_EVIDENCE=$(harness_evidence_file "$TMP/omni" 'WI-AC-001-2-coding-*.log')
+test -n "$OMNI_QA_EVIDENCE"
+test -n "$OMNI_CODING_EVIDENCE"
+grep -q 'route=.*"harness":"claude"' "$OMNI_QA_EVIDENCE"
+grep -q 'command not found' "$OMNI_CODING_EVIDENCE"
 echo 'ok - roles.json routes ordered candidates and records provider/model fallbacks'
 echo 'ok - validation prefers a different actual harness and product defects enter the repair loop'
 
@@ -322,7 +328,7 @@ new_case_repo() {
   git -C "$dir" config user.name test
   git -C "$dir" config user.email test@example.invalid
   cp "$TMP/repo/project_specs.xml" "$dir/project_specs.xml"
-  # Fresh queue: $TMP/repo/feature_list.json was mutated to integration=true by the first run.
+  # Fresh queue: progress from the first run lives in the Execution Ledger, not feature_list.json.
   cat >"$dir/feature_list.json" <<'JSON'
 [{"id":"WI-AC-001","context":"core","description":"health works","acceptance_checks":["AC-001"],"depends_on":[],"implementation":false,"qa":false,"integration":false,"retries":0}]
 JSON
@@ -403,7 +409,9 @@ PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" \
 jq -e '.passed == 1' "$TMP/within-result.json" >/dev/null
 test "$(grep -c '^coding claude c1' "$TMP/within.log")" -eq 2
 test "$(grep -c '^coding codex c2' "$TMP/within.log")" -eq 1
-grep -q 'route=.*"harness":"codex"' "$TMP/within/.git/harness-runs/evidence/core/WI-AC-001-3-coding.log"
+WITHIN_CODING_EVIDENCE=$(harness_evidence_file "$TMP/within" 'WI-AC-001-3-coding-*.log')
+test -n "$WITHIN_CODING_EVIDENCE"
+grep -q 'route=.*"harness":"codex"' "$WITHIN_CODING_EVIDENCE"
 echo 'ok - within an item the coder switches only at attempt 3 under the default repair budget of 2'
 
 # ---- (d) an explicit decline routes to the next coding candidate without burning Attempts -------
@@ -480,8 +488,6 @@ set -eu
 prompt=""; for arg in "$@"; do prompt=$arg; done
 printf '%s' "$prompt" | grep -q "$PWD/project_specs.xml"
 printf '%s' "$prompt" | grep -q 'verify that the repository contains every structure and file it requires'
-tmp="$PWD/feature_list.json.tmp"
-commit() { git add feature_list.json; git commit -qm "$1"; }
 # Distractor: JSON-looking noise (a bare object plus a stray closing brace) printed before the
 # real, sentinel-wrapped verdict. A parser that still scans positionally instead of preferring the
 # delimited block risks picking this up instead.
@@ -489,18 +495,12 @@ noise() { printf '{"note":"debug"}\n'; printf '}\n'; }
 verdict() { printf '===HARNESS-VERDICT-BEGIN===\n%s\n===HARNESS-VERDICT-END===\n' "$1"; }
 case "$prompt" in
   *"Integrated Verification"*)
-    jq 'map(if .id=="WI-AC-001" then .integration=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
-    commit integration
     noise; verdict '{"id":"WI-AC-001","integration":true,"implementation":true,"defects":[]}'
     ;;
   *"coding-agent"*)
-    jq 'map(if .id=="WI-AC-001" then .implementation=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
-    commit coding
     noise; verdict '{"id":"WI-AC-001","implementation":true,"notes":"implemented"}'
     ;;
   *"qa-agent"*)
-    jq 'map(if .id=="WI-AC-001" then .qa=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
-    commit qa-pass
     noise; verdict '{"id":"WI-AC-001","qa":true,"implementation":true,"defects":[]}'
     ;;
 esac
@@ -513,7 +513,8 @@ PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin" HARNESS_TEST_QA_COUNT="$TMP/ver
   --workdir "$VERDICT_WT" --context core --port 5170 --features WI-AC-001 \
   --claim-script "$ROOT/skills/generator/claim.sh" >"$TMP/verdict-result.json"
 jq -e '.passed == 1 and (.stuck | length) == 0' "$TMP/verdict-result.json" >/dev/null
-jq -e '.[0].implementation and .[0].qa and .[0].integration and .[0].retries == 0' "$TMP/verdict/feature_list.json" >/dev/null
+jq -e '.items["WI-AC-001"].implementation and .items["WI-AC-001"].qa and .items["WI-AC-001"].integration and .items["WI-AC-001"].retries == 0' \
+  "$(harness_ledger_file "$TMP/verdict")" >/dev/null
 echo 'ok - a delimited verdict block wins over distractor JSON-looking noise printed before it'
 
 # A MERGE agent that stages a conflicted file without actually removing the
@@ -552,8 +553,6 @@ cat >"$TMP/mergecorrupt/bin/claude" <<'SH'
 #!/bin/sh
 set -eu
 prompt=""; for arg in "$@"; do prompt=$arg; done
-tmp="$PWD/feature_list.json.tmp"
-commit() { git add feature_list.json; git commit -qm "$1"; }
 case "$prompt" in
   *"resolving integration conflicts"*)
     # Deliberately buggy "resolution": leave the marker lines in place and
@@ -563,13 +562,9 @@ case "$prompt" in
     printf '%s\n' '{"resolved":true,"notes":"resolved"}'
     ;;
   *"coding-agent"*)
-    jq 'map(if .id=="WI-AC-001" then .implementation=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
-    commit coding
     printf '%s\n' '{"id":"WI-AC-001","implementation":true,"notes":"implemented"}'
     ;;
   *"qa-agent"*)
-    jq 'map(if .id=="WI-AC-001" then .qa=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
-    commit qa-pass
     printf '%s\n' '{"id":"WI-AC-001","qa":true,"implementation":true,"defects":[]}'
     ;;
 esac

@@ -7,7 +7,13 @@ CLAUDE_MARKETPLACE="harness-engineering"
 CODEX_MARKETPLACE="harness-engineering"
 REPO_URL="https://github.com/$MARKETPLACE_REPO.git"
 MEMORY_INSTALLER="https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh"
-OPTIONAL="ponytail skill-creator codebase-memory-mcp context7 playwright crawl4ai status-line shared-config mcp-servers"
+REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd || true)
+DEFAULT_OPTIONAL="ponytail skill-creator codebase-memory-mcp context7 playwright crawl4ai status-line shared-config mcp-servers"
+OPTIONAL=$DEFAULT_OPTIONAL
+if [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/config/installable-catalog.json" ] && command -v node >/dev/null 2>&1; then
+  OPTIONAL=$(node "$REPO_ROOT/scripts/install-reconcile.mjs" optional-ids 2>/dev/null) || OPTIONAL=$DEFAULT_OPTIONAL
+fi
+RECEIPT_DIR=$HOME/.local/share/harness
 
 ASSUME=""
 DRY=""
@@ -243,8 +249,32 @@ select_cli
 if [ -n "$SCOPE" ] && [ "$CLI" != claude ]; then die '--scope is only valid when Claude is the sole selected host'; fi
 [ -n "$SCOPE" ] || SCOPE=user
 
+catalog_repo() {
+  if [ -n "$TEMP_REPO" ] && [ -f "$TEMP_REPO/config/installable-catalog.json" ]; then
+    printf '%s\n' "$TEMP_REPO"
+  elif [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/config/installable-catalog.json" ]; then
+    printf '%s\n' "$REPO_ROOT"
+  fi
+}
+
+record_receipt() {
+  module=$1
+  json=$2
+  [ -n "$DRY" ] && return
+  repo=$(catalog_repo)
+  [ -n "$repo" ] || return
+  [ -f "$repo/scripts/install-reconcile.mjs" ] || return
+  mkdir -p "$RECEIPT_DIR"
+  node "$repo/scripts/install-reconcile.mjs" record-receipt "$RECEIPT_DIR" "$module" "$json" >/dev/null 2>&1 || true
+}
+
 plugin_clis() {
-  case "$1" in
+  name=$1
+  repo=$(catalog_repo)
+  if [ -n "$repo" ] && [ -f "$repo/scripts/install-reconcile.mjs" ]; then
+    hosts=$(node "$repo/scripts/install-reconcile.mjs" hosts "$name" 2>/dev/null) && { printf '%s\n' "$hosts"; return; }
+  fi
+  case "$name" in
     harness) echo 'claude codex opencode pi agent' ;;
     ponytail) echo 'claude codex opencode agent' ;;
     skill-creator) echo 'claude codex opencode pi agent' ;;
@@ -345,14 +375,27 @@ install_opencode_plugin() {
   if [ "$name" = ponytail ]; then
     command -v npm >/dev/null 2>&1 || die 'npm is required to install the ponytail OpenCode plugin'
     npm install -g @dietrichgebert/ponytail || die 'npm install of ponytail failed'
+    ponytail_version=$(npm list -g @dietrichgebert/ponytail --json 2>/dev/null | jq -r '.dependencies["@dietrichgebert/ponytail"].version // empty' || true)
+    record_receipt ponytail "{\"npm\":\"@dietrichgebert/ponytail\",\"version\":\"${ponytail_version:-unknown}\"}"
     cleanup_opencode_plugin_files ponytail
     atomic_opencode_plugin_add ponytail "@dietrichgebert/ponytail"
     return
   fi
   ensure_repo
-  source=$TEMP_REPO
   base=${XDG_CONFIG_HOME:-$HOME/.config}/opencode
   mkdir -p "$base/skills" "$base/agents" "$base/commands"
+  if [ -d "$TEMP_REPO/packages/$name" ]; then
+    dest="$base/skills/$name"
+    node "$TEMP_REPO/scripts/install-reconcile.mjs" project-bundle "$name" "$dest" \
+      || die "bundle projection failed for $name"
+    return
+  fi
+  if [ "$name" = harness ]; then
+    node "$TEMP_REPO/scripts/install-reconcile.mjs" project-harness-opencode "$TEMP_REPO" "$base" \
+      || die 'harness OpenCode projection failed'
+    return
+  fi
+  source=$TEMP_REPO
   if [ -d "$source/skills" ]; then
     for path in "$source"/skills/*; do [ -d "$path" ] || continue; dest="$base/skills/$name-$(basename "$path")"; mkdir -p "$dest"; cp -R "$path"/. "$dest"/; done
   fi
@@ -361,8 +404,6 @@ install_opencode_plugin() {
   fi
   if [ -d "$source/commands" ]; then
     for path in "$source"/commands/*.md; do [ -f "$path" ] || continue; cp "$path" "$base/commands/$name-$(basename "$path")"; done
-  elif [ "$name" = harness ]; then
-    for path in "$source"/skills/*/SKILL.md; do [ -f "$path" ] || continue; cp "$path" "$base/commands/harness-$(basename "$(dirname "$path")").md"; done
   fi
 }
 
@@ -395,20 +436,8 @@ install_agent_plugin() {
   command -v agent >/dev/null 2>&1 || cli_installed agent || die 'agent is required to install the harness Cursor Agent plugin'
   ensure_repo
   dest=$HOME/.cursor/plugins/local/$name
-  mkdir -p "$dest/.cursor-plugin" "$dest/skills" "$dest/agents" "$dest/commands" "$dest/assets"
-  cp "$TEMP_REPO/.cursor-plugin/plugin.json" "$dest/.cursor-plugin/"
-  cp -R "$TEMP_REPO/skills"/. "$dest/skills"/
-  if [ -d "$TEMP_REPO/agents" ]; then
-    for path in "$TEMP_REPO"/agents/*.md; do [ -f "$path" ] || continue; cp "$path" "$dest/agents/"; done
-  fi
-  if [ -f "$TEMP_REPO/assets/banner.svg" ]; then cp "$TEMP_REPO/assets/banner.svg" "$dest/assets/"; fi
-  if [ -f "$TEMP_REPO/.mcp.json" ]; then cp "$TEMP_REPO/.mcp.json" "$dest/"; fi
-  if [ -f "$TEMP_REPO/AGENTS.md" ]; then cp "$TEMP_REPO/AGENTS.md" "$dest/"; fi
-  for path in "$TEMP_REPO"/skills/*; do
-    [ -d "$path" ] || continue
-    [ -f "$path/SKILL.md" ] || continue
-    cp "$path/SKILL.md" "$dest/commands/harness-$(basename "$path").md"
-  done
+  node "$TEMP_REPO/scripts/install-reconcile.mjs" project-agent "$name" "$TEMP_REPO" "$dest" \
+    || die "Cursor Agent projection failed for $name"
 }
 
 install_plugin() {
@@ -514,8 +543,16 @@ install_mcp_inventory() {
     json=$(jq -c --arg name "$name" '.mcpServers[$name]' "$inventory")
     for placeholder in $(printf '%s' "$json" | grep -o '\${[A-Za-z0-9_]*}' | sort -u || true); do
       key=$(printf '%s' "$placeholder" | tr -d '${}')
-      printf 'Value for %s (paste supported; Enter skips %s): ' "$key" "$name" >/dev/tty
-      IFS= read -r value </dev/tty || value=
+      printf 'Value for %s (hidden; paste supported; Enter skips %s): ' "$key" "$name" >/dev/tty
+      # Hidden prompt: stty -echo when a real TTY is available.
+      if [ -t 0 ] || [ -c /dev/tty ]; then
+        stty -echo </dev/tty 2>/dev/null || true
+        IFS= read -r value </dev/tty || value=
+        stty echo </dev/tty 2>/dev/null || true
+        printf '\n' >/dev/tty
+      else
+        IFS= read -r value || value=
+      fi
       [ -n "$value" ] || { json=; break; }
       json=$(printf '%s' "$json" | jq -c --arg from "$placeholder" --arg to "$value" 'walk(if type=="string" then split($from) | join($to) else . end)')
     done
@@ -605,6 +642,8 @@ install_memory() {
     binary=$(command -v codebase-memory-mcp 2>/dev/null || true)
   fi
   [ -n "$binary" ] && [ -x "$binary" ] || die 'codebase-memory-mcp binary was not found after installation; add it to PATH and retry'
+  memory_version=$("$binary" --version 2>/dev/null || true)
+  record_receipt codebase-memory-mcp "{\"binary\":\"$binary\",\"version\":\"${memory_version:-unknown}\"}"
   "$binary" config set auto_index true || die 'could not enable codebase-memory-mcp auto-indexing'
   for cli in $CLI; do
     case "$cli" in
@@ -628,8 +667,8 @@ install_skill_creator() {
           ensure_repo
           dest="$HOME/.claude/skills/skill-creator"
           mkdir -p "$HOME/.claude/skills"
-          rm -rf "$dest"
-          cp -R "$TEMP_REPO/skills/skill-creator" "$dest"
+          node "$TEMP_REPO/scripts/install-reconcile.mjs" project-bundle skill-creator "$dest" \
+            || die 'skill-creator projection failed'
         fi ;;
       opencode) install_opencode_plugin skill-creator ;;
       codex) install_plugin skill-creator "$cli" ;;
@@ -642,11 +681,9 @@ install_skill_creator() {
 install_crawl4ai_skill() {
   dest=$1
   ensure_repo
-  source=$TEMP_REPO/skills/crawl4ai
-  [ -d "$source" ] || die 'crawl4ai skill bundle missing from harness repository'
   mkdir -p "$(dirname "$dest")"
-  rm -rf "$dest"
-  cp -R "$source"/. "$dest"/
+  node "$TEMP_REPO/scripts/install-reconcile.mjs" project-bundle crawl4ai "$dest" \
+    || die 'crawl4ai projection failed'
 }
 
 install_crawl4ai_pip() {
@@ -682,6 +719,9 @@ install_crawl4ai_pip() {
   command -v crawl4ai-setup >/dev/null 2>&1 || die 'crawl4ai-setup not found after pip install'
   crawl4ai-setup || die 'crawl4ai-setup failed'
   crawl4ai-doctor || die 'crawl4ai-doctor reported installation problems'
+  crawl4ai_version=$(pip3 show crawl4ai 2>/dev/null | awk '/^Version:/{print $2; exit}')
+  [ -n "$crawl4ai_version" ] || crawl4ai_version=$(pip show crawl4ai 2>/dev/null | awk '/^Version:/{print $2; exit}')
+  record_receipt crawl4ai "{\"pip\":\"crawl4ai\",\"version\":\"${crawl4ai_version:-unknown}\"}"
 }
 
 install_crawl4ai() {
@@ -768,5 +808,9 @@ for item in $SELECTED; do
     *) for cli in $CLI; do install_plugin "$item" "$cli"; done ;;
   esac
 done
+
+case " $SELECTED " in
+  *' harness '*) record_receipt harness "{\"marketplace\":\"$CLAUDE_MARKETPLACE\"}" ;;
+esac
 
 echo "Harness installation complete for:$CLI"

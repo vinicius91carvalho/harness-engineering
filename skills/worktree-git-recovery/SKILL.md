@@ -49,18 +49,17 @@ Once a branch is confirmed orphaned, check whether it's actually safe to discard
 1. Diff the branch's own commits against main: `git log --oneline
    main..<branch>`. If they're few and clearly superseded (e.g. an
    `integrate <Work Item>` commit whose target Work Item already shows
-   `integration: true` in main's own `feature_list.json`), the branch has
+   `integration: true` in the Execution Ledger for that Work Item), the branch has
    no unique value.
 2. Cross-check every Work Item ID the claim was assigned
-   (`generator-claims.json`'s `featureIds`) against main's
-   `feature_list.json`. If every one of them is missing entirely, already
-   `integration: true` on main, or the branch never wrote a single commit
+   (`generator-claims.json`'s `featureIds`) against the catalog on the integration
+   branch and its Execution Ledger under `.git/harness-ledger/`. If every one of them is missing entirely, already
+   integrated per the ledger, or the branch never wrote a single commit
    toward them, it's safe to reset (`git merge --abort` first if a merge is
    stuck, then `git reset --hard main`) — the orchestrator will redo the
    Work Item cleanly from current main.
-3. If even one assigned Work Item shows real progress on main
-   (`implementation`/`qa` true but `integration` still false) or isn't on
-   main at all, do not reset — abort the stuck merge only (`git merge
+3. If even one assigned Work Item shows real progress in the ledger
+   (`implementation`/`qa` true but `integration` still false) or isn't integrated at all, do not reset — abort the stuck merge only (`git merge
    --abort`) and leave the branch's own commits intact so the orchestrator's
    normal integration flow can pick them up later. A reset here would
    silently discard real, unintegrated work.

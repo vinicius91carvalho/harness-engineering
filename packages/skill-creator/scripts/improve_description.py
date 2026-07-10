@@ -14,7 +14,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+from scripts.artifact_contract import validate_artifact
 from scripts.utils import parse_skill_md
+
+
+def _load_eval_results(path: Path) -> dict:
+    data = json.loads(path.read_text())
+    for row in data.get("results", []):
+        validate_artifact("eval_result", row)
+    return data
 
 
 def _call_claude(prompt: str, model: str | None, timeout: int = 300) -> str:
@@ -205,7 +213,7 @@ def main():
         print(f"Error: No SKILL.md found at {skill_path}", file=sys.stderr)
         sys.exit(1)
 
-    eval_results = json.loads(Path(args.eval_results).read_text())
+    eval_results = _load_eval_results(Path(args.eval_results))
     history = []
     if args.history:
         history = json.loads(Path(args.history).read_text())

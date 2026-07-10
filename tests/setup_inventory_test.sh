@@ -38,4 +38,7 @@ node "$ROOT/skills/setup/inventory.mjs" "$TMP/repo" >/dev/null
 grep -q 'spec review HTML loop' "$ROOT/skills/setup/SKILL.md"
 grep -q 'spec-review.mjs' "$ROOT/skills/planner/SKILL.md"
 grep -q 'failure_behavior' "$ROOT/skills/planner/project_specs.template.xml"
+grep -q 'planning_decisions' "$ROOT/skills/planner/project_specs.template.xml"
+grep -q 'Ready Gate' "$ROOT/skills/grilling/SKILL.md"
+grep -q 'ambiguous requirements' "$ROOT/skills/planner/SKILL.md"
 echo 'ok - setup checks a repository-derived integration inventory'

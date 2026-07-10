@@ -30,7 +30,7 @@ source, configuration, tests, documentation, and Git history.
 
 ## STEP 2: Create feature_list.json
 
-Create `feature_list.json`: a flat JSON execution queue derived from the spec's
+Create `feature_list.json`: a flat JSON Work Item catalog derived from the spec's
 stable Acceptance Checks. `project_specs.xml`, not this queue, owns completion.
 
 ```json

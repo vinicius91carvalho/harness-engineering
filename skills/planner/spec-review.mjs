@@ -7,6 +7,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from '
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import { parseProjectSpecification } from '../generator/lib/project-specification.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const TEMPLATE = join(__dirname, 'assets', 'spec_review.html')
@@ -184,6 +185,12 @@ function cmdFinalize(projectDir) {
   const shapeError = validateFeedbackShape(feedback, draft)
   if (shapeError) {
     console.error(shapeError)
+    process.exit(1)
+  }
+  try {
+    parseProjectSpecification(draft.xml_draft)
+  } catch (error) {
+    console.error(`cannot finalize: invalid project specification: ${error.message}`)
     process.exit(1)
   }
   const root = resolve(projectDir)

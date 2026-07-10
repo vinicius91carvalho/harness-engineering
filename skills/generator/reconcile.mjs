@@ -5,6 +5,10 @@ import { resolve } from 'node:path'
 import { atomicJson } from './lib/fs-json.mjs'
 import { integrationBranchName } from './lib/integration-branch.mjs'
 import { inferObservationMethod, workItemObservationMethods } from './lib/observation-method.mjs'
+import {
+  parseProjectSpecification,
+} from './lib/project-specification.mjs'
+import { validateDependencyGraph } from './lib/ready-work-items.mjs'
 
 function fail(message) {
   process.stderr.write(`reconcile: ${message}\n`)
@@ -16,16 +20,6 @@ const repo = resolve(args.find((arg) => !arg.startsWith('--')) || '.')
 const checkOnly = args.includes('--check')
 const specFile = resolve(repo, 'project_specs.xml')
 const queueFile = resolve(repo, 'feature_list.json')
-
-function attribute(text, name) {
-  const match = text.match(new RegExp(`\\b${name}\\s*=\\s*(["'])(.*?)\\1`))
-  return match?.[2]?.trim() || ''
-}
-
-function body(text, tag) {
-  return text.match(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`))?.[1]
-    ?.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() || ''
-}
 
 function gitOutput(args) {
   const result = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' })
@@ -51,72 +45,50 @@ async function readQueue() {
   }
 }
 
-function parseChecks(xml) {
-  const checks = [...xml.matchAll(/<acceptance_check\b([^>]*)>([\s\S]*?)<\/acceptance_check>/g)]
-    .map((match) => {
-      const id = attribute(match[1], 'id')
-      const context = attribute(match[1], 'context')
-      const dependencies = attribute(match[1], 'depends_on').split(',').map((v) => v.trim()).filter(Boolean)
-      return {
-        id,
-        context,
-        category: attribute(match[1], 'category') || 'functional',
-        observation: attribute(match[1], 'observation') || '',
-        description: body(match[2], 'description'),
-        dependencies,
-      }
-    })
-  if (!checks.length) fail('project_specs.xml has no <acceptance_check> entries; run the planner first')
-  const ids = new Set()
-  for (const check of checks) {
-    if (!check.id || !check.context || !check.description) fail('every acceptance_check needs id, context, and description')
-    if (ids.has(check.id)) fail(`duplicate acceptance check id: ${check.id}`)
-    ids.add(check.id)
-  }
-  for (const check of checks) {
-    for (const dependency of check.dependencies) {
-      if (!ids.has(dependency)) fail(`${check.id} depends on unknown acceptance check ${dependency}`)
-    }
-  }
-  const visiting = new Set(), visited = new Set()
-  const byId = new Map(checks.map((check) => [check.id, check]))
-  function visit(id) {
-    if (visiting.has(id)) fail(`acceptance check dependency cycle includes ${id}`)
-    if (visited.has(id)) return
-    visiting.add(id)
-    for (const dependency of byId.get(id).dependencies) visit(dependency)
-    visiting.delete(id)
-    visited.add(id)
-  }
-  for (const check of checks) visit(check.id)
-  return checks
-}
-
-let xml, parsed
+let xml, parsed, spec
 try {
   xml = await readFile(specFile, 'utf8')
+  spec = parseProjectSpecification(xml)
   parsed = await readQueue()
 } catch (error) {
   fail(error.message)
 }
 
-const checks = parseChecks(xml)
+const checks = spec.checks.map((check) => ({
+  id: check.id,
+  context: check.context,
+  category: check.category,
+  observation: check.observation,
+  description: check.description,
+  dependencies: check.dependsOn,
+}))
+const decisions = spec.planningDecisions?.decisions || []
+const decisionsByCheck = new Map()
+for (const decision of decisions) {
+  for (const ac of decision.acceptanceChecks || []) {
+    const list = decisionsByCheck.get(ac) || []
+    list.push(decision.id)
+    decisionsByCheck.set(ac, list)
+  }
+}
 const queue = parsed
 if (!Array.isArray(queue)) fail('feature_list.json must be an array')
-const validIds = new Set(checks.map((check) => check.id))
-const workIds = new Set()
-for (const item of queue) {
-  if (!item.id || workIds.has(String(item.id))) fail(`missing or duplicate Work Item id: ${item.id || ''}`)
-  workIds.add(String(item.id))
-  if (!Array.isArray(item.acceptance_checks) || !item.acceptance_checks.length) fail(`work item ${item.id} has no Acceptance Check mapping`)
-  for (const id of item.acceptance_checks) {
-    if (!validIds.has(id)) fail(`work item ${item.id} maps unknown acceptance check ${id}`)
-  }
+
+try {
+  validateDependencyGraph(checks.map((c) => ({ ...c, dependsOn: c.dependencies })), queue)
+} catch (error) {
+  fail(error.message)
 }
 
 const mapped = new Set(queue.flatMap((item) => item.acceptance_checks || []))
 const missing = checks.filter((check) => !mapped.has(check.id))
 if (checkOnly && missing.length) fail(`unmapped acceptance checks: ${missing.map((check) => check.id).join(', ')}`)
+
+// Detect generated-ID collisions before append
+for (const check of missing) {
+  const id = `WI-${check.id}`
+  if (queue.some((item) => String(item.id) === id)) fail(`generated Work Item id already exists: ${id}`)
+}
 
 for (const check of missing) {
   const observation_method = inferObservationMethod({
@@ -133,8 +105,8 @@ for (const check of missing) {
     description: check.description,
     steps: [`Verify ${check.id}: ${check.description}`],
     acceptance_checks: [check.id],
+    planning_decision_ids: decisionsByCheck.get(check.id) || [],
     depends_on: check.dependencies,
-    // Appended after the baseline => new work: build/implement, not verify-first audit.
     verify_first: false,
     implementation: false,
     qa: false,
@@ -146,6 +118,7 @@ for (const check of missing) {
 const byCheck = new Map(checks.map((check) => [check.id, check]))
 const filled = []
 let observationFilled = 0
+let decisionFilled = 0
 for (const item of queue) {
   const methods = workItemObservationMethods(item, byCheck)
   if (!item.observation_method || item.observation_method !== methods[0]) {
@@ -155,6 +128,12 @@ for (const item of queue) {
   } else if (!Array.isArray(item.observation_methods)) {
     item.observation_methods = methods
     observationFilled += 1
+  }
+  const linked = [...new Set((item.acceptance_checks || []).flatMap((id) => decisionsByCheck.get(id) || []))]
+  const prev = Array.isArray(item.planning_decision_ids) ? item.planning_decision_ids.join(',') : ''
+  if (linked.join(',') !== prev) {
+    item.planning_decision_ids = linked
+    decisionFilled += 1
   }
   const internal = new Set(item.acceptance_checks)
   const expected = new Set(item.acceptance_checks.flatMap((id) => byCheck.get(id)?.dependencies || []).filter((id) => !internal.has(id)))
@@ -166,7 +145,7 @@ for (const item of queue) {
   filled.push(item.id)
 }
 
-if (!checkOnly && (missing.length || filled.length || observationFilled)) {
+if (!checkOnly && (missing.length || filled.length || observationFilled || decisionFilled)) {
   await atomicJson(queueFile, queue)
 }
 

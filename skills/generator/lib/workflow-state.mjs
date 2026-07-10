@@ -1,10 +1,20 @@
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
+import {
+  applyLedgerToCatalog,
+  ledgerPath,
+  readLedger,
+  updateLedgerItem,
+} from './execution-ledger.mjs'
+
+const PROGRESS_FIELDS = new Set(['implementation', 'qa', 'integration', 'blocked', 'retries'])
 
 export function createWorkflowState({
   stateFile,
   leaseToken,
   context,
+  commonGit,
+  projectId,
   readJson,
   atomicJson,
   hostname,
@@ -20,6 +30,7 @@ export function createWorkflowState({
   workdir,
   terminateChild,
 }) {
+  const ledgerFile = ledgerPath(commonGit, projectId)
   let state = {}
 
   function getState() {
@@ -32,15 +43,26 @@ export function createWorkflowState({
 
   async function writeState(change = {}) {
     const current = await readJson(stateFile, {})
-    if (current.leaseToken && current.leaseToken !== leaseToken && current.ownerHost === hostname() && current.ownerPid && current.ownerPid !== process.pid) {
+    if (current.leaseToken && current.leaseToken !== leaseToken) {
+      let liveOwner = false
+      if (current.ownerPid && current.ownerHost === hostname()) {
+        try { process.kill(current.ownerPid, 0); liveOwner = true } catch {}
+      }
+      if (liveOwner) {
+        fail(`Claim Lease for ${context} is fenced by token ${current.leaseToken}; refusing stale writer`)
+      }
+    }
+    if (current.ownerHost === hostname() && current.ownerPid && current.ownerPid !== process.pid) {
       try { process.kill(current.ownerPid, 0); fail(`Claim Lease for ${context} is owned by live pid ${current.ownerPid}`) } catch {}
     }
     const nextStatus = change.status || state.status
+    const prevGen = Number(current.fenceGeneration || state.fenceGeneration || 0)
     state = {
       ...state,
       ...change,
       context,
       leaseToken,
+      fenceGeneration: change.fenceBump ? prevGen + 1 : (prevGen || 1),
       ownerHost: hostname(),
       ownerPid: nextStatus === 'blocked' || nextStatus === 'complete' ? null : process.pid,
       heartbeat: new Date().toISOString(),
@@ -64,21 +86,33 @@ export function createWorkflowState({
     } finally { process.exit(130) }
   }
 
-  async function readFeatures(targetWorkdir = workdir) {
+  async function readCatalog(targetWorkdir = workdir) {
     const file = join(targetWorkdir, 'feature_list.json')
     let parsed
     try { parsed = JSON.parse(await readFile(file, 'utf8')) } catch (error) { fail(`cannot read ${file}: ${error.message}`) }
     if (!Array.isArray(parsed)) fail('feature_list.json must be an array')
-    return { file, parsed, list: parsed }
+    return { file, parsed }
   }
 
-  async function updateFeature(workdir, id, changes) {
-    const { file, parsed, list } = await readFeatures(workdir)
-    const feature = list.find((item) => String(item.id) === String(id))
-    if (!feature) fail(`unknown Work Item ${id}`)
-    Object.assign(feature, changes)
-    await atomicJson(file, parsed)
-    return feature
+  async function readFeatures(targetWorkdir = workdir) {
+    const { file, parsed } = await readCatalog(targetWorkdir)
+    const ledger = await readLedger(ledgerFile)
+    const list = applyLedgerToCatalog(parsed, ledger)
+    return { file, parsed, list, ledgerFile }
+  }
+
+  async function updateFeature(targetWorkdir, id, changes) {
+    const { parsed } = await readCatalog(targetWorkdir)
+    const catalogItem = parsed.find((item) => String(item.id) === String(id))
+    if (!catalogItem) fail(`unknown Work Item ${id}`)
+    const progress = {}
+    for (const [key, value] of Object.entries(changes)) {
+      if (PROGRESS_FIELDS.has(key)) progress[key] = value
+    }
+    if (!Object.keys(progress).length) fail(`updateFeature for ${id} requires progress fields`)
+    await updateLedgerItem(ledgerFile, id, progress)
+    const ledger = await readLedger(ledgerFile)
+    return applyLedgerToCatalog([catalogItem], ledger)[0]
   }
 
   function journalPath(targetWorkdir = workdir, name = context) {
@@ -112,6 +146,7 @@ export function createWorkflowState({
     journal,
     commitPaths,
     journalPath,
+    ledgerFile,
     getState,
     setState,
   }

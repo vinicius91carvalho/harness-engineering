@@ -221,4 +221,13 @@ if jq -s -e 'any(.[]; .context == "flaky")' "$CIRCUIT_EVENTS" >/dev/null 2>&1; t
 fi
 echo 'ok - a context already at the crash-count bound is never auto-recovered again on a single tick'
 
+mkdir -p "$TMP/fleet"
+supervisor_common_init_git_repo "$TMP/fleet" false
+mkdir -p "$TMP/fleet/.git/harness-control"
+printf '%s\n' '{"supervisorPid":999999999,"supervisorHost":"'"$(hostname)"'","workers":{}}' \
+  >"$TMP/fleet/.git/harness-control/state.json"
+"$NODE" "$CONTROL" release-supervisor-lock --repo "$TMP/fleet" | jq -e '.cleared == false and .reason == "absent"' >/dev/null
+"$NODE" "$CONTROL" clear-dead-lock --repo "$TMP/fleet" --lock merge | jq -e '.cleared == false' >/dev/null
+echo 'ok - guarded fleet recovery commands authorize when supervisor is not live'
+
 echo 'ok - supervisor fast tests passed'

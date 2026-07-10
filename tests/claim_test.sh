@@ -42,10 +42,9 @@ git -C "$TMP/dag" commit -qm init
 bash "$ROOT/skills/generator/claim.sh" select-claim "$TMP/dag" all '' 2001 >"$TMP/prerequisite.json"
 jq -e '.context == "bootstrap" and .featureIds == ["F"]' "$TMP/prerequisite.json" >/dev/null
 bash "$ROOT/skills/generator/claim.sh" release "$TMP/dag" bootstrap >/dev/null
-jq 'map(if .id=="F" then .implementation=true | .qa=true | .integration=true else . end)' "$TMP/dag/feature_list.json" >"$TMP/dag/feature_list.tmp"
-mv "$TMP/dag/feature_list.tmp" "$TMP/dag/feature_list.json"
-git -C "$TMP/dag" add feature_list.json
-git -C "$TMP/dag" commit -qm prerequisite-passed
+# shellcheck source=tests/lib/ledger-helper.sh
+. "$ROOT/tests/lib/ledger-helper.sh"
+harness_ledger_mark_integrated "$TMP/dag" F
 bash "$ROOT/skills/generator/claim.sh" select-claim "$TMP/dag" all '' 2002 >"$TMP/dependent.json"
 jq -e '.context == "product" and .featureIds == ["P"]' "$TMP/dependent.json" >/dev/null
 echo 'ok - only dependency-ready Work Items can be claimed'

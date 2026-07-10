@@ -1,4 +1,5 @@
 import { parseObject } from './verdict.mjs'
+import { validateWorkerVerdict } from './worker-result.mjs'
 
 /**
  * Infer a durable worker outcome when the orchestrator did not write worker-result.json.
@@ -24,6 +25,12 @@ export function interpretWorkerOutcome({ key, tail, persisted, runState, feature
       if (selected.length === featureIds.length && selected.every((item) => item.integration === true)) {
         result = { total: selected.length, passed: selected.length, stuck: [], durable: true }
       }
+    }
+  }
+  if (result) {
+    const verdict = validateWorkerVerdict(result)
+    if (!verdict.valid && verdict.mode !== 'unknown') {
+      result = { ...result, _validationErrors: verdict.errors }
     }
   }
   return result

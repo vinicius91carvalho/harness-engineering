@@ -16,9 +16,9 @@ Let `PROJECT` be the directory containing the selected project's specification,
 root, resolve the project through `.harness/projects.json`; Goal Review never
 combines independent project queues.
 
-1. Require `main:feature_list.json` and run
-   `node "$GEN/reconcile.mjs" "$PROJECT" --check`. Refuse Goal Review while any Work
-   Item lacks `integration:true`.
+1. Require the plan integration branch's `feature_list.json` and run
+   `node "$GEN/reconcile.mjs" "$PROJECT" --check`. Refuse Goal Review while the
+   Execution Ledger shows any Work Item not yet integrated.
 2. If this project's Goal Review Run State under `.git/harness-runs/` is already
    `blocked` (nested projects use a path-prefixed filename), show it and require
    user guidance before replacing its verdict.

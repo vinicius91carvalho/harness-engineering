@@ -31,8 +31,8 @@ echo 'ok - every skill directory name matches its own SKILL.md frontmatter name'
 
 # Manifests: each surface that fans a skill out into a runnable command keys off this same
 # skills/<name>/ convention. Claude discovers skills/ by directory convention once the plugin
-# identifies itself; Codex points an explicit field at the directory; OpenCode's installer walks
-# skills/*/SKILL.md at install time (see install.sh) rather than listing names in opencode.json.
+# identifies itself; Codex points an explicit field at the directory; OpenCode's installer projects
+# skills/*/SKILL.md through scripts/install-reconcile.mjs rather than listing names in opencode.json.
 test "$(jq -r .name .claude-plugin/plugin.json)" = "harness"
 test "$(jq -r .skills .codex-plugin/plugin.json)" = "./skills/"
 test -d "$(jq -r .skills .codex-plugin/plugin.json)"
@@ -40,7 +40,9 @@ test "$(jq -r .skills .cursor-plugin/plugin.json)" = "./skills/"
 test -d "$(jq -r .skills .cursor-plugin/plugin.json)"
 test -f opencode.json
 jq empty opencode.json
-grep -qF 'skills/*/SKILL.md' install.sh
+grep -q 'project-harness-opencode' install.sh
+grep -q 'SKILL.md' scripts/install-reconcile.mjs
+node scripts/install-reconcile.mjs validate >/dev/null
 echo 'ok - Claude, Codex, Cursor Agent, and OpenCode manifests all key off the same skills/ directory convention'
 
 # ---- (ii) verdict parsing: both runtime scripts must import the shared lib ----

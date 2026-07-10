@@ -41,6 +41,12 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from scripts.artifact_contract import (
+    ArtifactContractError,
+    grade_result_from_grading,
+    write_artifact,
+)
+
 
 def calculate_stats(values: list[float]) -> dict:
     """Calculate mean, stddev, min, max for a list of values."""
@@ -122,6 +128,19 @@ def load_run_results(benchmark_dir: Path) -> dict:
                 except json.JSONDecodeError as e:
                     print(f"Warning: Invalid JSON in {grading_file}: {e}")
                     continue
+
+                try:
+                    grade_result_from_grading(grading, eval_id)
+                except ArtifactContractError as e:
+                    print(f"Warning: grading.json in {run_dir} failed grade_result contract: {e}")
+                    continue
+
+                grade_result_path = run_dir / "grade_result.json"
+                write_artifact(
+                    grade_result_path,
+                    "grade_result",
+                    {"id": eval_id, "score": grading.get("summary", {}).get("pass_rate", 0.0)},
+                )
 
                 # Extract metrics
                 result = {
@@ -374,8 +393,7 @@ def main():
     output_md = output_json.with_suffix(".md")
 
     # Write benchmark.json
-    with open(output_json, "w") as f:
-        json.dump(benchmark, f, indent=2)
+    write_artifact(output_json, "benchmark", benchmark)
     print(f"Generated: {output_json}")
 
     # Write benchmark.md

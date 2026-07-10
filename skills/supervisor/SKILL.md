@@ -24,8 +24,9 @@ public-docs - r1`). The tab renames when the orchestrator phase changes and
 closes when the worker finishes, so it appears clearly in the herdr sidebar.
 
 At a monorepo root, resolve one project through `.harness/projects.json` before
-starting. Each project has its own specification, queue, supervisor state, and
-Goal Review. Do not start one aggregate supervisor for multiple project queues.
+starting. Each project has its own specification, Work Item catalog, Execution Ledger,
+supervisor Control Journal, and Goal Review. Do not start one aggregate supervisor
+for multiple project queues.
 
 ## Prepare the goal
 

@@ -88,9 +88,10 @@ For a verify-first item:
 
 1. Bring up the app as below and exercise every mapped Acceptance Check at a real
    external boundary (HTTP or browser), exactly as QA would.
-2. If **all** checks pass, set `implementation=true` and make **no code changes**.
-   Commit only if `git status` shows tracked file changes you intentionally made;
-   otherwise skip the commit (a zero-diff checkpoint is valid).
+2. If **all** checks pass, return `implementation:true` in your verdict and make
+   **no code changes**. Do not edit `feature_list.json`, Execution Ledger files, or Workflow Journal files;
+   the orchestrator owns those transitions. Commit only product code if you
+   intentionally changed tracked files; otherwise skip the commit.
 3. If **any** check fails, fix the **root cause** with the smallest possible diff
    — a guard in the shared function beats a guard in every caller. Do not refactor,
    restructure, or "improve" unrelated code. Re-verify the failing check and any

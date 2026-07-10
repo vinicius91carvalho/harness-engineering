@@ -1,5 +1,7 @@
 /** Attempt loop for Work Items — coding, QA, integration, repair planning. */
 
+import { classifyFailure } from '../lib/failure-policy.mjs'
+
 export async function runAttemptLoop({
   wanted,
   options,
@@ -49,7 +51,7 @@ export async function runAttemptLoop({
     const file = await journal(options.workdir, 'Explicit Resume', {
       WorkItem: id, Outcome: 'user authorized a new Attempt cycle', Guidance: options.guidance, NextAction: 'Coding Attempt 1',
     })
-    commitPaths(options.workdir, [file, join(options.workdir, 'feature_list.json')], `chore(harness): resume ${id} with guidance`)
+    commitPaths(options.workdir, [file], `chore(harness): resume ${id} with guidance`)
     setState({
       ...initialState, phase: 'resume', attempt: 1, nextAction: 'coding',
       repairPlan: { summary: 'User guidance', rootCause: 'user-directed', actions: [options.guidance], validation: [] },
@@ -93,7 +95,6 @@ export async function runAttemptLoop({
         const coded = await runAgent('CODING', featurePrompt('CODING', current, attempt, repairPlan), current.id, attempt)
         if (coded.ok && coded.parsed?.implementation === true) {
           await updateFeature(options.workdir, current.id, { implementation: true })
-          commitPaths(options.workdir, [join(options.workdir, 'feature_list.json')], `chore(harness): record coding ${current.id}`)
         }
         current = (await readFeatures()).list.find((item) => String(item.id) === String(original.id))
         if (coded.ok && coded.parsed?.implementation === false) {
@@ -107,9 +108,13 @@ export async function runAttemptLoop({
           continue
         }
         if (!coded.ok || current.implementation !== true) {
+          const failure = classifyFailure({ phase: 'CODING', reason: coded.detail || '', defectClass: coded.parsed?.defectClass })
           operationalFailures++
-          if (operationalFailures >= MAX_OPERATIONAL_FAILURES) { results.push(await block(current, attempt, 'coding agent failed three times', [coded.detail])); break }
-          await backoffIfRateLimited(coded.detail)
+          if (operationalFailures >= MAX_OPERATIONAL_FAILURES) {
+            results.push(await block(current, attempt, 'coding agent failed three times', [coded.detail]))
+            break
+          }
+          if (failure.class === 'quota') await backoffIfRateLimited(coded.detail)
           continue
         }
         operationalFailures = 0
@@ -121,15 +126,18 @@ export async function runAttemptLoop({
         const checked = await runAgent('QA', featurePrompt('QA', current, attempt), current.id, attempt)
         if (checked.ok && checked.parsed?.implementation === true && checked.parsed?.qa === true) {
           await updateFeature(options.workdir, current.id, { implementation: true, qa: true })
-          commitPaths(options.workdir, [join(options.workdir, 'feature_list.json')], `chore(harness): record QA ${current.id}`)
           const coder = itemPlan && lastCoder()
           if (coder) bumpStrike('quality', `quality|coding|${coder}`, -1)
         }
         current = (await readFeatures()).list.find((item) => String(item.id) === String(original.id))
         if (!checked.ok && !checked.parsed) {
+          const failure = classifyFailure({ phase: 'QA', reason: checked.detail || '' })
           operationalFailures++
-          if (operationalFailures >= MAX_OPERATIONAL_FAILURES) { results.push(await block(current, attempt, 'QA agent failed three times', [checked.detail])); break }
-          await backoffIfRateLimited(checked.detail)
+          if (operationalFailures >= MAX_OPERATIONAL_FAILURES) {
+            results.push(await block(current, attempt, 'QA agent failed three times', [checked.detail]))
+            break
+          }
+          if (failure.class === 'quota') await backoffIfRateLimited(checked.detail)
           continue
         }
         operationalFailures = 0

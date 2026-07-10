@@ -24,7 +24,7 @@ The installer then clones the **latest GitHub Release tag** (or a pin — see [I
 
 | Step | What you type | What happens |
 | --- | --- | --- |
-| **2. Plan** | `/harness:planner Build a notes app where a user can publish a note and find it after reloading.` | Writes `project_specs.xml` with Acceptance Checks |
+| **2. Plan** | `/harness:planner Build a notes app where a user can publish a note and find it after reloading.` | Grills you one question at a time (ambiguities, trade-offs, edge cases), then writes `project_specs.xml` with Acceptance Checks and `<planning_decisions>` |
 | **3. Build** | `/harness:generator` | Claims work, codes, QA's, integrates — answer **All** for a new project |
 | **4. Know you're done** | Goal Review passes; every Work Item shows `implementation`, `qa`, and `integration` | Not when the chat goes quiet |
 
@@ -61,7 +61,11 @@ A local checkout of this repo is different: `./install.sh` uses the working tree
 | Capture lessons | `/harness:learning-loop` | `/harness-learning-loop` | `/harness-learning-loop` |
 | Back up configuration | `/harness:update-project` | `/harness-update-project` | `/harness-update-project` |
 
-Planner uses grilling internally; activate it by asking “grill me.”
+**Grilling** (built into planner): before `/harness:generator` runs, the planner asks one product question at a time about ambiguous requirements (two readers could disagree), architectural trade-offs (two viable approaches), and edge cases (empty input, expired session, not-found, and similar).
+Each answer is recorded in `project_specs.xml` under `<planning_decisions>` and proved by Acceptance Checks.
+After reconcile, Work Items in `feature_list.json` carry `planning_decision_ids`.
+Spec review does not open until the grilling **Ready Gate** passes.
+You can also activate grilling directly by asking “grill me.”
 Generator bundles `worktree-git-recovery` for narrow git-only fixes in a worktree.
 
 Shared generator libraries live under `skills/generator/lib/` (`claim-lease`, `integrate-checkpoint`, `worker-outcome`, `supervisor-tick`, `workflow-state`, `route-plan`, `worker-lifecycle`, and helpers such as `verdict`, `ready-work-items`, `project-keys`).
@@ -105,7 +109,7 @@ See [CONTEXT.md](CONTEXT.md) for the full glossary and bounded contexts.
 
 ## How the workflow runs
 
-1. **Specify** — planner or setup writes the Project Goal and Acceptance Checks.
+1. **Specify** — planner grills open product questions, then writes the Project Goal, Acceptance Checks, and `<planning_decisions>` (setup maps an existing repo without grilling a new goal).
 2. **Reconcile** — generator maps every check to a Work Item (missing mappings block execution).
 3. **Claim** — each ready context gets a lease, branch, worktree, and port.
 4. **Build & inspect** — coding-agent implements; qa-agent tests at a real boundary.
@@ -118,7 +122,8 @@ See [CONTEXT.md](CONTEXT.md) for the full glossary and bounded contexts.
 | Term | One line |
 | --- | --- |
 | Acceptance Check | Observable pass/fail contract in `project_specs.xml` |
-| Work Item | One queue entry in `feature_list.json` |
+| Planning Decision | Grilled answer to an ambiguity, trade-off, or edge case, stored in `<planning_decisions>` and linked to checks |
+| Work Item | One catalog entry in immutable `feature_list.json` (progress in Execution Ledger) |
 | Context | Group of Work Items built together in one worktree |
 | Claim Lease | Heartbeat-proven exclusive ownership of a context |
 | Goal Review | Final independent audit of the whole Project Goal |
@@ -206,11 +211,13 @@ Select only the new context when generator lists unbuilt work.
 
 | Path | Meaning |
 | --- | --- |
-| `project_specs.xml` | Project Goal + Acceptance Checks |
-| `feature_list.json` | Work queue + three proof flags per item |
-| `harness-progress/` | Human-readable journals |
-| `.git/harness-runs/` | Run State, evidence, worker results |
-| `.git/harness-control/` | Supervisor state + Control Events |
+| `project_specs.xml` | Project Goal, Acceptance Checks, and grilled `<planning_decisions>` |
+| `feature_list.json` | Immutable Work Item catalog (reconciled from Acceptance Checks; each item may list `planning_decision_ids`) |
+| `.git/harness-ledger/` | Execution Ledger: mutable implementation, QA, integration, Attempt, Blocking Scope |
+| `harness-progress/` | Human-readable Workflow Journals |
+| `.git/harness-runs/` | Run State and worker results per context |
+| `.git/harness-evidence/` | Create-only Evidence Artifacts (screenshots, HTTP, logs) |
+| `.git/harness-control/` | Control Journal (append-only events), supervisor lease, Resource Governor quota |
 
 * `implementation` means coding completed.
 * `qa` means isolated QA passed.
@@ -218,7 +225,7 @@ Select only the new context when generator lists unbuilt work.
 
 ### Example: `project_specs.xml`
 
-The specification is the completion contract — stable Acceptance Checks that define what "done" means.
+The specification is the completion contract: stable Acceptance Checks that define what "done" means, plus grilled `<planning_decisions>` so product questions are not left for mid-build chat.
 
 ```xml
 <project_specification>
@@ -236,13 +243,47 @@ The specification is the completion contract — stable Acceptance Checks that d
         Publish a note, reload, and observe the same title and text.
       </description>
     </acceptance_check>
+    <acceptance_check
+      id="AC-002"
+      context="notes"
+      category="edge-case"
+      depends_on="AC-001">
+      <description>
+        Submit an empty title and observe a validation error with no note created.
+      </description>
+    </acceptance_check>
   </acceptance_checks>
+  <planning_decisions>
+    <decision id="D-001" topic="ambiguous-requirement">
+      <question>Who can publish a note?</question>
+      <options>Anyone; signed-in users only</options>
+      <choice>Signed-in users only</choice>
+      <rationale>Matches a private notes product.</rationale>
+      <acceptance_checks>AC-001</acceptance_checks>
+    </decision>
+    <decision id="D-002" topic="architectural-tradeoff">
+      <question>SQLite file or Postgres container for local MVP?</question>
+      <options>SQLite file; Postgres container</options>
+      <choice>SQLite file</choice>
+      <rationale>Zero-ops local smoke path.</rationale>
+      <acceptance_checks>AC-001</acceptance_checks>
+    </decision>
+    <decision id="D-003" topic="edge-case">
+      <question>Empty title on publish?</question>
+      <options>Reject with validation; allow untitled</options>
+      <choice>Reject with validation</choice>
+      <rationale>Prevents blank notes in the list.</rationale>
+      <acceptance_checks>AC-002</acceptance_checks>
+    </decision>
+  </planning_decisions>
 </project_specification>
 ```
 
 ### Example: `feature_list.json`
 
-The queue is execution state plus three proof flags per Work Item (`implementation`, `qa`, `integration`).
+The catalog lists Work Items reconciled from Acceptance Checks.
+Progress flags (`implementation`, `qa`, `integration`) are defaults in the catalog; the orchestrator writes live progress to the Execution Ledger and overlays it at read time.
+`planning_decision_ids` links each item back to the grilled decisions it proves.
 
 ```json
 [
@@ -250,7 +291,19 @@ The queue is execution state plus three proof flags per Work Item (`implementati
     "id": "WI-AC-001",
     "context": "notes",
     "acceptance_checks": ["AC-001"],
+    "planning_decision_ids": ["D-001", "D-002"],
     "depends_on": [],
+    "implementation": false,
+    "qa": false,
+    "integration": false
+  },
+  {
+    "id": "WI-AC-002",
+    "context": "notes",
+    "category": "edge-case",
+    "acceptance_checks": ["AC-002"],
+    "planning_decision_ids": ["D-003"],
+    "depends_on": ["AC-001"],
     "implementation": false,
     "qa": false,
     "integration": false
@@ -270,14 +323,16 @@ Script path (OpenCode install example):
 
 ```sh
 CONTROL=~/.config/opencode/skills/harness-supervisor/scripts/harness-control.mjs
+GEN=~/.config/opencode/skills/harness-generator
 PROJECT=/absolute/path/to/project
 node "$CONTROL" status --repo "$PROJECT"
 ```
 
-**Completion requires:** `status: complete`, all queue flags true, Goal Review `phase: complete`, and a `run_completed` Control Event.
+**Completion requires:** `status: complete`, ledger-merged progress with every Work Item integrated, Goal Review `phase: complete`, and a `run_completed` Control Event.
 
 ```sh
-jq 'all(.[]; .implementation and .qa and .integration)' "$PROJECT/feature_list.json"
+node "$GEN/reconcile.mjs" "$PROJECT" --check
+jq -e '.progress | (.integrated == .total) and (.total > 0)' <(node "$CONTROL" status --repo "$PROJECT")
 node "$CONTROL" events --repo "$PROJECT" --consumer manual-check
 ```
 

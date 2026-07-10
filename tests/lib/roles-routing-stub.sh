@@ -37,28 +37,24 @@ case "$prompt" in
   *"qa-agent"*) kind=qa ;;
 esac
 printf '%s %s %s\n' "$kind" "$harness" "${model:-default}" >>"${HARNESS_TEST_ROLES_LOG:?HARNESS_TEST_ROLES_LOG required}"
-tmp="$PWD/feature_list.json.tmp"
-commit() { git add feature_list.json; git commit -qm "$1"; }
 case "$kind" in
   repair) printf '%s\n' '{"summary":"repair","rootCause":"defect","actions":["fix"],"validation":["check"]}' ;;
   coding)
     if [ "$model" = decline ]; then
       printf '%s\n' '{"id":"WI-AC-001","implementation":false,"notes":"scope exceeds budget"}'; exit 0
     fi
-    jq 'map(if .id=="WI-AC-001" then .implementation=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
-    commit coding; printf '%s\n' '{"id":"WI-AC-001","implementation":true}' ;;
+    printf '%s\n' '{"id":"WI-AC-001","implementation":true}'
+    ;;
   qa)
     count=0; [ ! -f "${HARNESS_TEST_ROLES_QA:-}" ] || count=$(cat "$HARNESS_TEST_ROLES_QA")
     count=$((count + 1)); printf '%s' "$count" >"${HARNESS_TEST_ROLES_QA:-/dev/null}"
     fails=${HARNESS_TEST_ROLES_QA_FAILS:-1}
     if [ "$count" -le "$fails" ]; then
-      jq 'map(if .id=="WI-AC-001" then .implementation=false | .qa=false else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
-      commit qa-defect; printf '%s\n' '{"id":"WI-AC-001","qa":false,"implementation":false,"defects":["product defect"]}'
+      printf '%s\n' '{"id":"WI-AC-001","qa":false,"implementation":false,"defects":["product defect"]}'
     else
-      jq 'map(if .id=="WI-AC-001" then .qa=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
-      commit qa-pass; printf '%s\n' '{"id":"WI-AC-001","qa":true,"implementation":true,"defects":[]}'
+      printf '%s\n' '{"id":"WI-AC-001","qa":true,"implementation":true,"defects":[]}'
     fi ;;
   integration)
-    jq 'map(if .id=="WI-AC-001" then .integration=true else . end)' feature_list.json >"$tmp" && mv "$tmp" feature_list.json
-    commit integration; printf '%s\n' '{"id":"WI-AC-001","integration":true,"implementation":true,"defects":[]}' ;;
+    printf '%s\n' '{"id":"WI-AC-001","integration":true,"implementation":true,"defects":[]}'
+    ;;
 esac

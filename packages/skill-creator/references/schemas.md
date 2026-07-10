@@ -1,6 +1,22 @@
 # JSON Schemas
 
-This document defines the JSON schemas used by skill-creator.
+This document defines the JSON schemas used by skill-creator (`packages/skill-creator`).
+
+---
+
+## Artifact contract (version 1)
+
+Python helpers live in `packages/skill-creator/scripts/artifact_contract.py` (`SCHEMA_VERSION=1`, stdlib only).
+Producers call `write_artifact`; consumers call `read_artifact` or `validate_artifact`.
+
+| Kind | Required fields | Typical path |
+|------|-----------------|--------------|
+| `eval_result` | `id`, `query`, `pass` | stdout / eval output rows |
+| `grade_result` | `id`, `score` | `<run-dir>/grade_result.json` |
+| `benchmark` | `version`, `runs` | `benchmarks/<timestamp>/benchmark.json` |
+| `optimizer_checkpoint` | `version`, `iteration`, `history`, `description` | `<results-dir>/optimizer_checkpoint.json` |
+
+Every artifact includes top-level `version: 1`.
 
 ---
 

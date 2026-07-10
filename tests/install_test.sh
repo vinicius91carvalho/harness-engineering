@@ -126,6 +126,16 @@ second=$(find "$HOME/.config/opencode" -type f -exec shasum -a 256 {} \; | sort 
 pass 'OpenCode assets are namespaced and idempotent'
 
 : >"$HARNESS_TEST_LOG"
+"$ROOT/install.sh" --cli opencode --no </dev/null >"$TMP/out"
+test ! -e "$HOME/.config/opencode/skills/skill-creator/SKILL.md" \
+  || fail 'harness-only install must not include skill-creator'
+test ! -e "$HOME/.config/opencode/skills/crawl4ai/SKILL.md" \
+  || fail 'harness-only install must not include crawl4ai'
+test ! -e "$HOME/.config/opencode/skills/crawl4ai" \
+  || fail 'harness-only install must not create crawl4ai skill root'
+pass 'harness-only install excludes optional package roots'
+
+: >"$HARNESS_TEST_LOG"
 "$ROOT/install.sh" --cli agent --no </dev/null >"$TMP/out"
 test -f "$HOME/.cursor/plugins/local/harness/.cursor-plugin/plugin.json" || fail 'Cursor Agent plugin manifest missing'
 test -f "$HOME/.cursor/plugins/local/harness/skills/generator/SKILL.md" || fail 'Cursor Agent generator skill missing'

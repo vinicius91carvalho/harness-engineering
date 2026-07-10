@@ -20,20 +20,19 @@
  */
 
 import { shouldFinalizePendingGoal } from './supervisor-tick.mjs'
+import { completionSatisfied } from './completion-contract.mjs'
 
 /**
- * Admission precondition for starting a new Goal Review worker. Mirrors
- * maybeGoalReview's early-return guard, minus the git head/clean checks and the
- * integration worktree lookup -- those stay in harness-control (IMPORTANT note in
- * the design brief): the adapter may still no-op a start_goal_review action if git
- * reports the review is already complete for the current head.
+ * Admission precondition for starting a new Goal Review worker.
+ * Uses Completion Contract for queue completeness; adapter still checks git head/clean.
  */
-export function goalReviewAdmissible({ snapshot, activeWorkers, slots, hasGoalReviewWorker }) {
-  return Boolean(snapshot?.queue?.length)
-    && snapshot.counts.integrated === snapshot.counts.total
-    && activeWorkers === 0
-    && slots >= 1
-    && !hasGoalReviewWorker
+export function goalReviewAdmissible({ snapshot, activeWorkers, slots, hasGoalReviewWorker, checks = null, ledger = null }) {
+  if (!snapshot?.queue?.length) return false
+  if (activeWorkers !== 0 || slots < 1 || hasGoalReviewWorker) return false
+  if (checks) {
+    return completionSatisfied({ checks, catalog: snapshot.queue, ledger })
+  }
+  return snapshot.counts.integrated === snapshot.counts.total
 }
 
 /**

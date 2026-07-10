@@ -86,14 +86,49 @@
   <acceptance_checks>
     <!--
       Stable, append-only proof of the Project Goal. IDs never change. `context`
-      is the collision boundary, `category` is foundation/functional/style, and
-      `depends_on` is a comma-separated list of prerequisite Acceptance Check IDs.
+      is the collision boundary, `category` is foundation/functional/style/edge-case,
+      and `depends_on` is a comma-separated list of prerequisite Acceptance Check IDs.
       Every check states behavior observable through a browser or real HTTP boundary.
+      Edge cases that are in scope MUST appear here (category="edge-case" or folded
+      into a functional check with an explicit expected result) so the Completion
+      Contract is predictable without mid-build product Q&A.
     -->
     <acceptance_check id="AC-001" context="feature-area-name" category="foundation" depends_on="">
       <description><!-- action/input and observable expected result --></description>
     </acceptance_check>
   </acceptance_checks>
+
+  <!--
+    REQUIRED. Record what grilling resolved so a fresh agent does not re-open
+    product questions. Cover all three topics: ambiguous-requirement,
+    architectural-tradeoff, edge-case. Link each decision to Acceptance Check IDs
+    that prove it. Use body `removed` only when the user explicitly deferred the
+    whole topic with a reason written in <deferred>.
+  -->
+  <planning_decisions>
+    <decision id="D-001" topic="ambiguous-requirement">
+      <question><!-- what a second reader could interpret two ways --></question>
+      <options><!-- interpretations or approaches considered --></options>
+      <choice><!-- selected interpretation --></choice>
+      <rationale><!-- why this choice makes the Completion Contract predictable --></rationale>
+      <acceptance_checks><!-- comma-separated AC-IDs that prove this decision --></acceptance_checks>
+    </decision>
+    <decision id="D-002" topic="architectural-tradeoff">
+      <question><!-- stack/boundary/persistence/integration choice --></question>
+      <options><!-- 2-3 concrete options with short cost/benefit --></options>
+      <choice><!-- selected approach --></choice>
+      <rationale><!-- why --></rationale>
+      <acceptance_checks><!-- AC-IDs that assume this choice --></acceptance_checks>
+    </decision>
+    <decision id="D-003" topic="edge-case">
+      <question><!-- failure or boundary behavior --></question>
+      <options><!-- in-scope expected results vs defer --></options>
+      <choice><!-- in-scope expected behavior, or deferred --></choice>
+      <rationale><!-- why in scope / why deferred --></rationale>
+      <acceptance_checks><!-- AC-IDs when in scope; empty when deferred --></acceptance_checks>
+    </decision>
+    <deferred><!-- optional: explicitly out-of-scope ambiguities/trade-offs/edge cases with reasons --></deferred>
+  </planning_decisions>
 
   <database_schema>
     <tables>

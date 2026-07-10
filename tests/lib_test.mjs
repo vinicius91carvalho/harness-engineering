@@ -7,7 +7,9 @@ import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { parseObject, isProviderQuotaLimited, VERDICT_BEGIN, VERDICT_END } from '../skills/generator/lib/verdict.mjs'
-import { readyWorkItems, isWorkItemReady } from '../skills/generator/lib/ready-work-items.mjs'
+import { readyWorkItems, isWorkItemReady, validateDependencyGraph } from '../skills/generator/lib/ready-work-items.mjs'
+import { parseProjectSpecification } from '../skills/generator/lib/project-specification.mjs'
+import { resolveProjectTopology } from '../skills/generator/lib/project-topology.mjs'
 import { claimKey, projectIdFromPrefix, resultFileFromRunState } from '../skills/generator/lib/project-keys.mjs'
 import { isHarnessInfrastructureError, stuckThresholdMs } from '../skills/generator/lib/stuck-worker.mjs'
 import { pickClaimCandidate, mergeDo, restoreDirtyRuntimeLogs } from '../skills/generator/lib/claim-lease.mjs'
@@ -15,15 +17,28 @@ import { MARKER_PATTERN, hasMergeMarkers } from '../skills/generator/lib/integra
 import { interpretWorkerOutcome } from '../skills/generator/lib/worker-outcome.mjs'
 import { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } from '../skills/generator/lib/supervisor-tick.mjs'
 import { planTickAdmission, goalReviewAdmissible } from '../skills/generator/lib/supervisor-admission.mjs'
-import { mkey, strikeOf, buildPlan, buildCandidates, lastCoder } from '../skills/generator/lib/route-plan.mjs'
-import { planWorkerClosedActions } from '../skills/generator/lib/worker-lifecycle.mjs'
+import { mkey, strikeOf, buildPlan, buildCandidates, lastCoder, candidatePool, isNoCreditsCandidate } from '../skills/generator/lib/route-plan.mjs'
+import { planWorkerClosedActions, buildOrchestratorArgv, buildWorkerBase, planWorkerHerdrMeta, planWorkerStop, planWorkerCleanupTargets, terminateProcessTree } from '../skills/generator/lib/worker-lifecycle.mjs'
 import { pruneOrphanPendingInputs, isCrashBoundContext, liveClaimContexts } from '../skills/generator/lib/supervisor-claims.mjs'
 import { isAutoRetryableInput, planAutoRetryResponses } from '../skills/generator/lib/supervisor-auto-respond.mjs'
+import {
+  authorizeRecovery,
+  classifyFailure,
+  isAutoRetryableReason,
+  requiresDurableApproval,
+  recoveryDecision,
+} from '../skills/generator/lib/failure-policy.mjs'
+import {
+  readWorkerResult,
+  validateWorkerVerdict,
+  writeWorkerResult,
+} from '../skills/generator/lib/worker-result.mjs'
 import { createWorkflowState } from '../skills/generator/lib/workflow-state.mjs'
+import { applyLedgerToCatalog, readLedger, ledgerPath } from '../skills/generator/lib/execution-ledger.mjs'
 import { readJson, atomicJson } from '../skills/generator/lib/fs-json.mjs'
 import { integrationBranchName, DEFAULT_INTEGRATION_BRANCH } from '../skills/generator/lib/integration-branch.mjs'
 import { cleanupBrowserOrphans } from '../skills/generator/lib/browser-cleanup.mjs'
-import { mergeAcquire, mergeRelease } from '../skills/generator/lib/claim-lease.mjs'
+import { mergeAcquire, mergeRelease, clearDeadLock } from '../skills/generator/lib/claim-lease.mjs'
 import { hostSpawnVisible } from '../skills/generator/lib/agent-spawn.mjs'
 
 function withoutIntegrationBranchEnv(fn) {
@@ -46,6 +61,147 @@ test('isProviderQuotaLimited detects common quota messages', () => {
   assert.equal(isProviderQuotaLimited('429 rate limit'), true)
   assert.equal(isProviderQuotaLimited('usage limit Try again at midnight'), true)
   assert.equal(isProviderQuotaLimited('network timeout'), false)
+})
+
+test('parseProjectSpecification rejects unknown deps and cycles', () => {
+  const unknownDep = `<project_specification>
+    <project_goal>Goal</project_goal>
+    <acceptance_checks>
+      <acceptance_check id="AC-1" context="a" category="functional" depends_on="AC-404">
+        <description>one</description>
+      </acceptance_check>
+    </acceptance_checks>
+  </project_specification>`
+  assert.throws(() => parseProjectSpecification(unknownDep), /unknown acceptance check AC-404/)
+
+  const cycle = `<project_specification>
+    <project_goal>Goal</project_goal>
+    <acceptance_checks>
+      <acceptance_check id="AC-1" context="a" category="functional" depends_on="AC-2">
+        <description>one</description>
+      </acceptance_check>
+      <acceptance_check id="AC-2" context="b" category="functional" depends_on="AC-1">
+        <description>two</description>
+      </acceptance_check>
+    </acceptance_checks>
+  </project_specification>`
+  assert.throws(() => parseProjectSpecification(cycle), /dependency cycle/)
+})
+
+test('planning_decisions require topic coverage and valid Acceptance Check links', () => {
+  const baseChecks = `
+    <acceptance_checks>
+      <acceptance_check id="AC-1" context="a" category="functional" depends_on="">
+        <description>happy path</description>
+      </acceptance_check>
+      <acceptance_check id="AC-2" context="a" category="edge-case" depends_on="AC-1">
+        <description>empty input rejected</description>
+      </acceptance_check>
+    </acceptance_checks>`
+
+  const missingTopic = `<project_specification>
+    <project_goal>Goal</project_goal>
+    ${baseChecks}
+    <planning_decisions>
+      <decision id="D-1" topic="ambiguous-requirement">
+        <question>Who can publish?</question>
+        <options>Anyone; signed-in only</options>
+        <choice>Signed-in only</choice>
+        <rationale>Matches auth model</rationale>
+        <acceptance_checks>AC-1</acceptance_checks>
+      </decision>
+    </planning_decisions>
+  </project_specification>`
+  assert.throws(() => parseProjectSpecification(missingTopic), /architectural-tradeoff/)
+
+  const badLink = `<project_specification>
+    <project_goal>Goal</project_goal>
+    ${baseChecks}
+    <planning_decisions>
+      <decision id="D-1" topic="ambiguous-requirement">
+        <question>Who can publish?</question>
+        <options>Anyone; signed-in only</options>
+        <choice>Signed-in only</choice>
+        <rationale>Matches auth model</rationale>
+        <acceptance_checks>AC-404</acceptance_checks>
+      </decision>
+      <decision id="D-2" topic="architectural-tradeoff">
+        <question>SQLite or Postgres?</question>
+        <options>SQLite; Postgres</options>
+        <choice>SQLite</choice>
+        <rationale>Local smoke</rationale>
+        <acceptance_checks>AC-1</acceptance_checks>
+      </decision>
+      <decision id="D-3" topic="edge-case">
+        <question>Empty title?</question>
+        <options>Reject; allow</options>
+        <choice>Reject</choice>
+        <rationale>No blank notes</rationale>
+        <acceptance_checks>AC-2</acceptance_checks>
+      </decision>
+    </planning_decisions>
+  </project_specification>`
+  assert.throws(() => parseProjectSpecification(badLink), /unknown acceptance check AC-404/)
+
+  const ok = `<project_specification>
+    <project_goal>Goal</project_goal>
+    ${baseChecks}
+    <planning_decisions>
+      <decision id="D-1" topic="ambiguous-requirement">
+        <question>Who can publish?</question>
+        <options>Anyone; signed-in only</options>
+        <choice>Signed-in only</choice>
+        <rationale>Matches auth model</rationale>
+        <acceptance_checks>AC-1</acceptance_checks>
+      </decision>
+      <decision id="D-2" topic="architectural-tradeoff">
+        <question>SQLite or Postgres?</question>
+        <options>SQLite; Postgres</options>
+        <choice>SQLite</choice>
+        <rationale>Local smoke</rationale>
+        <acceptance_checks>AC-1</acceptance_checks>
+      </decision>
+      <decision id="D-3" topic="edge-case">
+        <question>Empty title?</question>
+        <options>Reject; allow</options>
+        <choice>Reject</choice>
+        <rationale>No blank notes</rationale>
+        <acceptance_checks>AC-2</acceptance_checks>
+      </decision>
+    </planning_decisions>
+  </project_specification>`
+  const parsed = parseProjectSpecification(ok)
+  assert.equal(parsed.planningDecisions.present, true)
+  assert.equal(parsed.planningDecisions.decisions.length, 3)
+})
+
+test('validateDependencyGraph rejects unknown Work Item deps and cycles', () => {
+  const checks = [{ id: 'AC-1', dependsOn: [] }]
+  const unknownCatalog = [{ id: 'WI-1', acceptance_checks: ['AC-1'], depends_on: ['AC-404'] }]
+  assert.throws(
+    () => validateDependencyGraph(checks, unknownCatalog),
+    /depends_on unknown id AC-404/,
+  )
+
+  const cyclicCatalog = [
+    { id: 'WI-1', acceptance_checks: ['AC-1'], depends_on: ['WI-2'] },
+    { id: 'WI-2', acceptance_checks: ['AC-1'], depends_on: ['WI-1'] },
+  ]
+  assert.throws(
+    () => validateDependencyGraph(checks, cyclicCatalog),
+    /work item dependency cycle/,
+  )
+})
+
+test('resolveProjectTopology uses flat control root for repo root', () => {
+  withoutIntegrationBranchEnv(() => {
+    const root = mkdtempSync(join(tmpdir(), 'topology-root-'))
+    spawnSync('git', ['init', '-b', 'main'], { cwd: root })
+    const topology = resolveProjectTopology(root)
+    assert.equal(topology.projectId, 'root')
+    assert.match(topology.controlRoot, /harness-control$/)
+    assert.doesNotMatch(topology.controlRoot, /harness-control\/root$/)
+  })
 })
 
 test('readyWorkItems respects dependency graph', () => {
@@ -78,6 +234,83 @@ test('harness infrastructure error detection', () => {
 
 test('stuck threshold default', () => {
   assert.equal(stuckThresholdMs(), 600_000)
+})
+
+test('browser cleanup is a no-op without scoped identifiers', () => {
+  assert.deepEqual(cleanupBrowserOrphans({}), { killed: 0 })
+  assert.deepEqual(cleanupBrowserOrphans(), { killed: 0 })
+})
+
+test('browser cleanup patterns stay scoped to port/workdir/profile', () => {
+  const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'generator', 'lib', 'browser-cleanup.mjs'), 'utf8')
+  assert.equal(source.includes('chromium.*--headless'), false)
+  assert.equal(source.includes('playwright.*chromium'), false)
+  assert.equal(source.includes('ms-playwright'), false)
+})
+
+test('worker lifecycle builds shared spawn argv for work items and goal review', () => {
+  const claim = { context: 'core', worktree: '/wt/core', port: 5171, featureIds: ['WI-1'] }
+  const workArgv = buildOrchestratorArgv({
+    orchestrator: '/orch.mjs',
+    repo: '/repo',
+    host: 'claude',
+    claim,
+    guidance: 'fix it',
+  })
+  assert.ok(workArgv.includes('--features'))
+  assert.ok(workArgv.includes('WI-1'))
+  assert.equal(workArgv.includes('--mode'), false)
+
+  const goalArgv = buildOrchestratorArgv({
+    orchestrator: '/orch.mjs',
+    repo: '/repo',
+    host: 'claude',
+    claim: { ...claim, context: 'goal-review', featureIds: [] },
+    mode: 'goal-review',
+  })
+  assert.deepEqual(goalArgv.filter((part) => part === 'goal-review').length, 2)
+
+  const base = buildWorkerBase({ claim, logFile: '/tmp/x.log', reservationId: 'r1' })
+  assert.equal(base.ownedResources.port, 5171)
+  assert.equal(base.ownedResources.worktree, '/wt/core')
+
+  const herdr = planWorkerHerdrMeta({ claim, projectId: 'app', retry: 2 })
+  assert.equal(herdr.agentName, 'worker-app-core')
+  assert.equal(herdr.retry, 2)
+})
+
+test('worker lifecycle stop and cleanup plans cover herdr and background', () => {
+  assert.equal(planWorkerStop(null).kind, 'noop')
+  assert.equal(planWorkerStop({ type: 'herdr', paneId: 'w1:p2' }).kind, 'close_display')
+  assert.equal(planWorkerStop({ type: 'background', child: { pid: 4242 } }).kind, 'terminate_tree')
+  assert.deepEqual(planWorkerCleanupTargets({ port: 9, worktree: '/wt' }), {
+    port: 9,
+    workdir: '/wt',
+    profileDir: null,
+  })
+  assert.equal(terminateProcessTree(null).terminated, false)
+})
+
+test('clearDeadLock removes absent merge lock as no-op', () => {
+  withoutIntegrationBranchEnv(() => {
+    const root = mkdtempSync(join(tmpdir(), 'dead-lock-'))
+    spawnSync('git', ['init', '-b', 'main'], { cwd: root })
+    assert.deepEqual(clearDeadLock(root, 'merge'), { cleared: false, reason: 'absent', lock: 'merge' })
+  })
+})
+
+test('authorizeFleetRecovery allows recovery when supervisor is not live', async () => {
+  const { authorizeFleetRecovery } = await import('../skills/generator/lib/supervisor-lease.mjs')
+  const controlRoot = mkdtempSync(join(tmpdir(), 'fleet-auth-'))
+  const auth = await authorizeFleetRecovery(controlRoot, { state: {}, force: false })
+  assert.equal(auth.authorized, true)
+  assert.equal(auth.mode, 'recovery')
+})
+
+test('clearStaleSupervisorLock clears an absent lock', async () => {
+  const { clearStaleSupervisorLock } = await import('../skills/generator/lib/supervisor-lease.mjs')
+  const controlRoot = mkdtempSync(join(tmpdir(), 'fleet-lock-'))
+  assert.deepEqual(await clearStaleSupervisorLock(controlRoot), { cleared: false, reason: 'absent' })
 })
 
 test('browser cleanup is a no-op on win32', { skip: process.platform !== 'win32' }, () => {
@@ -450,6 +683,88 @@ test('route-plan lastCoder from route history', () => {
   assert.equal(lastCoder(state), 'codex|gpt')
 })
 
+test('route-plan noCredits tier only for CODING after paid pool', () => {
+  const roles = {
+    coding: [{ harness: 'claude' }, { harness: 'codex' }],
+    validation: [{ harness: 'claude' }],
+    repairPlanning: [{ harness: 'claude' }],
+    goalReview: [{ harness: 'claude' }],
+    noCredits: [{ harness: 'opencode', model: 'free' }],
+  }
+  const plan = { roles, sortedRoles: roles, strikes: {} }
+  const codingPool = candidatePool({ plan, kind: 'CODING', attempt: 1, roleNames: { CODING: 'coding' } })
+  assert.equal(codingPool.length, 3)
+  assert.equal(codingPool.at(-1).model, 'free')
+  const qaPool = candidatePool({ plan, kind: 'QA', attempt: 1, roleNames: { QA: 'validation' } })
+  assert.equal(qaPool.length, 1)
+  assert.equal(isNoCreditsCandidate({ harness: 'opencode', model: 'free' }, roles), true)
+  assert.equal(isNoCreditsCandidate({ harness: 'claude' }, roles), false)
+})
+
+test('failure-policy denies durable approval cases and auto-retry', () => {
+  assert.equal(requiresDurableApproval('QA failed after Attempt 3'), true)
+  assert.equal(requiresDurableApproval('Integrated Verification failed after Attempt 3'), true)
+  assert.equal(requiresDurableApproval('Claim Lease is stale on another host'), true)
+  assert.equal(requiresDurableApproval('Worker exited with code 1'), false)
+
+  const blocked = authorizeRecovery({
+    failureClass: 'product',
+    safeRecovery: 'repair_plan',
+    reason: 'coding agent failed three times',
+    auto: true,
+  })
+  assert.equal(blocked.allowed, false)
+  assert.equal(blocked.requiresInputRequest, true)
+
+  const allowed = recoveryDecision({
+    reason: 'Worker exited with code 1',
+    scope: 'context',
+    auto: true,
+  })
+  assert.equal(allowed.allowed, true)
+  assert.equal(allowed.action, 'retry')
+  assert.equal(isAutoRetryableReason('integration could not complete'), true)
+  assert.equal(isAutoRetryableReason('QA failed after Attempt 3'), false)
+})
+
+test('classifyFailure unifies quota and infra signals', () => {
+  const quota = classifyFailure({ reason: '429 rate limit exceeded' })
+  assert.equal(quota.class, 'quota')
+  const infra = classifyFailure({ reason: 'DynamoHypothesisRepository still wired in bootstrap' })
+  assert.equal(infra.class, 'infra')
+})
+
+test('worker-result fences stale invocation and validates verdicts', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'worker-result-'))
+  const stateFile = join(tmp, 'core.json')
+  await writeWorkerResult(stateFile, {
+    invocationId: 'inv-a',
+    leaseToken: 'lease-a',
+    payload: { total: 1, passed: 1, stuck: [] },
+  })
+  const scoped = await readWorkerResult(stateFile, {
+    expectedInvocationId: 'inv-a',
+    expectedLeaseToken: 'lease-a',
+  })
+  assert.equal(scoped.passed, 1)
+  const staleInvocation = await readWorkerResult(stateFile, {
+    expectedInvocationId: 'inv-b',
+    expectedLeaseToken: 'lease-a',
+  })
+  assert.equal(staleInvocation, null)
+  const staleLease = await readWorkerResult(stateFile, {
+    expectedInvocationId: 'inv-a',
+    expectedLeaseToken: 'lease-b',
+  })
+  assert.equal(staleLease, null)
+
+  const goal = validateWorkerVerdict({ goal: true, summary: 'done' })
+  assert.equal(goal.valid, true)
+  assert.equal(goal.mode, 'goalReview')
+  const bad = validateWorkerVerdict({ goal: 'yes' })
+  assert.equal(bad.valid, false)
+})
+
 test('planWorkerClosedActions quota retry', () => {
   const plan = planWorkerClosedActions({
     key: 'core',
@@ -509,6 +824,8 @@ test('createWorkflowState journal and readFeatures', async () => {
     stateFile,
     leaseToken: 'test-lease',
     context: 'core',
+    commonGit: join(tmp, '.git'),
+    projectId: '',
     readJson,
     atomicJson,
     hostname: () => 'testhost',
@@ -528,6 +845,60 @@ test('createWorkflowState journal and readFeatures', async () => {
   assert.equal(list[0].id, 'WI-1')
   const journalFile = await wf.journal(tmp, 'Test entry', { Outcome: 'ok' })
   assert.ok(journalFile.endsWith('core.md'))
+})
+
+test('createWorkflowState overlays ledger progress without mutating feature_list.json', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'workflow-state-ledger-'))
+  mkdirSync(join(tmp, '.git', 'harness-ledger'), { recursive: true })
+  const catalog = [{
+    id: 'WI-1',
+    context: 'core',
+    description: 'demo',
+    acceptance_checks: ['AC-1'],
+    depends_on: [],
+    implementation: false,
+    qa: false,
+    integration: false,
+    retries: 0,
+  }]
+  writeFileSync(join(tmp, 'feature_list.json'), `${JSON.stringify(catalog, null, 2)}\n`)
+  const wf = createWorkflowState({
+    stateFile: join(tmp, 'state.json'),
+    leaseToken: 'test-lease',
+    context: 'core',
+    commonGit: join(tmp, '.git'),
+    projectId: '',
+    readJson,
+    atomicJson,
+    hostname: () => 'testhost',
+    process,
+    fail: (msg) => { throw new Error(msg) },
+    dirname,
+    join,
+    mkdir: mkdirAsync,
+    appendFile: appendFileAsync,
+    writeFile: writeFileAsync,
+    readFile,
+    git: () => ({ status: 0, stdout: '' }),
+    workdir: tmp,
+    terminateChild: () => {},
+  })
+
+  const before = JSON.parse(readFileSync(join(tmp, 'feature_list.json'), 'utf8'))
+  await wf.updateFeature(tmp, 'WI-1', { implementation: true, qa: true, retries: 1 })
+  const afterCatalog = JSON.parse(readFileSync(join(tmp, 'feature_list.json'), 'utf8'))
+  assert.deepEqual(afterCatalog, before)
+
+  const ledger = await readLedger(ledgerPath(join(tmp, '.git'), ''))
+  assert.equal(ledger.items['WI-1'].implementation, true)
+  assert.equal(ledger.items['WI-1'].qa, true)
+  assert.equal(ledger.items['WI-1'].retries, 1)
+
+  const { list } = await wf.readFeatures(tmp)
+  assert.equal(list[0].implementation, true)
+  assert.equal(list[0].qa, true)
+  assert.equal(list[0].retries, 1)
+  assert.deepEqual(applyLedgerToCatalog(catalog, ledger)[0], list[0])
 })
 
 test('atomicJson reformats feature_list.json with the target repo\'s own installed formatter', async () => {
@@ -587,6 +958,9 @@ test('planAutoRetryResponses queues retry for stalled context inputs only', () =
   assert.equal(isAutoRetryableInput(pending[12]), false)
   // Coding exhaustion must not auto-burn; needs operator/Repair Plan guidance.
   assert.equal(isAutoRetryableInput(pending[13]), false)
+  const attempt3 = { status: 'pending', scope: 'context', context: 'core', reason: 'QA failed after Attempt 3' }
+  assert.equal(isAutoRetryableInput(attempt3), false)
+  assert.equal(isAutoRetryableReason('Claim Lease is stale on another host'), false)
   const goalReviewExit = {
     status: 'pending',
     scope: 'goal',
@@ -718,4 +1092,112 @@ test('observation-method filters pi away for http/browser validation', async () 
   assert.equal(filtered[0].harness, 'agent')
   assert.ok(filtered.some((c) => c.harness === 'pi'))
   assert.equal(filtered.at(-1).harness, 'pi')
+})
+
+test('control journal fails closed on corrupt JSONL', async () => {
+  const { readControlEvents, appendControlEvent } = await import('../skills/generator/lib/control-journal.mjs')
+  const tmp = mkdtempSync(join(tmpdir(), 'journal-corrupt-'))
+  const eventsFile = join(tmp, 'events.jsonl')
+  writeFileSync(eventsFile, '{"id":1,"kind":"run_started"}\n{broken\n')
+  await assert.rejects(
+    () => readControlEvents(tmp, eventsFile),
+  )
+  const goodRoot = mkdtempSync(join(tmpdir(), 'journal-good-'))
+  await appendControlEvent(goodRoot, { kind: 'run_started', runId: 'r1' })
+  const events = await readControlEvents(goodRoot, join(goodRoot, 'events.jsonl'))
+  assert.equal(events.length, 1)
+  assert.equal(events[0].kind, 'run_started')
+})
+
+test('control journal compaction preserves pending input lineage', async () => {
+  const {
+    appendControlEvent, readControlEvents, compactControlJournal, deriveSnapshot,
+  } = await import('../skills/generator/lib/control-journal.mjs')
+  const root = mkdtempSync(join(tmpdir(), 'journal-compact-'))
+  for (let i = 0; i < 60; i++) {
+    await appendControlEvent(root, { kind: 'progress', workers: i })
+  }
+  const input = await appendControlEvent(root, {
+    kind: 'input_required', scope: 'context', context: 'core', reason: 'blocked', choices: ['retry'],
+  })
+  const eventsBefore = await readControlEvents(root, join(root, 'events.jsonl'))
+  assert.equal(eventsBefore.length, 61)
+  const compacted = await compactControlJournal(root, { minTail: 10 })
+  assert.equal(compacted.compacted, true)
+  const eventsAfter = await readControlEvents(root, join(root, 'events.jsonl'))
+  assert.ok(eventsAfter.some((event) => event.id === input.id && event.kind === 'input_required'))
+  const derived = deriveSnapshot(eventsAfter)
+  assert.equal(derived.pendingInputs[input.id].status, 'pending')
+})
+
+test('resource governor denies admission when full', async () => {
+  const { requestAdmission, observeCapacity, releaseAdmission } = await import('../skills/generator/lib/resource-governor.mjs')
+  const tmp = mkdtempSync(join(tmpdir(), 'governor-deny-'))
+  const commonGit = join(tmp, '.git')
+  mkdirSync(commonGit, { recursive: true })
+  const opts = {
+    maxWorkers: 1,
+    quotaWorkers: 1,
+    cpuPerWorker: 0.25,
+    memoryPerWorkerMb: 128,
+    reserveMemoryMb: 0,
+    maxLoadRatio: 100,
+  }
+  const first = await requestAdmission(commonGit, { projectId: 'root', context: 'a', ...opts })
+  assert.equal(first.granted, true)
+  const second = await requestAdmission(commonGit, { projectId: 'root', context: 'b', ...opts })
+  assert.equal(second.granted, false)
+  assert.equal(second.reason, 'no-capacity')
+  const observed = await observeCapacity(commonGit, opts)
+  assert.equal(observed.slots, 0)
+  await releaseAdmission(commonGit, first.reservation.id)
+})
+
+test('supervisor lease fences stale writers', async () => {
+  const {
+    acquireSupervisorLease, assertSupervisorLease, updateSupervisorLease, releaseSupervisorLease,
+  } = await import('../skills/generator/lib/supervisor-lease.mjs')
+  const root = mkdtempSync(join(tmpdir(), 'sup-lease-'))
+  const first = await acquireSupervisorLease(root, { token: 'a', pid: process.pid, leaseSeconds: 30 })
+  await assertSupervisorLease(root, { token: 'a', fenceGeneration: first.fenceGeneration })
+  await assert.rejects(
+    () => assertSupervisorLease(root, { token: 'a', fenceGeneration: first.fenceGeneration + 99 }),
+    /refusing stale writer/,
+  )
+  await releaseSupervisorLease(root, 'a')
+  await acquireSupervisorLease(root, { token: 'b', pid: process.pid, leaseSeconds: 30 })
+  await assert.rejects(
+    () => updateSupervisorLease(root, { token: 'a', fenceGeneration: first.fenceGeneration, status: 'running' }),
+    /refusing stale writer/,
+  )
+})
+
+test('evidence artifacts are create-only', async () => {
+  const { putEvidenceArtifact } = await import('../skills/generator/lib/evidence-artifacts.mjs')
+  const { open } = await import('node:fs/promises')
+  const tmp = mkdtempSync(join(tmpdir(), 'evidence-create-only-'))
+  const commonGit = join(tmp, '.git')
+  mkdirSync(commonGit, { recursive: true })
+  const first = await putEvidenceArtifact({
+    commonGit,
+    projectId: 'root',
+    runId: 'run-1',
+    context: 'core',
+    workItemId: 'WI-1',
+    attempt: 1,
+    kind: 'http',
+    detail: 'GET /health 200',
+  })
+  const second = await putEvidenceArtifact({
+    commonGit,
+    projectId: 'root',
+    runId: 'run-1',
+    context: 'core',
+    workItemId: 'WI-1',
+    attempt: 1,
+    kind: 'http',
+    detail: 'GET /health 200',
+  })
+  assert.equal(second.path, first.path)
+  await assert.rejects(open(first.path, 'wx'), /EEXIST/)
 })

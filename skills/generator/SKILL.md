@@ -130,8 +130,8 @@ The engine references `project_specs.xml` in every coding, QA, repair, merge,
 integration, and Goal Review agent prompt. Each agent reads it and verifies the
 spec-required project structure before acting. The engine also owns agent communication, heartbeats, Defect Reports, Repair Plans,
 Attempts, concise Journal entries, per-Work-Item merge checkpoints, and Integrated
-Verification. It verifies queue state rather than trusting prose. Diagnostic output
-is stored as separate Evidence Artifacts under the shared Git directory.
+Verification. It verifies ledger-merged queue state rather than trusting prose. Diagnostic output
+is stored as create-only Evidence Artifacts under `.git/harness-evidence/` in the shared Git directory.
 
 ### Optional role routing
 
@@ -181,8 +181,9 @@ just audited.
 
 ## 5. Mandatory Goal Review
 
-When no Work Items remain and every queue entry has `integration:true`, run Goal
-Review on the integrated plan branch (`.harness/integration-branch`); the state machine holds the merge lock throughout:
+When no Work Items remain and the Execution Ledger shows every catalog entry
+integrated, run Goal Review on the integrated plan branch (`.harness/integration-branch`);
+the state machine holds the merge lock throughout:
 
 ```bash
 node "$GEN/orchestrator.mjs" --host "$HOST" --repo "$PROJECT" \

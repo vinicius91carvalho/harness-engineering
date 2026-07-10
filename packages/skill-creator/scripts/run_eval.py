@@ -2,6 +2,7 @@
 import argparse, json, os, select, subprocess, sys, time, uuid
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
+from scripts.artifact_contract import eval_result_payload
 from scripts.utils import parse_skill_md
 
 def find_project_root() -> Path:
@@ -136,7 +137,17 @@ def run_eval(eval_set, skill_name, description, num_workers, timeout, project_ro
             did_pass = trigger_rate >= trigger_threshold
         else:
             did_pass = trigger_rate < trigger_threshold
-        results.append({"query": query, "should_trigger": should_trigger, "trigger_rate": trigger_rate, "triggers": sum(triggers), "runs": len(triggers), "pass": did_pass})
+        result_id = item.get("id", len(results) + 1)
+        row = eval_result_payload(
+            result_id,
+            query,
+            did_pass,
+            should_trigger=should_trigger,
+            trigger_rate=trigger_rate,
+            triggers=sum(triggers),
+            runs=len(triggers),
+        )
+        results.append(row)
     passed = sum(1 for r in results if r["pass"])
     total = len(results)
     return {"skill_name": skill_name, "description": description, "results": results, "summary": {"total": total, "passed": passed, "failed": total - passed}}

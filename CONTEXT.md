@@ -10,8 +10,8 @@ Only the **workflow pipeline** is required to deliver software; the others are o
 | Context | What lives here | You interact through |
 | --- | --- | --- |
 | **Plugin marketplace** | `install.sh`, manifests, host configuration | Installer checklist |
-| **Workflow pipeline** | `project_specs.xml`, `feature_list.json`, `orchestrator.mjs`, `workflow/attempt-machine.mjs`, `lib/claim-lease.mjs` (CLI: `claim.sh` / `claim.ps1`), Goal Review policy | Skills below + files in your repo |
-| **Supervisor control** | `harness-control.mjs`, Resource Governor, Control Events, Input Requests | `/harness:supervisor` |
+| **Workflow pipeline** | `project_specs.xml`, `feature_list.json` (Work Item catalog), Execution Ledger, `orchestrator.mjs`, `workflow/attempt-machine.mjs`, `lib/claim-lease.mjs` (CLI: `claim.sh` / `claim.ps1`), Goal Review policy | Skills below + files in your repo |
+| **Supervisor control** | `harness-control.mjs`, Resource Governor, Control Journal (Control Events + Input Requests) | `/harness:supervisor` |
 | **Optional routing** | `.harness/roles.json`, MCP servers | `config/roles.example.json` |
 
 **Skills** (under `skills/`) are what **you** type in chat — planner, setup, generator, supervisor, evaluator.
@@ -74,12 +74,32 @@ A stable, traceable statement of observable behavior that proves part of the Pro
 _Avoid_: Feature, test case, task
 
 **Work Item**:
-An executable unit derived from one or more Acceptance Checks and tracked in `feature_list.json`.
+An executable unit derived from one or more Acceptance Checks and listed in the immutable `feature_list.json` catalog.
 _Avoid_: Acceptance Check, Project Goal
 
+**Execution Ledger**:
+The durable, machine-owned record of mutable Work Item progress (implementation, QA, integration, Attempt, Blocking Scope) separate from the Work Item catalog.
+_Avoid_: feature_list flags, chat status
+
+**Control Journal**:
+The append-only, ordered record of Supervisor transitions, Control Events, and Input Request lineage from which current supervisor status is derived.
+_Avoid_: state.json alone, transcript
+
 **Completion Contract**:
-The Project Goal is complete only when every Acceptance Check passes against the integrated plan branch and a final system-level verification passes.
+The Project Goal is complete only when every Acceptance Check passes on the integrated plan branch and Goal Review confirms the whole spec - not when chat goes quiet or queue flags flip to true.
 _Avoid_: All flags are true
+
+**Grilling**:
+The planner's one-question-at-a-time interview about ambiguous requirements, architectural trade-offs, and edge cases so "done" is predictable before coding starts.
+_Avoid_: Optional brainstorm, free-form chat
+
+**Ready Gate**:
+The checklist grilling must pass before spec review opens or `project_specs.xml` is finalized: no open ambiguities, recorded trade-offs, and in-scope edge cases mapped to Acceptance Check IDs.
+_Avoid_: User said "looks good", planner gut feel
+
+**Planning Decision**:
+One grilled answer (for example soft-delete vs hard-delete) written under `<planning_decisions>` in `project_specs.xml` and linked to the Acceptance Checks that prove it.
+_Avoid_: Chat note, implicit assumption
 
 **Defect Report**:
 A QA handoff describing observed behavior, expected behavior, reproduction evidence, and the affected Acceptance Checks.
@@ -106,7 +126,7 @@ The concise, human-readable history of meaningful workflow transitions and hando
 _Avoid_: Transcript, raw agent output, status file
 
 **Evidence Artifact**:
-A separately stored screenshot, HTTP result, command output, or runtime log referenced by a Workflow Journal entry or Defect Report.
+A separately stored, immutable screenshot, HTTP result, command output, or runtime log referenced by a Workflow Journal entry or Defect Report.
 _Avoid_: Journal entry, conversation log
 
 **Claim Lease**:
@@ -169,10 +189,11 @@ _Avoid_: Alert, log message, chat question
 
 **Resource Governor**:
 The deterministic admission policy that limits new workers to the minimum capacity allowed by configured concurrency, CPU, free memory, current load, and provider quota state.
+It is host-wide and provider-aware across repositories; every admission path must obtain a grant.
 _Avoid_: Agent judgment, scheduler prompt, worker pool
 
 **Supervisor Lease**:
-Atomic singleton ownership of one repository's Resource Governor, stored in its shared Git directory and refreshed by heartbeat.
+Atomic singleton ownership of one repository's Resource Governor participation, stored in its shared Git directory and refreshed by heartbeat.
 _Avoid_: Context Claim Lease, PID file, chat session
 
 **Control Event**:

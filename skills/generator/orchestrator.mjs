@@ -7,20 +7,21 @@ import { hostname } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readJson, atomicJson } from './lib/fs-json.mjs'
-import { parseObject, hasCompleteVerdict, VERDICT_HINT, isProviderQuotaLimited, fallbackReason } from './lib/verdict.mjs'
+import { VERDICT_HINT, isProviderQuotaLimited, fallbackReason } from './lib/verdict.mjs'
 import { writeWorkerResult } from './lib/worker-result.mjs'
 import { cleanupBrowserOrphans } from './lib/browser-cleanup.mjs'
-import { spawnHostAgent, hostSpawnVisible } from './lib/agent-spawn.mjs'
-import { createAgentStreamFormatter, withVisibleAgentMode } from './lib/agent-stream.mjs'
+import { buildHostCommand, hostCommands, roleNames, runHostAgentSession, terminateHostProcess, hostSpawnVisible } from './adapters/hosts.mjs'
 import { integrateCheckpoint } from './lib/integrate-checkpoint.mjs'
-import { buildHostCommand, hostCommands, roleNames } from './adapters/hosts.mjs'
 import { featurePrompt as buildFeaturePrompt } from './prompts/feature.mjs'
 import { integrationBranchName } from './lib/integration-branch.mjs'
+import { resolveProjectTopology, runStatePath } from './lib/project-topology.mjs'
 import { createWorkflowState } from './lib/workflow-state.mjs'
 import { buildPlan, buildCandidates, lastCoder, mkey, bumpStrike } from './lib/route-plan.mjs'
 import { blockClaim, mergeAcquire, mergeRelease } from './lib/claim-lease.mjs'
+import { requestAdmission, releaseAdmission, defaultGovernorOptions } from './lib/resource-governor.mjs'
 import { workItemObservationMethods } from './lib/observation-method.mjs'
 import { runAttemptLoop } from './workflow/attempt-machine.mjs'
+import { putEvidenceArtifact, newRunId } from './lib/evidence-artifacts.mjs'
 
 function fail(message) {
   process.stderr.write(`orchestrator: ${message}\n`)
@@ -68,15 +69,16 @@ function gitTopLevel(cwd) {
   return realpathSync(git(['rev-parse', '--show-toplevel'], cwd).stdout.trim())
 }
 
-const commonGitRaw = git(['rev-parse', '--git-common-dir']).stdout.trim()
-const commonGit = isAbsolute(commonGitRaw) ? commonGitRaw : resolve(options.workdir, commonGitRaw)
-const runDir = join(commonGit, 'harness-runs')
+const topology = resolveProjectTopology(options.repo)
+const commonGit = topology.commonGit
+const runDir = topology.runsDir
 const context = options.context || 'goal-review'
-const projectPrefix = git(['rev-parse', '--show-prefix'], options.repo).stdout.trim().replace(/\/$/, '')
-const projectId = projectPrefix ? projectPrefix.replace(/[^a-zA-Z0-9_-]/g, '_') : ''
-const stateContext = projectId ? `${projectId}--${context}` : context
-const stateFile = join(runDir, `${stateContext.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`)
+const projectPrefix = topology.projectPrefix.replace(/\/$/, '')
+const projectId = topology.projectId === 'root' ? '' : topology.projectId
+const stateFile = runStatePath(topology, context)
 const leaseToken = randomUUID()
+const runId = newRunId()
+let governorReservationId = process.env.HARNESS_GOVERNOR_RESERVATION || null
 let child = null
 let itemPlan = null
 const verifyFirstCache = new Map()
@@ -84,23 +86,15 @@ const codingHarnesses = new Map()
 let heartbeatTimer
 
 function terminateChild(signal = 'SIGTERM') {
-  if (!child?.pid) return
-  const pid = child.pid
-  const sig = signal === 'SIGKILL' ? 'SIGKILL' : 'SIGTERM'
-  // `script` wraps the host CLI — kill the whole tree, not only the script parent.
-  try {
-    if (process.platform !== 'win32') {
-      spawnSync('pkill', [`-${sig === 'SIGKILL' ? '9' : '15'}`, '-P', String(pid)], { stdio: 'ignore' })
-      try { process.kill(-pid, sig) } catch {}
-    }
-  } catch {}
-  try { child.kill(sig) } catch {}
+  terminateHostProcess(child, signal)
 }
 
 const workflow = createWorkflowState({
   stateFile,
   leaseToken,
   context,
+  commonGit,
+  projectId,
   readJson,
   atomicJson,
   hostname,
@@ -130,6 +124,39 @@ const {
 
 process.on('SIGINT', () => writeInterruptedState('SIGINT'))
 process.on('SIGTERM', () => writeInterruptedState('SIGTERM'))
+
+async function ensureGovernorAdmission() {
+  if (process.env.HARNESS_TEST_SKIP_GOVERNOR === '1') return
+  if (governorReservationId) {
+    const { observeCapacity } = await import('./lib/resource-governor.mjs')
+    const observed = await observeCapacity(commonGit, {
+      ...defaultGovernorOptions(),
+      provider: options.host,
+      quotaFile: join(topology.controlRoot, 'quota.json'),
+    })
+    const held = observed.state?.reservations?.[governorReservationId]
+    if (held && held.context === context) return
+    governorReservationId = null
+  }
+  const admission = await requestAdmission(commonGit, {
+    projectId: projectId || 'root',
+    context,
+    provider: options.host,
+    quotaFile: join(topology.controlRoot, 'quota.json'),
+    ...defaultGovernorOptions(),
+  })
+  if (!admission.granted) {
+    fail(`resource governor denied admission (${admission.reason || 'no-capacity'})`)
+  }
+  governorReservationId = admission.reservation.id
+}
+
+async function releaseGovernorAdmission() {
+  if (governorReservationId) {
+    await releaseAdmission(commonGit, governorReservationId)
+    governorReservationId = null
+  }
+}
 
 function logVisible(message) {
   if (!hostSpawnVisible()) return
@@ -198,135 +225,42 @@ async function recentCodingHarness(id) {
 }
 
 async function evidence(id, attempt, kind, detail, route = null) {
-  const dir = join(runDir, 'evidence', context.replace(/[^a-zA-Z0-9_-]/g, '_'))
-  await mkdir(dir, { recursive: true })
-  const file = join(dir, `${String(id).replace(/[^a-zA-Z0-9_-]/g, '_')}-${attempt}-${kind.toLowerCase()}.log`)
-  const header = route ? `route=${JSON.stringify(route)}\n` : ''
-  await writeFile(file, `${header}${detail}`)
-  return file
+  const artifact = await putEvidenceArtifact({
+    commonGit,
+    projectId: projectId || 'root',
+    runId,
+    context,
+    workItemId: id,
+    attempt,
+    kind,
+    detail,
+    route,
+  })
+  return artifact.path
 }
 
 async function spawnAgent(program, args, cwd) {
-  const visible = hostSpawnVisible()
-  const spawnArgs = withVisibleAgentMode(program, args, visible)
-  const formatter = visible ? createAgentStreamFormatter() : null
-  const heartbeatMs = Number(process.env.HARNESS_PANE_HEARTBEAT_MS || 20_000)
-  return await new Promise((resolveRun) => {
-    child = spawnHostAgent(program, spawnArgs, {
-      cwd,
-      env: {
-        PORT: String(options.port),
-        FRONTEND_PORT: String(options.port),
-        BACKEND_PORT: String(Number(options.port) + 1000),
-      },
-      visible,
-    })
-    let stdout = '', stderr = '', timedOut = false, settled = false
-    let lastPaneAt = Date.now()
-    let verdictSeen = false
-    let sawAgentStream = false
-    let paneHeartbeat = null
-    const finish = (result) => {
-      if (settled) return
-      settled = true
-      if (paneHeartbeat) clearInterval(paneHeartbeat)
-      child = null
-      resolveRun(result)
-    }
-    const notePaneActivity = (fromAgent = false) => {
-      lastPaneAt = Date.now()
-      if (fromAgent) {
-        sawAgentStream = true
-        // Progress signal for supervisor health plane (not pane heartbeats).
-        writeState({ lastAgentOutputAt: new Date().toISOString() }).catch(() => {})
-      }
-    }
-    if (visible && heartbeatMs > 0) {
-      process.stdout.write(`agent: started (${program}${spawnArgs.includes('--model') ? ` ${spawnArgs[spawnArgs.indexOf('--model') + 1] || ''}` : ''})\n`)
-      process.stdout.write('agent: waiting for first token (MCP/plugin warmup can take ~30–90s before thinking/tools appear)…\n')
-      notePaneActivity(false)
-      paneHeartbeat = setInterval(() => {
-        if (settled) return
-        const quietSec = Math.round((Date.now() - lastPaneAt) / 1000)
-        if (quietSec < Math.max(15, heartbeatMs / 1000 - 1)) return
-        let phase
-        if (verdictSeen) phase = 'verdict received — waiting for agent exit'
-        else if (!sawAgentStream) phase = 'still waiting for first token / MCP warmup'
-        else phase = 'still working'
-        process.stdout.write(`agent: ${phase} (${quietSec}s since last log)\n`)
-        notePaneActivity(false)
-      }, heartbeatMs)
-    }
-    const registered = writeState({ childPid: child.pid || null }).catch((error) => { terminateChild(); fail(error.message) })
-    const maybeEarlyExitOnVerdict = () => {
-      if (verdictSeen || settled) return
-      // Only scan formatted assistant text — raw stream-json embeds the VERDICT_HINT
-      // markers inside JSON strings and must not be searched with hasCompleteVerdict.
-      const assistant = formatter?.assistantText() || ''
-      const parsed = parseObject(assistant)
-      // Require a real Work Item id — ignore VERDICT_HINT `{...}` placeholders in prompts.
-      if (!parsed || typeof parsed !== 'object' || !parsed.id) return
-      verdictSeen = true
-      if (visible) {
-        process.stdout.write(`agent: harness verdict received (id=${parsed.id}) — stopping agent\n`)
-        notePaneActivity(false)
-      }
-      // Cursor agent often keeps the process alive after printing the verdict.
-      setTimeout(() => { if (!settled) terminateChild('SIGTERM') }, 500)
-      setTimeout(() => { if (!settled) terminateChild('SIGKILL') }, 4_000)
-    }
-    child.stdout?.on('data', (data) => {
-      stdout = `${stdout}${data}`.slice(-1_000_000)
-      if (visible) {
-        const text = String(data)
-        if (/^BUSY\n?$/.test(text.trim())) return
-        const paneText = formatter ? formatter.push(text) : text
-        if (paneText) {
-          process.stdout.write(paneText)
-          notePaneActivity(true)
-        }
-      }
-      maybeEarlyExitOnVerdict()
-    })
-    child.stderr?.on('data', (data) => {
-      stderr = `${stderr}${data}`.slice(-1_000_000)
-      if (visible) {
-        process.stderr.write(data)
-        notePaneActivity(true)
-      }
-      maybeEarlyExitOnVerdict()
-    })
-    const timeout = setTimeout(() => { timedOut = true; terminateChild() }, Number(process.env.HARNESS_AGENT_TIMEOUT_MS || 1_800_000))
-    child.on('close', async (code) => {
-      clearTimeout(timeout)
-      await registered
-      if (formatter) {
-        const rest = formatter.flush()
-        if (rest) process.stdout.write(rest)
-      }
-      const assistant = formatter?.assistantText()?.trim() || ''
-      const detail = (stderr || assistant || stdout || '').trim()
-      const parseSource = assistant || stdout || stderr
-      const parsed = parseObject(parseSource)
-      // Early SIGTERM after a complete verdict is success, not failure.
-      const ok = (!timedOut && (code === 0 || (verdictSeen && parsed))) 
-      finish({
-        ok,
-        code,
-        detail,
-        stdout: assistant || stdout,
-        stderr,
-        parsed,
-        timedOut,
-      })
-    })
-    child.on('error', async (error) => {
-      clearTimeout(timeout)
-      await registered
-      if (formatter) formatter.flush()
-      finish({ ok: false, detail: error.message, stdout, stderr, parsed: null, timedOut: false })
-    })
+  let registered = Promise.resolve()
+  const result = await runHostAgentSession({
+    program,
+    args,
+    cwd,
+    env: {
+      PORT: String(options.port),
+      FRONTEND_PORT: String(options.port),
+      BACKEND_PORT: String(Number(options.port) + 1000),
+    },
+    onChildPid: (spawned) => {
+      child = spawned
+      registered = writeState({ childPid: spawned?.pid || null }).catch((error) => { terminateChild(); fail(error.message) })
+    },
+    onAgentOutput: () => {
+      writeState({ lastAgentOutputAt: new Date().toISOString() }).catch(() => {})
+    },
   })
+  await registered
+  child = null
+  return result
 }
 
 async function runAgent(kind, prompt, id, attempt, cwd = options.workdir) {
@@ -434,7 +368,7 @@ async function block(feature, attempt, reason, defects = []) {
     Attempt: `${attempt}/${MAX_ATTEMPTS}`, WorkItem: feature.id, Outcome: reason, Defects: defects,
     NextAction: 'User reviews evidence and explicitly resumes with guidance',
   })
-  commitPaths(options.workdir, [file, join(options.workdir, 'feature_list.json')], `chore(harness): block ${feature.id}`)
+  commitPaths(options.workdir, [file], `chore(harness): block ${feature.id}`)
   await writeState({ status: 'blocked', phase: 'blocked', currentFeatureId: feature.id, attempt, lastResult: reason, nextAction: 'user-guidance', childPid: null })
   blockClaim(options.repo, feature.context)
   return { id: queue.id, status: 'blocked', reason, defects }
@@ -451,7 +385,7 @@ async function planRepair(feature, attempt, defectReport) {
     NextAction: `Coding Attempt ${attempt + 1}`,
   })
   await updateFeature(options.workdir, feature.id, { implementation: false, qa: false, integration: false, retries: attempt })
-  commitPaths(options.workdir, [file, join(options.workdir, 'feature_list.json')], `chore(harness): plan repair for ${feature.id}`)
+  commitPaths(options.workdir, [file], `chore(harness): plan repair for ${feature.id}`)
   await writeState({ repairPlan: plan, nextAction: 'coding', attempt: attempt + 1, lastResult: plan.summary })
   return plan
 }
@@ -629,7 +563,7 @@ async function runGoalReviewLocked() {
       implementation: false, qa: false, integration: false, retries: Number(item.retries || 0) + 1,
     })
   }
-  commitPaths(options.workdir, [join(options.workdir, 'feature_list.json'), file], 'fix(harness): reopen Goal Review defects')
+  commitPaths(options.workdir, [file], 'fix(harness): reopen Goal Review defects')
   clearInterval(heartbeatTimer)
   await writeState({ status: 'complete', phase: 'defects-found', nextAction: 'claim-repair-work', lastResult: verdict?.summary, childPid: null })
   return { goal: false, reopened: affected.map((item) => item.id), summary: verdict?.summary, defects: verdict?.defects || [] }
@@ -652,6 +586,20 @@ async function runGoalReview() {
 }
 
 logVisible(`started pid=${process.pid} workdir=${options.workdir}`)
-const result = options.mode === 'goal-review' ? await runGoalReview() : await runWorkItems()
-await writeWorkerResult(stateFile, { exitCode: 0, payload: result })
+setState(await readJson(stateFile, {}))
+await writeState({ invocationId: runId })
+let result
+try {
+  await ensureGovernorAdmission()
+  result = options.mode === 'goal-review' ? await runGoalReview() : await runWorkItems()
+} finally {
+  await releaseGovernorAdmission()
+}
+await writeWorkerResult(stateFile, {
+  exitCode: 0,
+  leaseToken,
+  invocationId: runId,
+  reviewedHead: result?.reviewedHead || getState()?.reviewedHead || null,
+  payload: { ...result, leaseToken, invocationId: runId },
+})
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)

@@ -70,7 +70,8 @@ not create the registry.
    Cross-check docs against code/configuration. Prefer current implementation when
    docs are stale, but record every contradiction explicitly in the spec; never
    silently resolve one.
-   The planner must run the **spec review HTML loop** (`.harness/project_specs.draft.json`
+   The planner must run grilling (ambiguous requirements, architectural trade-offs,
+   edge cases) and the **spec review HTML loop** (`.harness/project_specs.draft.json`
    → interactive review → `spec-review.mjs finalize`) before
    `project_specs.xml` exists. Setup is not past this step until finalize succeeds.
 4. Before initialization, run

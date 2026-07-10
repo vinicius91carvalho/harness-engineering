@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { access, readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
+import { sectionInner } from '../generator/lib/project-specification.mjs'
 
 const repo = resolve(process.argv[2] || '.')
 const inventoryPath = resolve(repo, process.argv[3] || '.harness-technology-inventory.json')
@@ -33,9 +34,9 @@ if (process.argv.includes('--inventory-only')) {
 
 let spec
 try { spec = await readFile(specPath, 'utf8') } catch (error) { fail(`cannot read specification: ${error.message}`) }
-const missing = inventory.technologies.filter(technology => {
-  const match = spec.match(new RegExp(`<${technology.section}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${technology.section}>`, 'i'))
-  return !match || !match[1].toLowerCase().includes(technology.name.toLowerCase())
+const missing = inventory.technologies.filter((technology) => {
+  const section = sectionInner(spec, technology.section)
+  return !section || !section.toLowerCase().includes(technology.name.toLowerCase())
 })
 if (missing.length) fail(`missing technologies: ${missing.map(item => `${item.name} [${item.section}] (${item.evidence.map(e => e.path).join(', ')})`).join('; ')}`)
 const unresolved = (inventory.contradictions || []).filter(item => !spec.toLowerCase().includes(item.resolution.toLowerCase()))

@@ -4,10 +4,24 @@ from functools import partial
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
+_PKG_ROOT = Path(__file__).resolve().parent.parent
+if str(_PKG_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PKG_ROOT))
+
+from scripts.artifact_contract import ArtifactContractError, read_artifact
+
 METADATA_FILES = {"transcript.md", "user_notes.md", "metrics.json"}
 TEXT_EXTENSIONS = {".txt", ".md", ".json", ".csv", ".py", ".js", ".ts", ".tsx", ".jsx", ".yaml", ".yml", ".xml", ".html", ".css", ".sh", ".rb", ".go", ".rs", ".java", ".c", ".cpp", ".h", ".hpp", ".sql", ".r", ".toml"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"}
 MIME_OVERRIDES = {".svg": "image/svg+xml", ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation"}
+
+def load_benchmark(path: Path | None):
+    if not path or not path.exists():
+        return None
+    try:
+        return read_artifact(path, "benchmark")
+    except ArtifactContractError:
+        return None
 
 def get_mime_type(path):
     ext = path.suffix.lower()
@@ -180,12 +194,7 @@ class ReviewHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ("/", "/index.html"):
             runs = find_runs(self.workspace)
-            benchmark = None
-            if self.benchmark_path and self.benchmark_path.exists():
-                try:
-                    benchmark = json.loads(self.benchmark_path.read_text())
-                except (json.JSONDecodeError, OSError):
-                    pass
+            benchmark = load_benchmark(self.benchmark_path)
             html = generate_html(runs, self.skill_name, self.previous, benchmark)
             content = html.encode("utf-8")
             self.send_response(200)
@@ -250,12 +259,7 @@ def main():
     if args.previous_workspace:
         previous = load_previous_iteration(args.previous_workspace.resolve())
     benchmark_path = args.benchmark.resolve() if args.benchmark else None
-    benchmark = None
-    if benchmark_path and benchmark_path.exists():
-        try:
-            benchmark = json.loads(benchmark_path.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
+    benchmark = load_benchmark(benchmark_path)
     if args.static:
         html = generate_html(runs, skill_name, previous, benchmark)
         args.static.parent.mkdir(parents=True, exist_ok=True)

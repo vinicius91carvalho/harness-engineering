@@ -1,2 +1,8 @@
 # Local pi CLI runtime state (created when running `omni ... --harness pi` from the repo)
 .pi/
+
+# Local Playwright MCP session artifacts (page snapshots, console logs)
+.playwright-mcp/
+
+# Python bytecode from packages/skill-creator scripts
+**/__pycache__/

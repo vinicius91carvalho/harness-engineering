@@ -75,17 +75,16 @@ Artifact paths, verdict, and next action. Never append raw conversations or logs
 
 ## STEP 3: Verdict — isolated or integrated
 
-You may change only execution state for THIS Work Item:
+Do **not** edit `feature_list.json`, Execution Ledger files, or Workflow Journal files.
+Return a verdict only; the orchestrator records Execution Ledger transitions.
 
-- **Isolated pass**: set `"qa": false → true`.
-- **Integrated pass**: keep `implementation:true, qa:true` and set
-  `"integration": false → true` only after testing latest integrated `main`.
-- **Any defect**: set `implementation:false, qa:false, integration:false` and
-  return a structured Defect Report containing expected behavior, observed
+- **Isolated pass**: `"qa": true` with `"implementation": true`.
+- **Integrated pass**: `"integration": true` after testing the Plan integration branch.
+- **Any defect**: `"implementation": false`, `"qa": false`, `"integration": false` and
+  a structured Defect Report containing expected behavior, observed
   behavior, reproduction evidence, and affected Acceptance Check IDs.
 
-Never remove/edit/reorder/rephrase entries. Commit execution state and the Journal entry:
-`git add feature_list.json "$PROGRESS" && git commit -m "qa(<context>): <feature> - <pass|defect>"`.
+Never remove/edit/reorder/rephrase catalog entries. Commit only product code changes if needed.
 
 ## Return value
 

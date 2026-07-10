@@ -379,6 +379,7 @@ Tell the user: "This will take some time — I'll run the optimization loop in t
 Save the eval set to the workspace, then run in the background:
 
 ```bash
+cd packages/skill-creator
 python -m scripts.run_loop \
   --eval-set <path-to-trigger-eval.json> \
   --skill-path <path-to-skill> \

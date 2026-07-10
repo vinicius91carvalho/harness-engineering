@@ -84,12 +84,14 @@ for file in "$HTML"; do
   grep -Fq "$ROLES_URL" "$file"
   grep -Fq '.harness/projects.json' "$file"
   grep -Fq 'run_completed' "$file"
-  grep -Fq 'implementation and .qa and .integration' "$file"
+  grep -Fq '.integrated == .total' "$file"
 done
 grep -Fq 'config/roles.example.json' "$README"
 grep -Fq '.harness/projects.json' "$README"
 grep -Fq 'run_completed' "$README"
-grep -Fq 'implementation and .qa and .integration' "$README"
+grep -Fq '.integrated == .total' "$README"
+grep -Fq '.git/harness-ledger/' "$README" "$HTML"
+grep -Fq '.git/harness-evidence/' "$README" "$HTML"
 
 for str in 'A long unattended run with monitoring/pause/resume' 'To independently re-audit an already-integrated integration branch' 'An existing working app, just adopting the harness (no new goal)' '(existing-codebase mode)' 'still draining its retry queue (up to 5 attempts per context)' 'HARNESS_LEASE_TIMEOUT_SECONDS'; do
   grep -Fq -- "$str" "$README"
