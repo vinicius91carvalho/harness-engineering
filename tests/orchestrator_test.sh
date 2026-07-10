@@ -3,11 +3,12 @@ set -euo pipefail
 unset HARNESS_INTEGRATION_BRANCH
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 # Relax host-wide governor gates so stub orchestrator runs stay deterministic in CI.
+export HARNESS_TEST_SKIP_GOVERNOR=1
 export HARNESS_MAX_WORKERS=4
 export HARNESS_QUOTA_WORKERS=4
 export HARNESS_MAX_LOAD_RATIO=100
 export HARNESS_RESERVE_MEMORY_MB=0
-export HARNESS_MEMORY_PER_WORKER_MB=1
+export HARNESS_MEMORY_PER_WORKER_MB=128
 export HARNESS_CPU_PER_WORKER=0.25
 # shellcheck source=tests/lib/ledger-helper.sh
 . "$ROOT/tests/lib/ledger-helper.sh"
