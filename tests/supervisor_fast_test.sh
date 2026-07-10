@@ -37,7 +37,7 @@ rm -f "$TMP/quota-limit/.git/harness-control/state.json" "$TMP/quota-limit/.git/
 PATH="$SUPERVISOR_PATH" HARNESS_TEST_SUPERVISOR_QUOTA=1 HARNESS_RATE_LIMIT_BACKOFF_MS=100 HARNESS_RATE_LIMIT_JITTER_MS=0 \
   "$NODE" "$CONTROL" run \
   --repo "$TMP/quota-limit" --host claude --poll-ms 50 --quota-cooldown-seconds 60 \
-  --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100 >"$TMP/quota-supervisor.log" 2>&1 &
+  --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100 >"$TMP/quota-supervisor.log" 2>&1 &
 quota_supervisor=$!
 # macOS CI cold-starts can exceed 20s before the first claim/spawn; keep polling until
 # quota_wait lands (jq -se fails on false, so we do not treat "not yet" as success).
@@ -123,7 +123,7 @@ cat >"$TMP/prune/.git/harness-control/state.json" <<'JSON'
 JSON
 supervisor_common_run_once --repo "$TMP/prune" --host claude --once true --poll-ms 50 \
   --max-workers 2 --quota-workers 2 --cpu-per-worker 0.25 \
-  --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100
+  --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100
 PRUNE_STATE="$TMP/prune/.git/harness-control/state.json"
 jq -e '(.pendingInputs | has("100") | not) and (.pendingInputs | has("101")) and (.pendingInputs | has("102"))' "$PRUNE_STATE" >/dev/null \
   || { jq '.pendingInputs | keys' "$PRUNE_STATE"; echo 'not ok - orphaned pending was not pruned, or a real blocked/goal event was wrongly dropped' >&2; exit 1; }
@@ -140,7 +140,7 @@ git -C "$TMP/mono2" commit -qm init
 mkdir -p "$TMP/mono2/.git"
 printf '%s\n' '{"appB--ghost":{"context":"ghost","status":"blocked"}}' >"$TMP/mono2/.git/generator-claims.json"
 supervisor_common_run_once --repo "$TMP/mono2/appA" --host claude --once true --poll-ms 50 \
-  --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100
+  --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100
 jq -e '.progress.blocked == 0' "$TMP/mono2/.git/harness-control/appA/state.json" >/dev/null \
   || { cat "$TMP/mono2/.git/harness-control/appA/state.json"; echo 'not ok - sibling subproject appB'"'"'s blocked claim leaked into appA'"'"'s own blocked count' >&2; exit 1; }
 if jq -s -e 'any(.[]; .context == "ghost")' "$TMP/mono2/.git/harness-control/appA/events.jsonl" >/dev/null 2>&1; then
@@ -178,7 +178,7 @@ supervisor_common_write_feature_queue "$TMP/background/feature_list.json" false
 git -C "$TMP/background" add feature_list.json && git -C "$TMP/background" commit -qm reset
 PATH="$SUPERVISOR_PATH" HERDR_ENV=1 supervisor_common_run_once \
   --repo "$TMP/background" --host claude --poll-ms 50 --display background \
-  --quota-workers 1 --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100
+  --quota-workers 1 --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100
 jq -e '.status == "complete"' "$TMP/background/.git/harness-control/state.json" >/dev/null
 echo 'ok - explicit --display background always forces background workers, even when HERDR_ENV=1'
 
@@ -213,7 +213,7 @@ printf '%s\n' '{"crashCounts":{"flaky":5}}' >"$TMP/circuit/.git/harness-control/
 supervisor_common_run_timeout 15 env PATH="$SUPERVISOR_PATH" "$NODE" "$CONTROL" run \
   --repo "$TMP/circuit" --host claude --once true --poll-ms 50 \
   --max-workers 2 --quota-workers 2 --cpu-per-worker 0.25 \
-  --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100
+  --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100
 CIRCUIT_EVENTS="$TMP/circuit/.git/harness-control/events.jsonl"
 jq -e '.crashCounts.flaky == 5' "$TMP/circuit/.git/harness-control/state.json" >/dev/null
 if jq -s -e 'any(.[]; .context == "flaky")' "$CIRCUIT_EVENTS" >/dev/null 2>&1; then

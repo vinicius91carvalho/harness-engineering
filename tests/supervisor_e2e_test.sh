@@ -11,7 +11,7 @@ supervisor_common_init_git_repo "$TMP/repo" false
 supervisor_common_run_once \
   --repo "$TMP/repo" --host claude --poll-ms 50 \
   --max-workers 2 --quota-workers 1 --cpu-per-worker 0.25 \
-  --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100
+  --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100
 
 STATE="$TMP/repo/.git/harness-control/state.json"
 EVENTS="$TMP/repo/.git/harness-control/events.jsonl"
@@ -36,7 +36,7 @@ mv "$TMP/monorepo/.git/harness-runs/app--core.json.tmp" \
   "$TMP/monorepo/.git/harness-runs/app--core.json"
 supervisor_common_run_once \
   --repo "$TMP/monorepo/app" --host claude --poll-ms 100 --quota-workers 1 \
-  --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100
+  --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100
 jq -e '.status == "complete" and .phase == "complete"' \
   "$TMP/monorepo/.git/harness-runs/app--goal-review.json" >/dev/null
 jq -e '.status == "complete"' "$TMP/monorepo/.git/harness-control/app/state.json" >/dev/null
@@ -56,7 +56,7 @@ rm -f "$TMP/detached/.git/harness-ledger/"*.json
 git -C "$TMP/detached" add -A && git -C "$TMP/detached" commit -qm reset
 PATH="$SUPERVISOR_PATH" HARNESS_TEST_GOAL_SLEEP=1 "$NODE" "$CONTROL" start \
   --repo "$TMP/detached" --host claude --poll-ms 100 --quota-workers 1 \
-  --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100 | jq -e '.started == true' >/dev/null
+  --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100 | jq -e '.started == true' >/dev/null
 if PATH="$SUPERVISOR_PATH" "$NODE" "$CONTROL" start --repo "$TMP/detached" --host claude >/dev/null 2>&1; then
   echo 'not ok - a second live supervisor acquired the same repository' >&2; exit 1
 fi
@@ -79,7 +79,7 @@ CRASH_EVENTS="$TMP/crash-msg/.git/harness-control/events.jsonl"
 PATH="$SUPERVISOR_PATH" "$NODE" "$CONTROL" run \
   --repo "$TMP/crash-msg" --host claude --poll-ms 100 \
   --max-workers 1 --quota-workers 1 --cpu-per-worker 0.25 \
-  --memory-per-worker-mb 128 --reserve-memory-mb 0 --max-load-ratio 100 &
+  --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100 &
 crash_pid=$!
 found=
 for _ in $(seq 1 100); do

@@ -193,14 +193,8 @@ function baseConfig() {
     maxWorkers: Math.max(1, Math.floor(number('max-workers', 4))),
     quotaWorkers: Math.max(0, Math.floor(number('quota-workers', 2))),
     cpuPerWorker: Math.max(0.25, number('cpu-per-worker', 2)),
-    // ponytail: workers are thin clients of a *remote* model (observed ~250MB
-    // RSS steady; occasional local-build spikes ride on the machine's swap), so
-    // 1GB/worker with a 1GB reserve still leaves ~4x headroom while avoiding the
-    // old 2GB reserve + 2GB/worker gate that idled typical dev boxes at 0 slots.
-    // freeMb is re-read every tick and maxWorkers caps a single subproject, so
-    // this self-limits and can't runaway-OOM. Raise --memory-per-worker-mb or
-    // --reserve-memory-mb for a genuinely heavyweight local-build host.
-    memoryPerWorkerMb: Math.max(128, number('memory-per-worker-mb', 1024)),
+    // Default 1GB/worker; allow explicit low values for tests / tiny hosts (floor 1MB).
+    memoryPerWorkerMb: Math.max(1, number('memory-per-worker-mb', 1024)),
     reserveMemoryMb: Math.max(0, number('reserve-memory-mb', 1024)),
     maxLoadRatio: Math.max(0.1, number('max-load-ratio', 0.85)),
     quotaCooldownSeconds: Math.max(1, number('quota-cooldown-seconds', 300)),

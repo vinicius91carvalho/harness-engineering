@@ -161,7 +161,7 @@ export function defaultGovernorOptions(env = process.env) {
     maxWorkers: Math.max(1, Math.floor(num('max-workers', 4))),
     quotaWorkers: Math.max(0, Math.floor(num('quota-workers', 2))),
     cpuPerWorker: Math.max(0.25, num('cpu-per-worker', 2)),
-    memoryPerWorkerMb: Math.max(128, num('memory-per-worker-mb', 1024)),
+    memoryPerWorkerMb: Math.max(1, num('memory-per-worker-mb', 1024)),
     reserveMemoryMb: Math.max(0, num('reserve-memory-mb', 1024)),
     maxLoadRatio: Math.max(0.1, num('max-load-ratio', 0.85)),
   }
