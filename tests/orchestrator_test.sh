@@ -562,10 +562,15 @@ case "$prompt" in
     printf '%s\n' '{"resolved":true,"notes":"resolved"}'
     ;;
   *"coding-agent"*)
+    # Touch the same field main diverged so integrate() hits a real conflict.
+    # Progress flags live in the Execution Ledger now; this edit is only to force merge conflict.
+    node -e 'const fs=require("fs"); const p="feature_list.json"; const q=JSON.parse(fs.readFileSync(p,"utf8")); q[0].note="changed in worktree"; fs.writeFileSync(p, JSON.stringify(q)+"\n");'
+    git add feature_list.json
+    git commit -qm 'coding: diverge feature_list for conflict'
     printf '%s\n' '{"id":"WI-AC-001","implementation":true,"notes":"implemented"}'
     ;;
   *"qa-agent"*)
-    printf '%s\n' '{"id":"WI-AC-001","qa":true,"implementation":true,"defects":[]}'
+    printf '%s\n' '{"id":"WI-AC-001","qa":true,"implementation":true,"integration":true,"defects":[]}'
     ;;
 esac
 SH
@@ -580,7 +585,8 @@ if jq -e '.passed == 1' "$TMP/mergecorrupt-result.json" >/dev/null; then
   echo 'not ok - a marker-corrupted merge was accepted as passing' >&2
   exit 1
 fi
-jq -e '.stuck[0].defects[0] | test("marker")' "$TMP/mergecorrupt-result.json" >/dev/null
+jq -e '.stuck[0].defects | map(tostring) | join("\n") | test("marker")' "$TMP/mergecorrupt-result.json" >/dev/null \
+  || { echo "not ok - expected marker defect, got:"; cat "$TMP/mergecorrupt-result.json"; exit 1; }
 test "$(git -C "$TMP/mergecorrupt" rev-parse main)" = "$MC_BEFORE_HEAD"
 ! grep -q '^<<<<<<< ' "$TMP/mergecorrupt/feature_list.json"
 echo 'ok - a MERGE agent that stages a conflict without removing marker lines is caught and its commit is aborted, not landed on main'
