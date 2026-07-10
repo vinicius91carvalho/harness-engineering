@@ -9,6 +9,20 @@
 
 <p align="center"><b>Turn a goal into checked work — with proof it still works after you close the chat.</b></p>
 
+## About
+
+`harness-engineering` is a plugin marketplace plus a **spec → build → QA → Goal Review** workflow.
+The harness owns completion policy; [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://developers.openai.com/codex/), [OpenCode](https://opencode.ai/), [Cursor Agent](https://cursor.com/docs/cli/overview), and [Pi](https://pi.dev/) run it.
+Optional [herdr](https://herdr.dev/) shows workers in terminal panes, auto-selected inside a herdr workspace; optional `.harness/roles.json` routes phases to ordered tool/model candidates.
+
+**Done means evidence:** independent QA, integration on the plan branch, and a final Goal Review — not an empty task list.
+
+**Releases are what you install.**
+GitHub Releases (`vX.Y.Z`) are the stable plugin payload for remote installs.
+The curl one-liner points at `main` only to download `install.sh`; that script then stages the latest release tag (or `--version` / `VERSION` / `HARNESS_INSTALL_REF`).
+Without release tags, every remote install would track the moving `main` tip.
+A local checkout of this repo is different: `./install.sh` uses the working tree (dev mode).
+
 ## Quickstart
 
 **1. Install once in a terminal** ([details](#install)):
@@ -32,20 +46,6 @@ The installer then clones the **latest GitHub Release tag** (or a pin — see [I
 **Long unattended run?** Use `/harness:supervisor` after planning.
 
 → **[Complete guide](https://vinicius91carvalho.github.io/harness-engineering/)** — diagrams, worked examples, role routing, herdr, troubleshooting.
-
-## About
-
-`harness-engineering` is a plugin marketplace plus a **spec → build → QA → Goal Review** workflow.
-The harness owns completion policy; [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://developers.openai.com/codex/), [OpenCode](https://opencode.ai/), [Cursor Agent](https://cursor.com/docs/cli/overview), and [Pi](https://pi.dev/) run it.
-Optional [herdr](https://herdr.dev/) shows workers in terminal panes, auto-selected inside a herdr workspace; optional `.harness/roles.json` routes phases to ordered tool/model candidates.
-
-**Done means evidence:** independent QA, integration on the plan branch, and a final Goal Review — not an empty task list.
-
-**Releases are what you install.**
-GitHub Releases (`vX.Y.Z`) are the stable plugin payload for remote installs.
-The curl one-liner points at `main` only to download `install.sh`; that script then stages the latest release tag (or `--version` / `VERSION` / `HARNESS_INSTALL_REF`).
-Without release tags, every remote install would track the moving `main` tip.
-A local checkout of this repo is different: `./install.sh` uses the working tree (dev mode).
 
 ## Framework
 
@@ -145,6 +145,28 @@ When the plan ships, merge the plan branch to `main` in one deliberate PR — no
 Override for a single run with `HARNESS_INTEGRATION_BRANCH=plan/my-feature`.
 
 Retries: **3 Attempts** per Work Item (orchestrator), **5 resume tries** per blocked context (supervisor), **2 Goal Review reopenings** per item before blocking.
+
+## Examples
+
+What a live run looks like in practice: supervisor status in chat, and per-Work-Item agent tabs when herdr is enabled.
+
+### Supervisor status
+
+During a live run the supervisor prints periodic ticks, per-context rows, merge-lock remediation, and worker health.
+The same snapshot is available from `harness-control.mjs status`.
+
+<p align="center">
+  <img src="assets/example-supervisor.png" alt="Supervisor status table showing core progress, merge-lock remediation, and per-context worker rows" width="960">
+</p>
+
+### Agent workers in herdr
+
+Each Work Item opens in its own tab while the supervisor keeps the fleet healthy.
+Workers stream live thinking, tool calls, and MCP warmup in the pane.
+
+<p align="center">
+  <img src="assets/example-agent-herdr.png" alt="herdr workspace with supervisor overview and per-Work-Item agent tabs" width="960">
+</p>
 
 ## Install
 
@@ -334,6 +356,7 @@ Monorepos: run setup once at the Git root — it writes `.harness/projects.json`
 ## Monitor a run
 
 In chat: `/harness:supervisor` (or `/harness-supervisor` on OpenCode).
+See [Examples](#examples) for a live supervisor status screenshot.
 
 Script path (OpenCode install example):
 
@@ -385,6 +408,7 @@ Supervisor `status` exposes `workerHealth` and `mergeLock` so 20-minute polls ca
 Pi stays available as a transport for those expensive rescue models; it is not the everyday coding host.
 
 [herdr](https://herdr.dev/) is optional terminal visibility. It's auto-selected when the supervisor starts inside a herdr workspace (`HERDR_ENV=1`) with `herdr` installed; pass `--display background` to force background, or `--display herdr` to force herdr when available.
+See [Examples](#examples) for agent workers in a herdr workspace.
 
 In herdr mode each worker gets its own tab named `{taskId} - {role} - {project} - r{retry}` and streams the live agent session (thinking, tool calls, verdicts) via a flushed PTY (`script -f`). For `pi`, the orchestrator uses `--mode json` and formats thinking/tool events in real time. Finished workers close their tabs immediately — you should not see idle shells after a job ends.
 
