@@ -37,6 +37,30 @@ Do not reorder coding to put expensive models first. Ops monitoring hosts
 specifies (grep/file audit, CLI exit code, real HTTP, or real browser).
 Do not start a server or browser for a static audit.
 Emit the harness verdict as soon as the check passes or fails.
+
+**Resource cleanup (every Work Item, pass or fail):** before the harness
+verdict, tear down every resource this task started — `docker compose down
+--remove-orphans` (or project-scoped `-p`) for stacks you brought up, remove
+named WI/AC containers you created, stop this worktree's `init.sh` / `.harness/app.pid`,
+and kill browsers scoped to this PORT/WORKDIR.
+Do not leave containers or servers running for a later task.
+Do not tear down stacks you did not start (other subprojects or live sibling contexts).
+Coding, isolated QA, and Integrated Verification prompts all carry this rule.
+
+**Cross-project E2E (dependents like web → core):** when an AC requires real
+HTTP/SSE against another subproject, run that E2E against the live dependency
+(compose/API up) — mocks are not the pass path. If the failure is a dependency
+API/contract defect (5xx, missing route, bad payload from Core), do **not** burn
+coding retries on the dependent project. Raise `input_required` with evidence and
+let the Supervisor route repair to the dependency project's Orchestrator; retry
+dependent E2E only after that fix lands.
+
+**Integrate flag drift:** if Checkpoint / integrate loops while the plan branch
+already has `integration=true` for that WI (worktree `feature_list` lag), sync
+flags and skip re-merge thrash — do not keep coding. See
+`integrate-checkpoint.mjs` (skip when plan already integrated) and
+`monorepo-supervisor-ops` for the ops diagnosis table.
+
 Reconcile stores `observation_method` on Work Items; http/browser validation
 prefers agent/Codex/Claude over pi as first pick.
 

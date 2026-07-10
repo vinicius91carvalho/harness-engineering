@@ -390,6 +390,7 @@ bash "$GEN/claim.sh" list "$PROJECT"
 | Supervisors dead but panes still show workers | Restart all four subproject supervisors; orchestrators survive in panes and `rehydrateHerdrWorkers` reattaches them. Supervisor exit no longer closes herdr panes. |
 | `supervisor lease was lost` / supervisors exit mid-run | Lease is re-acquired on the next heartbeat instead of fatal-exiting; tick errors are logged and the loop continues |
 | pi `Session terminated…killed` / high swap | Host memory pressure — dockerd + mintlify + parallel docker builds. Restart supervisors with `--max-workers 2 --memory-per-worker-mb 2048 --reserve-memory-mb 2048` |
+| Orphan Docker after finished WIs | Coding/QA must tear down compose/containers they started before the verdict. Stop leftovers not owned by a live worker (`docker compose -p … down`, `docker rm -f wi-ac-*` / completed stacks). |
 
 Full symptom list: [site troubleshooting](https://vinicius91carvalho.github.io/harness-engineering/#troubleshoot).
 

@@ -171,6 +171,19 @@ guidance (verify-first when the AC is already satisfied).
 When monorepo ACs share APIs/stubs (e.g. web depends on core), finish the root
 project before dependents; pause/stop the dependent supervisor rather than thrashing.
 
+When a dependent project's E2E fails on a **dependency API/contract** error
+(not a UI-only bug), do not auto-retry coding on the dependent. Raise or keep
+`input_required` with evidence, admit/repair work on the root project
+(Orchestrator), then retry the dependent after the API is fixed.
+
+**Orphan Docker / leftover resources:** finished Work Items must tear down the
+compose stacks, named containers, and worktree servers they started (see
+generator `RESOURCE_CLEANUP_RULE`).
+If `docker ps` still shows WI/AC leftovers (`wi-ac-*`, `ac0*`, completed
+subproject stacks) while no live worker owns them, treat that as a workflow
+defect: stop the orphans, then harden generator prompts/skills the same turn
+(fail-closed) — do not only narrate.
+
 For multi-supervisor monorepo ops (empty-fleet recovery, composer-2.5 ops host,
 stream smoke checks), use the sibling `monorepo-supervisor-ops` skill.
 

@@ -138,6 +138,23 @@ git add -A
 git commit -m "feat(<context>): implement <feature> - verified e2e"
 ```
 
+## STEP 7: Clean resources (mandatory, pass or fail)
+
+Before emitting the verdict, tear down every resource **this Work Item / this
+session** started:
+
+- `docker compose down --remove-orphans` in the workdir (or
+  `docker compose -p <project> down --remove-orphans`) for stacks you brought up
+- `docker rm -f` for named WI/AC containers you created (for example `wi-ac-*`,
+  `ac0*`)
+- Stop this worktree's `init.sh` / `.harness/app.pid` and any PORT-scoped
+  browsers/Playwright processes
+
+Do not leave containers or servers running for a later task.
+Do not tear down compose stacks or containers you did not start (other
+subprojects or live sibling contexts).
+Note cleanup failures in `notes`; still emit the verdict.
+
 ## Return value
 
 Report `{ "id": "<feature id>", "implementation": <true|false>, "notes": "..." }`.

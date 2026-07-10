@@ -86,6 +86,22 @@ Return a verdict only; the orchestrator records Execution Ledger transitions.
 
 Never remove/edit/reorder/rephrase catalog entries. Commit only product code changes if needed.
 
+## STEP 4: Clean resources (mandatory, pass or fail)
+
+Before emitting the verdict, tear down every resource **this Work Item / this
+session** started:
+
+- `docker compose down --remove-orphans` (or project-scoped `-p`) for stacks you
+  brought up
+- `docker rm -f` for named WI/AC containers you created
+- Stop this worktree's `init.sh` / `.harness/app.pid` and PORT/WORKDIR-scoped
+  browsers
+
+Do not leave containers or servers running for a later task.
+Do not tear down stacks you did not start (other subprojects or live sibling
+contexts).
+Note cleanup failures in `defects`/`notes`; still emit the verdict.
+
 ## Return value
 
 Return the exact JSON schema requested by the orchestrator. A prose verdict is insufficient.

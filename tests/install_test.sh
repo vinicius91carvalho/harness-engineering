@@ -148,6 +148,33 @@ second=$(find "$HOME/.cursor/plugins/local/harness" -type f -exec shasum -a 256 
 pass 'Cursor Agent assets are local-plugin installed and idempotent'
 
 : >"$HARNESS_TEST_LOG"
+rm -rf "$HOME/.cursor/plugins/local"
+# Simulate prior harness pollution under optional plugin dirs.
+mkdir -p "$HOME/.cursor/plugins/local/skill-creator/.cursor-plugin" \
+  "$HOME/.cursor/plugins/local/skill-creator/skills/supervisor" \
+  "$HOME/.cursor/plugins/local/ponytail/.cursor-plugin" \
+  "$HOME/.cursor/plugins/local/ponytail/skills/supervisor"
+printf '%s\n' '{"name":"harness"}' >"$HOME/.cursor/plugins/local/skill-creator/.cursor-plugin/plugin.json"
+printf '%s\n' '{"name":"harness"}' >"$HOME/.cursor/plugins/local/ponytail/.cursor-plugin/plugin.json"
+"$ROOT/install.sh" --cli agent --yes </dev/null >"$TMP/out"
+test -f "$HOME/.cursor/plugins/local/harness/skills/supervisor/SKILL.md" \
+  || fail 'harness supervisor skill missing after agent install'
+test ! -e "$HOME/.cursor/plugins/local/ponytail/skills/supervisor" \
+  || fail 'ponytail must not retain harness supervisor skill'
+test ! -e "$HOME/.cursor/plugins/local/skill-creator/skills/supervisor" \
+  || fail 'skill-creator must not retain harness supervisor skill'
+test -f "$HOME/.cursor/plugins/local/skill-creator/skills/skill-creator/SKILL.md" \
+  || fail 'skill-creator skill missing after agent install'
+sc_name=$(jq -r .name "$HOME/.cursor/plugins/local/skill-creator/.cursor-plugin/plugin.json")
+[ "$sc_name" = skill-creator ] || fail "skill-creator manifest must be skill-creator, got $sc_name"
+if node "$ROOT/scripts/install-reconcile.mjs" project-agent ponytail "$ROOT" "$HOME/.cursor/plugins/local/ponytail" 2>"$TMP/err"; then
+  fail 'project-agent must fail closed for external ponytail'
+fi
+grep -q 'unsupported agent module ponytail' "$TMP/err" \
+  || fail 'project-agent ponytail error should explain unsupported module'
+pass 'Cursor Agent optional plugins exclude harness skill duplicates'
+
+: >"$HARNESS_TEST_LOG"
 "$ROOT/install.sh" --cli pi --no </dev/null >"$TMP/out"
 test -f "$HOME/.agents/skills/planner/SKILL.md" || fail 'Pi user-level planner skill missing'
 test -f "$HOME/.agents/skills/generator/SKILL.md" || fail 'Pi user-level generator skill missing'

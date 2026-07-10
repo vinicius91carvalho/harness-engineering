@@ -430,6 +430,20 @@ install_pi_extension() {
   pi remove "git:github.com/$MARKETPLACE_REPO" >/dev/null 2>&1 || true
 }
 
+clean_stale_agent_plugin_pollution() {
+  name=$1
+  dest=$HOME/.cursor/plugins/local/$name
+  [ -d "$dest" ] || return 0
+  [ -n "$DRY" ] && return 0
+  polluted=0
+  if [ -d "$dest/skills/supervisor" ]; then polluted=1; fi
+  manifest=$dest/.cursor-plugin/plugin.json
+  if [ -f "$manifest" ] && [ "$(jq -r .name "$manifest" 2>/dev/null || echo)" = harness ]; then
+    polluted=1
+  fi
+  [ "$polluted" -eq 1 ] && rm -rf "$dest"
+}
+
 install_agent_plugin() {
   name=$1
   if [ -n "$DRY" ]; then echo "DRY RUN — install Cursor Agent plugin at $HOME/.cursor/plugins/local/$name"; return; fi
@@ -459,8 +473,13 @@ install_plugin() {
       fi
       ;;
     opencode) install_opencode_plugin "$name" ;;
-    pi) install_pi_extension ;;
-    agent) install_agent_plugin "$name" ;;
+    pi) [ "$name" = harness ] && install_pi_extension ;;
+    agent)
+      case "$name" in
+        harness) install_agent_plugin "$name" ;;
+        *) clean_stale_agent_plugin_pollution "$name" ;;
+      esac
+      ;;
   esac
 }
 
@@ -672,7 +691,15 @@ install_skill_creator() {
         fi ;;
       opencode) install_opencode_plugin skill-creator ;;
       codex) install_plugin skill-creator "$cli" ;;
-      pi) install_pi_extension ;;
+      pi)
+        if [ -n "$DRY" ]; then echo "DRY RUN — install skill-creator to ~/.agents/skills/skill-creator"
+        else
+          ensure_repo
+          dest="$HOME/.agents/skills/skill-creator"
+          mkdir -p "$(dirname "$dest")"
+          node "$TEMP_REPO/scripts/install-reconcile.mjs" project-bundle skill-creator "$dest" \
+            || die 'skill-creator projection failed'
+        fi ;;
       agent) install_agent_plugin skill-creator ;;
     esac
   done

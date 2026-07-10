@@ -252,6 +252,22 @@ function Remove-OpenCodePluginFiles([string]$Name) {
   }
 }
 
+function Remove-StaleAgentPluginPollution([string]$Name) {
+  if ($DryRun) { return }
+  $dest = Join-Path $HOME ".cursor/plugins/local/$Name"
+  if (-not (Test-Path $dest)) { return }
+  $polluted = $false
+  if (Test-Path (Join-Path $dest "skills/supervisor")) { $polluted = $true }
+  $manifest = Join-Path $dest ".cursor-plugin/plugin.json"
+  if (Test-Path $manifest) {
+    try {
+      $json = Get-Content $manifest -Raw | ConvertFrom-Json
+      if ($json.name -eq "harness") { $polluted = $true }
+    } catch { $polluted = $true }
+  }
+  if ($polluted) { Remove-Item $dest -Recurse -Force }
+}
+
 function Install-AgentPlugin([string]$Name) {
   if ($DryRun) { Write-Host "DRY RUN - install Cursor Agent plugin at $HOME/.cursor/plugins/local/$Name"; return }
   if (-not (Test-CliInstalled agent)) { throw "agent is required to install the harness Cursor Agent plugin" }
@@ -548,6 +564,12 @@ function Install-SkillCreator {
         & codex plugin marketplace upgrade $CodexMarketplace *> $null
         Invoke-Native codex @("plugin", "add", "skill-creator@$CodexMarketplace")
       }
+      pi {
+        if ($DryRun) { Write-Host "DRY RUN - install skill-creator to ~/.agents/skills/skill-creator"; continue }
+        $dest = Join-Path $HOME ".agents/skills/skill-creator"
+        New-Item -ItemType Directory -Force (Split-Path $dest -Parent) | Out-Null
+        Invoke-Reconcile @("project-bundle", "skill-creator", $dest)
+      }
       agent { Install-AgentPlugin "skill-creator" }
     }
   }
@@ -729,7 +751,10 @@ foreach ($item in $Selected) {
         } else { Invoke-Native codex @("plugin", "add", "$item@$CodexMarketplace") }
       }
       opencode { Install-OpenCodePlugin $item }
-      agent { Install-AgentPlugin $item }
+      agent {
+        if ($item -eq "harness") { Install-AgentPlugin $item }
+        else { Remove-StaleAgentPluginPollution $item }
+      }
     }
   }
 }

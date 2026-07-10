@@ -35,3 +35,8 @@ combines independent project queues.
 
 Never modify product code in evaluator mode. Only `goal:true` satisfies the
 Completion Contract.
+
+Before the Goal Review verdict (pass or fail), tear down every resource this
+review session started (compose stacks, named containers, worktree servers,
+PORT-scoped browsers) — same `RESOURCE_CLEANUP_RULE` as coding/QA.
+Do not leave Docker leftovers for the next run.
