@@ -73,7 +73,11 @@ Before driving the Q&A, read this repo's domain documentation so your questions
 and the spec use the project's own vocabulary and respect decisions already made:
 `CONTEXT.md` / `CONTEXT-MAP.md` at the root and any relevant `docs/adr/`. If the
 active host has the `domain-modeling` skill, follow its consuming-domain-docs
-guidance. If none exist, proceed silently.
+guidance. Project that vocabulary into `<domain>` in the spec (glossary terms and
+bounded contexts). `CONTEXT.md` stays the living glossary for the repo;
+`<domain>` is the planning-time snapshot wired into the Completion Contract for
+agents that only read `project_specs.xml`. If none exist, proceed silently and
+establish terms in `<domain>` as grilling resolves them.
 
 ## Drive the Q&A (grilling is mandatory)
 
@@ -112,8 +116,11 @@ Interview loop:
 5. Keep going until **every** top-level section has real content **and** the
    Ready Gate passes.
 
-Write for a fresh agent with no memory of this interview. Define project-specific
-terms in plain language, state environment assumptions in `prerequisites`, make
+Write for a fresh agent with no memory of this interview. Capture product terms
+and bounded contexts in `<domain>` (glossary + relationships). Align
+`<core_features>` area names and `acceptance_check` `context` values with
+`bounded_contexts` when practical. State environment assumptions in
+`prerequisites`, make
 `implementation_steps` incremental and independently verifiable, and phrase
 `success_criteria` as behavior a user can observe. Where a decision has meaningful
 alternatives, include the chosen approach and its reason in the relevant section
@@ -128,7 +135,7 @@ feature that needs them. Do not call the project runnable until it starts withou
 the removed service and its primary smoke path succeeds.
 
 Required top-level sections (must all be present):
-`project_goal`, `overview`, `technology_stack`, `integrations`, `prerequisites`, `core_features`, `acceptance_checks`,
+`project_goal`, `overview`, `domain`, `technology_stack`, `integrations`, `prerequisites`, `core_features`, `acceptance_checks`,
 `planning_decisions`, `database_schema`, `api_endpoints_summary`, `ui_layout`, `design_system`,
 `key_interactions`, `implementation_steps`, `success_criteria`.
 
@@ -142,6 +149,13 @@ It must include at least one `<decision>` for each topic that applies
 explicit deferrals under `<deferred>` with reasons.
 Never finalize a spec whose Acceptance Checks would still change if an open
 ambiguity or trade-off were resolved later.
+
+`<domain>` is guidance for agents only — not validated by `reconcile.mjs`. Keep
+glossary entries tight (canonical term, avoided synonyms, one- or two-sentence
+definition). Document each bounded context's responsibility and upstream/downstream
+relationships. Use `generator_context` when the parallelism `context` name
+differs from the product context name. Set `<domain>removed</domain>` only when
+the user explicitly wants no domain model recorded.
 
 `core_features` is the spine of the whole pipeline: group features into clearly
 named areas (these become the `context` values the generator builds and the

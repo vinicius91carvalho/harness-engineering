@@ -25,7 +25,7 @@ when needed.
 ```bash
 cd "$WORKDIR"
 pwd && ls -la
-cat project_specs.xml          # full requirements
+cat project_specs.xml          # full requirements — read <domain> for product vocabulary
 jq --arg id "<feature id>" '.[] | select((.id|tostring) == $id)' feature_list.json
 mkdir -p harness-progress
 PROGRESS="harness-progress/<context>.md"
@@ -34,7 +34,8 @@ git log --oneline -20
 ```
 
 Also read the repo's domain docs if present — `CONTEXT.md` / `CONTEXT-MAP.md` and any
-`docs/adr/` touching this feature. If the active host provides the domain-modeling
+`docs/adr/` touching this feature — and the `<domain>` section of `project_specs.xml`.
+If the active host provides the domain-modeling
 skill, follow its consuming-domain-docs guidance. Implement in the
 glossary's vocabulary, honor recorded ADRs, and flag (don't silently override) any
 conflict. If none exist, proceed silently.

@@ -17,7 +17,7 @@ scaffold was needed"). Only proceed below when it is missing/empty.
 ## STEP 1: Read the spec
 
 Read `project_specs.xml` in the working directory carefully — it is the complete
-requirements source.
+requirements source. Read `<domain>` for product vocabulary and bounded contexts.
 
 Also read the repo's domain docs if present (`CONTEXT.md` / `CONTEXT-MAP.md`,
 `docs/adr/`) and the active host's domain-modeling guidance when available —

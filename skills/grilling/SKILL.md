@@ -23,7 +23,7 @@ Anything a second reader could interpret two ways that would change Acceptance C
 
 Examples: who the actor is, what “done” looks like, soft vs hard deletes, guest vs signed-in, offline behavior, empty states, sorting defaults, timezone, locale, idempotency.
 
-For each ambiguity: state the interpretations, recommend one, capture the choice and why in the specification, and point at the Acceptance Check IDs that prove it.
+For each ambiguity: state the interpretations, recommend one, capture the choice and why in the specification, point at the Acceptance Check IDs that prove it, and add or update the canonical term under `<domain><glossary>` when vocabulary was fuzzy.
 
 ### 2. Architectural trade-offs
 

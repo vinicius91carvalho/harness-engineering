@@ -24,7 +24,7 @@ The installer then clones the **latest GitHub Release tag** (or a pin — see [I
 
 | Step | What you type | What happens |
 | --- | --- | --- |
-| **2. Plan** | `/harness:planner Build a notes app where a user can publish a note and find it after reloading.` | Grills you one question at a time (ambiguities, trade-offs, edge cases), then writes `project_specs.xml` with Acceptance Checks and `<planning_decisions>` |
+| **2. Plan** | `/harness:planner Build a notes app where a user can publish a note and find it after reloading.` | Grills you one question at a time (ambiguities, trade-offs, edge cases), then writes `project_specs.xml` with `<domain>`, Acceptance Checks, and `<planning_decisions>` |
 | **3. Build** | `/harness:generator` | Claims work, codes, QA's, integrates — answer **All** for a new project |
 | **4. Know you're done** | Goal Review passes; every Work Item shows `implementation`, `qa`, and `integration` | Not when the chat goes quiet |
 
@@ -109,7 +109,7 @@ See [CONTEXT.md](CONTEXT.md) for the full glossary and bounded contexts.
 
 ## How the workflow runs
 
-1. **Specify** — planner grills open product questions, then writes the Project Goal, Acceptance Checks, and `<planning_decisions>` (setup maps an existing repo without grilling a new goal).
+1. **Specify** — planner grills open product questions, then writes the Project Goal, product vocabulary and bounded contexts under `<domain>`, Acceptance Checks, and `<planning_decisions>` (setup maps an existing repo without grilling a new goal).
 2. **Reconcile** — generator maps every check to a Work Item (missing mappings block execution).
 3. **Claim** — each ready context gets a lease, branch, worktree, and port.
 4. **Build & inspect** — coding-agent implements; qa-agent tests at a real boundary.
@@ -211,7 +211,7 @@ Select only the new context when generator lists unbuilt work.
 
 | Path | Meaning |
 | --- | --- |
-| `project_specs.xml` | Project Goal, Acceptance Checks, and grilled `<planning_decisions>` |
+| `project_specs.xml` | Project Goal, `<domain>` (glossary + bounded contexts), Acceptance Checks, and grilled `<planning_decisions>` |
 | `feature_list.json` | Immutable Work Item catalog (reconciled from Acceptance Checks; each item may list `planning_decision_ids`) |
 | `.git/harness-ledger/` | Execution Ledger: mutable implementation, QA, integration, Attempt, Blocking Scope |
 | `harness-progress/` | Human-readable Workflow Journals |
@@ -225,7 +225,7 @@ Select only the new context when generator lists unbuilt work.
 
 ### Example: `project_specs.xml`
 
-The specification is the completion contract: stable Acceptance Checks that define what "done" means, plus grilled `<planning_decisions>` so product questions are not left for mid-build chat.
+The specification is the completion contract: stable Acceptance Checks that define what "done" means, product vocabulary under `<domain>` so agents share one language, plus grilled `<planning_decisions>` so product questions are not left for mid-build chat.
 
 ```xml
 <project_specification>
@@ -233,6 +233,22 @@ The specification is the completion contract: stable Acceptance Checks that defi
   <project_goal>
     Published notes remain available after reload.
   </project_goal>
+  <domain>
+    <glossary>
+      <term name="Note" avoid="Post, Entry">
+        A titled body of text owned by a signed-in User.
+      </term>
+      <term name="User" avoid="Account, Member">
+        A person authenticated to create and read their own Notes.
+      </term>
+    </glossary>
+    <bounded_contexts>
+      <context name="notes" generator_context="notes">
+        <responsibility>Capture, list, and reload Notes for a User.</responsibility>
+        <relationships>Standalone context for this MVP.</relationships>
+      </context>
+    </bounded_contexts>
+  </domain>
   <acceptance_checks>
     <acceptance_check
       id="AC-001"

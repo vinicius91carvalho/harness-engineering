@@ -26,6 +26,37 @@
     <!-- 1-2 paragraphs: what it is, who it's for, the experience to deliver. Be ambitious. -->
   </overview>
 
+  <domain>
+    <!--
+      Product vocabulary and bounded contexts — guidance for agents only (not
+      validated by reconcile). Mirror CONTEXT.md / CONTEXT-MAP.md when those
+      exist; otherwise establish terms here during planning. Set the whole
+      section body to `removed` when the product has no meaningful domain split.
+    -->
+    <glossary>
+      <!--
+        Canonical product terms. Use `avoid` for overloaded synonyms agents must
+        not mix into APIs, UI copy, or Acceptance Checks.
+      -->
+      <term name="" avoid="">
+        <!-- one or two sentences: what it IS, not what it does -->
+      </term>
+    </glossary>
+    <bounded_contexts>
+      <!--
+        Product areas and how they relate. `generator_context` names the matching
+        <core_features> area / acceptance_check context when it differs from the
+        bounded-context name.
+      -->
+      <context name="" generator_context="">
+        <responsibility><!-- what this context owns --></responsibility>
+        <relationships>
+          <!-- upstream/downstream context names and integration in plain language -->
+        </relationships>
+      </context>
+    </bounded_contexts>
+  </domain>
+
   <technology_stack>
     <general>
       <!-- repo style, deployment, conventions (e.g. monorepo, Docker, Conventional Commits) -->

@@ -18,7 +18,7 @@ internals.
 
 ```bash
 cd "$WORKDIR"
-cat project_specs.xml
+cat project_specs.xml          # read <domain> for product vocabulary and bounded contexts
 jq --arg id "<feature id>" '.[] | select((.id|tostring) == $id)' feature_list.json
 mkdir -p harness-progress
 PROGRESS="harness-progress/<context>.md"
