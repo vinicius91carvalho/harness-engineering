@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [2.5.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.4.0...v2.5.0) (2026-07-10)
+
+
+### Features
+
+* **planner:** add <domain> section for product vocabulary in specs ([4716c9e](https://github.com/vinicius91carvalho/harness-engineering/commit/4716c9e0f7afdf8c92ac432e72fe4132b2f9c3a2))
+
 ## [2.4.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.3.1...v2.4.0) (2026-07-10)
 
 
