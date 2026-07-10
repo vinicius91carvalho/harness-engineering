@@ -1139,7 +1139,9 @@ test('resource governor denies admission when full', async () => {
     maxWorkers: 1,
     quotaWorkers: 1,
     cpuPerWorker: 0.25,
-    memoryPerWorkerMb: 128,
+    // Keep memory tiny so low-free-RAM CI runners (macOS) still have memory slots;
+    // capacity denial under test is from maxWorkers/quotaWorkers, not host RAM.
+    memoryPerWorkerMb: 1,
     reserveMemoryMb: 0,
     maxLoadRatio: 100,
   }
