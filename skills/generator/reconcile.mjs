@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { atomicJson } from './lib/fs-json.mjs'
 import { integrationBranchName } from './lib/integration-branch.mjs'
+import { inferObservationMethod, workItemObservationMethods } from './lib/observation-method.mjs'
 
 function fail(message) {
   process.stderr.write(`reconcile: ${message}\n`)
@@ -60,6 +61,7 @@ function parseChecks(xml) {
         id,
         context,
         category: attribute(match[1], 'category') || 'functional',
+        observation: attribute(match[1], 'observation') || '',
         description: body(match[2], 'description'),
         dependencies,
       }
@@ -117,10 +119,17 @@ const missing = checks.filter((check) => !mapped.has(check.id))
 if (checkOnly && missing.length) fail(`unmapped acceptance checks: ${missing.map((check) => check.id).join(', ')}`)
 
 for (const check of missing) {
+  const observation_method = inferObservationMethod({
+    category: check.category,
+    description: check.description,
+    observation: check.observation,
+  })
   queue.push({
     id: `WI-${check.id}`,
     context: check.context,
     category: check.category,
+    observation_method,
+    observation_methods: [observation_method],
     description: check.description,
     steps: [`Verify ${check.id}: ${check.description}`],
     acceptance_checks: [check.id],
@@ -136,7 +145,17 @@ for (const check of missing) {
 
 const byCheck = new Map(checks.map((check) => [check.id, check]))
 const filled = []
+let observationFilled = 0
 for (const item of queue) {
+  const methods = workItemObservationMethods(item, byCheck)
+  if (!item.observation_method || item.observation_method !== methods[0]) {
+    item.observation_method = methods[0]
+    item.observation_methods = methods
+    observationFilled += 1
+  } else if (!Array.isArray(item.observation_methods)) {
+    item.observation_methods = methods
+    observationFilled += 1
+  }
   const internal = new Set(item.acceptance_checks)
   const expected = new Set(item.acceptance_checks.flatMap((id) => byCheck.get(id)?.dependencies || []).filter((id) => !internal.has(id)))
   const actual = new Set(item.depends_on || [])
@@ -147,7 +166,7 @@ for (const item of queue) {
   filled.push(item.id)
 }
 
-if (!checkOnly && (missing.length || filled.length)) {
+if (!checkOnly && (missing.length || filled.length || observationFilled)) {
   await atomicJson(queueFile, queue)
 }
 

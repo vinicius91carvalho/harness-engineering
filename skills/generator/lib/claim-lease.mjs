@@ -393,6 +393,24 @@ function mergeBusySignal() {
   process.stdout.write('BUSY\n')
 }
 
+function readMergeLockHolder(mergeLockDir) {
+  const owner = existsSync(join(mergeLockDir, 'owner'))
+    ? readFileSync(join(mergeLockDir, 'owner'), 'utf8').trim()
+    : ''
+  const host = existsSync(join(mergeLockDir, 'host'))
+    ? readFileSync(join(mergeLockDir, 'host'), 'utf8').trim()
+    : ''
+  return { owner, host }
+}
+
+/** Peek at the current merge-lock holder without trying to acquire. */
+export function mergeLockHolder(repo) {
+  const { mergeLockDir } = repoPaths(repo)
+  if (!existsSync(mergeLockDir)) return { busy: false, owner: '', host: '' }
+  const holder = readMergeLockHolder(mergeLockDir)
+  return { busy: Boolean(holder.owner), ...holder }
+}
+
 export function mergeAcquire(repo, session) {
   const { mergeLockDir, repo: repoPath, prefix } = repoPaths(repo)
   mkdirSync(dirname(mergeLockDir), { recursive: true })
@@ -402,13 +420,13 @@ export function mergeAcquire(repo, session) {
   } catch {
     if (!stealDeadMergeLock(mergeLockDir)) {
       mergeBusySignal()
-      return { busy: true }
+      return { busy: true, ...readMergeLockHolder(mergeLockDir) }
     }
     try {
       mkdirSync(mergeLockDir)
     } catch {
       mergeBusySignal()
-      return { busy: true }
+      return { busy: true, ...readMergeLockHolder(mergeLockDir) }
     }
   }
   writeFileSync(join(mergeLockDir, 'owner'), `${session ?? process.pid}\n`)

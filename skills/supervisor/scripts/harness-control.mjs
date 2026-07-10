@@ -34,14 +34,14 @@ const { computeCapacity } = await importLib('capacity.mjs')
 const { scopeClaims, runStateFile: runStatePath } = await importLib('project-keys.mjs')
 const { readWorkerResult } = await importLib('worker-result.mjs')
 const { cleanupBrowserOrphans } = await importLib('browser-cleanup.mjs')
-const { isWorkerStuck, stuckThresholdMs } = await importLib('stuck-worker.mjs')
+const { isWorkerStuck, isWorkerStuckByHealth, stuckThresholdMs, assessWorkerHealth } = await importLib('stuck-worker.mjs')
 const { interpretWorkerOutcome } = await importLib('worker-outcome.mjs')
 const { planWorkerClosedActions } = await importLib('worker-lifecycle.mjs')
 const { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } = await importLib('supervisor-tick.mjs')
 const { planTickAdmission } = await importLib('supervisor-admission.mjs')
 const { pruneOrphanPendingInputs, isCrashBoundContext } = await importLib('supervisor-claims.mjs')
 const { planAutoRetryResponses } = await importLib('supervisor-auto-respond.mjs')
-const { selectClaim, resumeClaim, releaseClaim } = await importLib('claim-lease.mjs')
+const { selectClaim, resumeClaim, releaseClaim, mergeLockHolder } = await importLib('claim-lease.mjs')
 const { integrationBranchName, integrationBranchRef } = await importLib('integration-branch.mjs')
 const {
   resolveDisplayMode, spawnAgent, closeWorkerDisplay, renameWorkerTab,
@@ -49,7 +49,7 @@ const {
   reportHarnessAgent, detectPaneWaiting, detectPaneOrchestratorExited, detectPaneMergeLockWait,
   paneShowsIdleShell, listProjectWorkerAgents, contextFromWorkerAgent, getFocusedWorkspaceId,
   listHarnessWorkerTabs, closeDanglingShellPanes, closeStaleHarnessPanesForProject,
-  closeAllDanglingHarnessShells,
+  closeAllDanglingHarnessShells, listPaneScroll,
 } = await import(pathToFileURL(join(supervisorLib, 'herdr-spawn.mjs')).href)
 const orchestrator = join(generatorDir, 'orchestrator.mjs')
 const reconciler = join(generatorDir, 'reconcile.mjs')
@@ -572,17 +572,75 @@ class Supervisor {
   }
 
   async inspectStuckWorkers() {
+    const scrollMap = listPaneScroll()
+    const prevScroll = this._paneScrollSample || new Map()
+    this._paneScrollSample = scrollMap
+    const lock = mergeLockHolder(repo)
+    const lockAlive = lock.busy && lock.owner ? processAlive(Number(lock.owner)) : false
+    const healthByContext = {}
+
     for (const [key, worker] of [...this.workers]) {
       const runState = await readJson(runStateFile(key), {})
-      if (worker.type === 'herdr') {
-        if (!paneExists(worker.paneId)) continue
-        // Never kill on herdr blocked alone — harness reports blocked for merge locks and
-        // between pi/codex turns. Trust orchestrator heartbeat and pane exit instead.
-        if (!(await isWorkerStuck({ logFile: worker.logFile, runState, thresholdMs: this.config.stuckTimeoutMs }))) continue
-      } else {
-        if (!(await isWorkerStuck({ logFile: worker.logFile, runState, thresholdMs: this.config.stuckTimeoutMs }))) continue
+      const now = Date.now()
+      const heartbeatEpoch = Number(runState.heartbeatEpoch || 0)
+      const runStateAgeMs = heartbeatEpoch > 0 ? now - heartbeatEpoch * 1000 : 0
+      let lastAgentOutputAgeMs = null
+      if (runState.lastAgentOutputAt) {
+        const ts = Date.parse(runState.lastAgentOutputAt)
+        if (Number.isFinite(ts)) lastAgentOutputAgeMs = now - ts
       }
-      await this.emit('worker_stuck', { context: key, logFile: worker.logFile, phase: runState.phase }, true)
+      const childAlive = Boolean(runState.childPid && processAlive(runState.childPid))
+      let health
+
+      if (worker.type === 'herdr' && worker.paneId && paneExists(worker.paneId)) {
+        const scroll = scrollMap.get(worker.paneId) ?? 0
+        const prev = prevScroll.get(worker.paneId)
+        const scrollDelta = prev == null ? 0 : scroll - prev
+        const tail = readPaneTail(worker.paneId, 60)
+        const paneStatus = getPaneAgentStatus(worker.paneId)
+        health = assessWorkerHealth({
+          runStateAgeMs,
+          childAlive,
+          paneStatus,
+          scrollDelta,
+          tailText: tail,
+          lastAgentOutputAgeMs,
+          runStatus: runState.status || '',
+          mergeHolderAlive: lockAlive,
+          thresholds: { agentOutputStuckMs: this.config.stuckTimeoutMs },
+        })
+      } else {
+        // Background workers: fall back to log/heartbeat age
+        const stuck = await isWorkerStuck({
+          logFile: worker.logFile,
+          runState,
+          thresholdMs: this.config.stuckTimeoutMs,
+        })
+        health = stuck
+          ? { verdict: 'stuck', tailClass: 'unknown', reason: 'log/heartbeat stale', recycle: true }
+          : { verdict: 'healthy', tailClass: 'unknown', reason: 'log/heartbeat fresh', recycle: false }
+      }
+
+      healthByContext[key] = {
+        ...health,
+        phase: runState.phase || null,
+        childPid: runState.childPid || null,
+        lastAgentOutputAt: runState.lastAgentOutputAt || null,
+      }
+
+      const prevHealth = this.state.workerHealth?.[key]
+      if (!prevHealth || prevHealth.verdict !== health.verdict || prevHealth.tailClass !== health.tailClass) {
+        await this.emit('worker_health', { context: key, ...health }, health.verdict === 'stuck')
+      }
+
+      if (!isWorkerStuckByHealth(health)) continue
+
+      await this.emit('worker_stuck', {
+        context: key,
+        logFile: worker.logFile,
+        phase: runState.phase,
+        health,
+      }, true)
       if (worker.type === 'herdr') closeWorkerDisplay(worker.paneId, worker.tabId)
       else try { worker.child.kill('SIGTERM') } catch {}
       if (worker.type !== 'herdr') {
@@ -590,11 +648,20 @@ class Supervisor {
       }
       this.state.retryQueue ||= {}
       this.state.retryQueue[key] = {
-        guidance: 'Supervisor detected a stuck worker with no recent log or heartbeat activity; resume after confirming the worktree is healthy',
+        guidance: health.reason
+          || 'Supervisor detected a stuck worker with no recent agent output; resume after confirming the worktree is healthy',
         attempts: this.state.retryQueue[key]?.attempts || 0,
       }
       await this.save()
     }
+
+    const mergeInfo = lock.busy
+      ? { owner: lock.owner || null, host: lock.host || null, holderAlive: lockAlive }
+      : null
+    await this.save({
+      workerHealth: healthByContext,
+      mergeLock: mergeInfo,
+    })
   }
 
   async inspectHerdrWorkers() {

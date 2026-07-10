@@ -309,8 +309,35 @@ export function isPaneBlocked(paneId) {
 
 export function readPaneTail(paneId, lines = 80) {
   if (!paneExists(paneId)) return ''
-  const result = spawnSync('herdr', ['pane', 'read', paneId, '--source', 'recent-unwrapped', '--lines', String(lines)], { encoding: 'utf8' })
+  const scroll = paneScrollOffset(paneId)
+  const source = scroll > 0 ? 'recent-unwrapped' : 'visible'
+  const result = spawnSync('herdr', ['pane', 'read', paneId, '--source', source, '--lines', String(lines), '--format', 'text'], { encoding: 'utf8' })
   return result.stdout || ''
+}
+
+/** Current scroll.max_offset_from_bottom for a pane (0 if unknown). */
+export function paneScrollOffset(paneId) {
+  try {
+    const parsed = JSON.parse(herdr(['pane', 'list']))
+    const pane = (parsed.result?.panes || []).find((p) => p.pane_id === paneId)
+    return Number(pane?.scroll?.max_offset_from_bottom || 0)
+  } catch {
+    return 0
+  }
+}
+
+/** Map of paneId → scroll offset for all panes (one herdr call). */
+export function listPaneScroll() {
+  try {
+    const parsed = JSON.parse(herdr(['pane', 'list']))
+    const out = new Map()
+    for (const pane of parsed.result?.panes || []) {
+      out.set(pane.pane_id, Number(pane.scroll?.max_offset_from_bottom || 0))
+    }
+    return out
+  } catch {
+    return new Map()
+  }
 }
 
 const reportSeqByPane = new Map()

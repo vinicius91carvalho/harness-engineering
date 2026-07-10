@@ -16,6 +16,8 @@ Isolated Work Items use `gen/<project>-<context>` branches that merge only into 
 plan branch — never into `main`/`master` while the plan is in flight. Pin the branch
 in `.harness/integration-branch` at the Git root (one line) or set
 `HARNESS_INTEGRATION_BRANCH` for a single run.
+Harness repo edits during an in-flight plan also land on that plan branch (side jobs
+branch from it and merge back) — never directly onto `main`/`master`.
 
 A QA defect follows:
 
@@ -24,6 +26,27 @@ A QA defect follows:
 Three failed Attempts block with user-visible evidence. Never delete a blocked
 branch or worktree. Direct execution uses the host's configured model. Only an
 optional project-local `.harness/roles.json` selects or orders model IDs.
+
+**Coding route is open-source-first:** when using `config/roles.example.json` /
+`.harness/roles.json`, keep coding candidates on free/OSS hosts first
+(OpenCode Go / NIM / free tiers), then Composer, then Claude/Codex as rescue.
+Do not reorder coding to put expensive models first. Ops monitoring hosts
+(supervisor recycles) are separate — see `monorepo-supervisor-ops`.
+
+**QA observation method:** exercise each Acceptance Check with the method it
+specifies (grep/file audit, CLI exit code, real HTTP, or real browser).
+Do not start a server or browser for a static audit.
+Emit the harness verdict as soon as the check passes or fails.
+Reconcile stores `observation_method` on Work Items; http/browser validation
+prefers agent/Codex/Claude over pi as first pick.
+
+**Defect class routing:** optional verdict `defectClass`
+(`product` | `observation_mismatch` | `infra` | `quota` | `merge_conflict`)
+drives repair (switch host / block / repair-plan). Infra and coding exhaustion
+are not auto-retried.
+
+**Lean Cursor agent MCP:** generator `agent` spawns without `--approve-mcps` so
+disabled Playwright/Crawl4AI do not delay first tokens on herdr panes.
 
 Let `PROJECT` be the directory containing `project_specs.xml`, `GIT_ROOT` be its
 Git top-level, `GEN` this skill directory, and `HOST` the current host (`claude`,

@@ -3,6 +3,22 @@ export const VERDICT_END = '===HARNESS-VERDICT-END==='
 
 export const VERDICT_HINT = `Emit that JSON as the very last thing you print, on its own lines, wrapped exactly:\n${VERDICT_BEGIN}\n{...}\n${VERDICT_END}`
 
+/** True when a full BEGIN…END verdict block is present (agent may hang after printing it). */
+export function hasCompleteVerdict(text) {
+  const open = String(text || '').lastIndexOf(VERDICT_BEGIN)
+  if (open < 0) return false
+  const rest = text.slice(open + VERDICT_BEGIN.length)
+  const close = rest.indexOf(VERDICT_END)
+  if (close < 0) return false
+  const body = rest.slice(0, close).trim()
+  try {
+    const v = JSON.parse(body)
+    return Boolean(v && typeof v === 'object')
+  } catch {
+    return false
+  }
+}
+
 export function parseObject(text) {
   const trimmed = text.trim()
   const open = trimmed.lastIndexOf(VERDICT_BEGIN)

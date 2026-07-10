@@ -21,6 +21,14 @@ printf '%s %s\n' "$(basename "$0")" "$*" >>"$HARNESS_TEST_LOG"
 EOF
   chmod +x "$TMP/bin/$cli"
 done
+for tool in pip pip3 crawl4ai-setup crawl4ai-doctor; do
+  cat >"$TMP/bin/$tool" <<'EOF'
+#!/bin/sh
+printf '%s %s\n' "$(basename "$0")" "$*" >>"$HARNESS_TEST_LOG"
+exit 0
+EOF
+  chmod +x "$TMP/bin/$tool"
+done
 
 export PATH="$TMP/bin:/usr/bin:/bin"
 export HOME="$TMP/home"
@@ -82,6 +90,8 @@ after=$(find "$HOME" -mindepth 1 -print | sort)
 grep -q 'codebase-memory-mcp' "$TMP/out" || fail 'dry-run should describe memory integration'
 grep -q 'configure context7 MCP for:claude codex opencode pi agent' "$TMP/out" || fail 'Context7 should target every host'
 grep -q 'configure playwright MCP for:claude codex opencode pi agent' "$TMP/out" || fail 'Playwright should target every host'
+grep -q 'pip install -U crawl4ai' "$TMP/out" || fail 'Crawl4AI pip install should appear in dry-run'
+grep -q 'install crawl4ai skill to ~/.claude/skills/crawl4ai' "$TMP/out" || fail 'Crawl4AI Claude skill install should appear in dry-run'
 grep -q 'MCP inventory for:claude codex opencode pi agent' "$TMP/out" || fail 'MCP inventory should target every selected host'
 grep -q 'marketplace upgrade ponytail' "$TMP/out" || fail 'Codex Ponytail marketplace should be idempotent'
 grep -q 'plugin add ponytail@ponytail' "$TMP/out" || fail 'Codex Ponytail should use its upstream marketplace'
@@ -162,11 +172,10 @@ if grep -Eq 'skill-creator|hookify|claude-md-management|claude-code-setup|ralph-
 fi
 pass 'plugin catalogs keep memory and Claude-only integrations out of marketplaces'
 
-if grep -q 'BRIGHTDATA_TOKEN' "$ROOT/.mcp.json" "$ROOT/.codex-plugin/mcp.json"; then
-  fail 'active MCP manifests must not install unresolved Bright Data secrets'
+if grep -qi 'brightdata' "$ROOT/.mcp.json" "$ROOT/.codex-plugin/mcp.json"; then
+  fail 'active MCP manifests must not ship Bright Data'
 fi
-grep -q 'BRIGHTDATA_TOKEN' "$ROOT/config/mcp.json" || fail 'Bright Data must remain in the prompted MCP inventory'
-pass 'secret-backed MCP servers are installed only through the prompted inventory'
+pass 'active MCP manifests do not ship removed integrations'
 
 # Regression: a "remote" install (no local checkout next to install.sh, as with
 # `curl | sh`) clones into a temp dir that its own cleanup trap deletes on

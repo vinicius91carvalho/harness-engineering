@@ -1,4 +1,5 @@
 import { readStrikes as readStrikesFromLease, strike } from './claim-lease.mjs'
+import { filterCandidatesForObservation } from './observation-method.mjs'
 
 export function mkey(harness, model) {
   return `${harness}|${model || ''}`
@@ -48,6 +49,7 @@ export function buildCandidates({
   roleNames,
   codedBy,
   state,
+  observationMethods = [],
 }) {
   const roles = plan?.roles
   const direct = !roles
@@ -55,7 +57,7 @@ export function buildCandidates({
   const strikes = plan?.strikes || {}
 
   if (direct) {
-    return [{ harness: options.host }]
+    return filterCandidatesForObservation([{ harness: options.host }], observationMethods, kind)
   }
 
   const roleList = [...plan.sortedRoles[role]]
@@ -69,5 +71,5 @@ export function buildCandidates({
   const offset = kind === 'CODING'
     ? Math.min(Math.floor((attempt - 1) / repairBudget) + (plan.coderDeclines || 0), pool.length - 1)
     : 0
-  return pool.slice(offset)
+  return filterCandidatesForObservation(pool.slice(offset), observationMethods, kind)
 }

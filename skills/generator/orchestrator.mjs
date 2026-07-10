@@ -7,7 +7,7 @@ import { hostname } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readJson, atomicJson } from './lib/fs-json.mjs'
-import { parseObject, VERDICT_HINT, isProviderQuotaLimited, fallbackReason } from './lib/verdict.mjs'
+import { parseObject, hasCompleteVerdict, VERDICT_HINT, isProviderQuotaLimited, fallbackReason } from './lib/verdict.mjs'
 import { writeWorkerResult } from './lib/worker-result.mjs'
 import { cleanupBrowserOrphans } from './lib/browser-cleanup.mjs'
 import { spawnHostAgent, hostSpawnVisible } from './lib/agent-spawn.mjs'
@@ -19,6 +19,7 @@ import { integrationBranchName } from './lib/integration-branch.mjs'
 import { createWorkflowState } from './lib/workflow-state.mjs'
 import { buildPlan, buildCandidates, lastCoder, mkey, bumpStrike } from './lib/route-plan.mjs'
 import { blockClaim, mergeAcquire, mergeRelease } from './lib/claim-lease.mjs'
+import { workItemObservationMethods } from './lib/observation-method.mjs'
 import { runAttemptLoop } from './workflow/attempt-machine.mjs'
 
 function fail(message) {
@@ -84,10 +85,16 @@ let heartbeatTimer
 
 function terminateChild(signal = 'SIGTERM') {
   if (!child?.pid) return
+  const pid = child.pid
+  const sig = signal === 'SIGKILL' ? 'SIGKILL' : 'SIGTERM'
+  // `script` wraps the host CLI — kill the whole tree, not only the script parent.
   try {
-    if (process.platform === 'win32') child.kill(signal)
-    else process.kill(-child.pid, signal)
-  } catch { try { child.kill(signal) } catch {} }
+    if (process.platform !== 'win32') {
+      spawnSync('pkill', [`-${sig === 'SIGKILL' ? '9' : '15'}`, '-P', String(pid)], { stdio: 'ignore' })
+      try { process.kill(-pid, sig) } catch {}
+    }
+  } catch {}
+  try { child.kill(sig) } catch {}
 }
 
 const workflow = createWorkflowState({
@@ -203,6 +210,7 @@ async function spawnAgent(program, args, cwd) {
   const visible = hostSpawnVisible()
   const spawnArgs = withVisibleAgentMode(program, args, visible)
   const formatter = visible ? createAgentStreamFormatter() : null
+  const heartbeatMs = Number(process.env.HARNESS_PANE_HEARTBEAT_MS || 20_000)
   return await new Promise((resolveRun) => {
     child = spawnHostAgent(program, spawnArgs, {
       cwd,
@@ -214,20 +222,79 @@ async function spawnAgent(program, args, cwd) {
       visible,
     })
     let stdout = '', stderr = '', timedOut = false, settled = false
-    const finish = (result) => { if (!settled) { settled = true; child = null; resolveRun(result) } }
+    let lastPaneAt = Date.now()
+    let verdictSeen = false
+    let sawAgentStream = false
+    let paneHeartbeat = null
+    const finish = (result) => {
+      if (settled) return
+      settled = true
+      if (paneHeartbeat) clearInterval(paneHeartbeat)
+      child = null
+      resolveRun(result)
+    }
+    const notePaneActivity = (fromAgent = false) => {
+      lastPaneAt = Date.now()
+      if (fromAgent) {
+        sawAgentStream = true
+        // Progress signal for supervisor health plane (not pane heartbeats).
+        writeState({ lastAgentOutputAt: new Date().toISOString() }).catch(() => {})
+      }
+    }
+    if (visible && heartbeatMs > 0) {
+      process.stdout.write(`agent: started (${program}${spawnArgs.includes('--model') ? ` ${spawnArgs[spawnArgs.indexOf('--model') + 1] || ''}` : ''})\n`)
+      process.stdout.write('agent: waiting for first token (MCP/plugin warmup can take ~30–90s before thinking/tools appear)…\n')
+      notePaneActivity(false)
+      paneHeartbeat = setInterval(() => {
+        if (settled) return
+        const quietSec = Math.round((Date.now() - lastPaneAt) / 1000)
+        if (quietSec < Math.max(15, heartbeatMs / 1000 - 1)) return
+        let phase
+        if (verdictSeen) phase = 'verdict received — waiting for agent exit'
+        else if (!sawAgentStream) phase = 'still waiting for first token / MCP warmup'
+        else phase = 'still working'
+        process.stdout.write(`agent: ${phase} (${quietSec}s since last log)\n`)
+        notePaneActivity(false)
+      }, heartbeatMs)
+    }
     const registered = writeState({ childPid: child.pid || null }).catch((error) => { terminateChild(); fail(error.message) })
+    const maybeEarlyExitOnVerdict = () => {
+      if (verdictSeen || settled) return
+      // Only scan formatted assistant text — raw stream-json embeds the VERDICT_HINT
+      // markers inside JSON strings and must not be searched with hasCompleteVerdict.
+      const assistant = formatter?.assistantText() || ''
+      const parsed = parseObject(assistant)
+      // Require a real Work Item id — ignore VERDICT_HINT `{...}` placeholders in prompts.
+      if (!parsed || typeof parsed !== 'object' || !parsed.id) return
+      verdictSeen = true
+      if (visible) {
+        process.stdout.write(`agent: harness verdict received (id=${parsed.id}) — stopping agent\n`)
+        notePaneActivity(false)
+      }
+      // Cursor agent often keeps the process alive after printing the verdict.
+      setTimeout(() => { if (!settled) terminateChild('SIGTERM') }, 500)
+      setTimeout(() => { if (!settled) terminateChild('SIGKILL') }, 4_000)
+    }
     child.stdout?.on('data', (data) => {
       stdout = `${stdout}${data}`.slice(-1_000_000)
       if (visible) {
         const text = String(data)
         if (/^BUSY\n?$/.test(text.trim())) return
         const paneText = formatter ? formatter.push(text) : text
-        if (paneText) process.stdout.write(paneText)
+        if (paneText) {
+          process.stdout.write(paneText)
+          notePaneActivity(true)
+        }
       }
+      maybeEarlyExitOnVerdict()
     })
     child.stderr?.on('data', (data) => {
       stderr = `${stderr}${data}`.slice(-1_000_000)
-      if (visible) process.stderr.write(data)
+      if (visible) {
+        process.stderr.write(data)
+        notePaneActivity(true)
+      }
+      maybeEarlyExitOnVerdict()
     })
     const timeout = setTimeout(() => { timedOut = true; terminateChild() }, Number(process.env.HARNESS_AGENT_TIMEOUT_MS || 1_800_000))
     child.on('close', async (code) => {
@@ -240,13 +307,16 @@ async function spawnAgent(program, args, cwd) {
       const assistant = formatter?.assistantText()?.trim() || ''
       const detail = (stderr || assistant || stdout || '').trim()
       const parseSource = assistant || stdout || stderr
+      const parsed = parseObject(parseSource)
+      // Early SIGTERM after a complete verdict is success, not failure.
+      const ok = (!timedOut && (code === 0 || (verdictSeen && parsed))) 
       finish({
-        ok: code === 0 && !timedOut,
+        ok,
         code,
         detail,
         stdout: assistant || stdout,
         stderr,
-        parsed: parseObject(parseSource),
+        parsed,
         timedOut,
       })
     })
@@ -270,6 +340,16 @@ async function runAgent(kind, prompt, id, attempt, cwd = options.workdir) {
   const state = getState()
   const codedBy = await recentCodingHarness(id) || [...(state.routeHistory || [])].reverse()
     .find((entry) => entry.kind === 'CODING' && String(entry.id) === String(id) && entry.outcome === 'selected')?.harness
+  let observationMethods = []
+  try {
+    const queue = await readJson(join(cwd, 'feature_list.json'), [])
+    const feature = (Array.isArray(queue) ? queue : []).find((item) => String(item.id) === String(id))
+    if (feature) {
+      observationMethods = Array.isArray(feature.observation_methods) && feature.observation_methods.length
+        ? feature.observation_methods
+        : workItemObservationMethods(feature)
+    }
+  } catch { /* best-effort */ }
   const candidates = buildCandidates({
     plan,
     kind,
@@ -278,6 +358,7 @@ async function runAgent(kind, prompt, id, attempt, cwd = options.workdir) {
     roleNames,
     codedBy,
     state,
+    observationMethods,
   })
   const failures = []
   for (const candidate of candidates) {
@@ -378,15 +459,29 @@ async function planRepair(feature, attempt, defectReport) {
 async function acquireMergeLock() {
   const tryBudget = Number(process.env.HARNESS_MERGE_LOCK_TRIES || 3600)
   const visible = hostSpawnVisible()
+  const startedAt = Date.now()
   let lastLog = 0
   for (let tries = 0; tries < tryBudget; tries++) {
     const result = mergeAcquire(options.repo, process.pid)
     if (!result.busy && result.integDir) {
-      if (visible) process.stderr.write('orchestrator: merge lock acquired\n')
+      if (visible) {
+        const waitedSec = Math.round((Date.now() - startedAt) / 1000)
+        process.stderr.write(
+          waitedSec > 0
+            ? `orchestrator: merge lock acquired after ${waitedSec}s — starting agent (thinking/tools will stream here)\n`
+            : 'orchestrator: merge lock acquired\n',
+        )
+      }
       return result.integDir
     }
-    if (visible && Date.now() - lastLog >= 10_000) {
-      process.stderr.write('orchestrator: waiting for merge lock (another context is integrating)…\n')
+    if (visible && Date.now() - lastLog >= 15_000) {
+      const waitedSec = Math.round((Date.now() - startedAt) / 1000)
+      const who = result.owner
+        ? `holder pid=${result.owner}${result.host ? ` @${result.host}` : ''}`
+        : 'another context is integrating'
+      process.stderr.write(
+        `orchestrator: waiting for merge lock (${who}; waited ${waitedSec}s) — this tab stays idle until that worker finishes integration; watch the holder pane for thinking/tools\n`,
+      )
       lastLog = Date.now()
     }
     await new Promise((resolveWait) => setTimeout(resolveWait, 500))

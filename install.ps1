@@ -14,13 +14,14 @@ $MarketplaceRepo = "vinicius91carvalho/harness-engineering"
 $ClaudeMarketplace = "harness-engineering"
 $CodexMarketplace = "harness-engineering"
 $MemoryInstaller = "https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.ps1"
-$Optional = @("ponytail", "skill-creator", "codebase-memory-mcp", "context7", "playwright", "status-line", "shared-config", "mcp-servers")
+$Optional = @("ponytail", "skill-creator", "codebase-memory-mcp", "context7", "playwright", "crawl4ai", "status-line", "shared-config", "mcp-servers")
 $PluginClis = @{
   harness = @("claude", "codex", "opencode", "agent")
   ponytail = @("claude", "codex", "opencode", "agent")
   "skill-creator" = @("claude", "codex", "opencode", "agent")
   "codebase-memory-mcp" = @("claude", "codex", "opencode", "agent")
   context7 = @("claude", "codex", "opencode", "agent"); playwright = @("claude", "codex", "opencode", "agent")
+  crawl4ai = @("claude", "codex", "opencode", "pi", "agent")
   "mcp-servers" = @("claude", "codex", "opencode", "agent")
   "status-line" = @("claude", "codex"); "shared-config" = @("claude")
 }
@@ -58,11 +59,50 @@ function Test-CliInstalled([string]$Name) {
 $Detected = @("claude", "codex", "opencode", "agent") | Where-Object { Test-CliInstalled $_ }
 if ($Detected.Count -eq 0) { throw "No supported CLI found. Install Claude Code, Codex, OpenCode, or Cursor Agent." }
 
+$script:MenuDim = [char]27 + "[2m"
+$script:MenuReset = [char]27 + "[0m"
+
+function Get-MenuBlurb([string]$Kind, [string]$Item) {
+  switch ("${Kind}:${Item}") {
+    "host:claude" { return "Anthropic agentic coding CLI with plugins, skills, and MCP." }
+    "host:codex" { return "OpenAI Codex CLI with plugins and MCP support." }
+    "host:opencode" { return "Open-source AI coding agent with skills, agents, and MCP." }
+    "host:pi" { return "Pi CLI for headless agent workflows." }
+    "host:agent" { return "Cursor Agent CLI for headless workflows in Cursor." }
+    "host:all" { return "Install to every detected host above." }
+    "install:harness" { return "Spec→build→QA pipeline with planner, generator, evaluator, supervisor, learning loop, and project backup." }
+    "install:ponytail" { return "Lazy senior-dev mode: YAGNI, stdlib first, no unrequested abstractions." }
+    "install:skill-creator" { return "Multi-agent pipeline to create, evaluate, benchmark, and refine AI coding skills." }
+    "install:codebase-memory-mcp" { return "High-performance code intelligence MCP server. Indexes codebases into a persistent knowledge graph — average repo in milliseconds. 158 languages, sub-ms queries, 99% fewer tokens." }
+    "install:context7" { return "Up-to-date, version-specific library documentation through Upstash remote MCP." }
+    "install:playwright" { return "Browser automation and E2E testing through Microsoft official Playwright MCP server." }
+    "install:crawl4ai" { return "Web crawling and structured extraction. Installs the Python package plus a bundled skill per host." }
+    "install:status-line" { return "Custom status bar for Claude; built-in status items for Codex (model, git branch, context usage)." }
+    "install:shared-config" { return "Atomically merge the project shareable Claude settings while preserving your existing preferences." }
+    "install:mcp-servers" { return "Restore MCP servers from the project inventory. Prompts once for redacted secrets per server." }
+    default { return "" }
+  }
+}
+
+function Write-MenuItem([string]$Pointer, [string]$Item, [string]$Box, [string]$LabelKind) {
+  if ($Box) { Write-Host " $Pointer $Box $Item" } else { Write-Host " $Pointer $Item" }
+  $blurb = Get-MenuBlurb $LabelKind $Item
+  if (-not $blurb) { return }
+  $indent = if ($Box) { "      " } else { "    " }
+  Write-Host ("$indent$($script:MenuDim)$blurb$($script:MenuReset)")
+}
+
 # Arrow-key menu that repaints the whole console each frame (Clear() first), so
 # navigation never duplicates lines. single = pick one; multi = space-toggle
 # checklist with a/A select-all. Mirrors select_menu in install.sh.
 function Select-Menu {
-  param([ValidateSet("single", "multi")][string]$Mode, [string[]]$Items, [string[]]$Checked = @(), [string]$Title)
+  param(
+    [ValidateSet("single", "multi")][string]$Mode,
+    [string[]]$Items,
+    [string[]]$Checked = @(),
+    [string]$Title,
+    [ValidateSet("", "host", "install")][string]$LabelKind = ""
+  )
   if ($Items.Count -eq 0) { return @() }
   $cursor = 0
   $state = @{}; foreach ($item in $Items) { $state[$item] = ($Checked -contains $item) }
@@ -73,9 +113,9 @@ function Select-Menu {
       $pointer = if ($i -eq $cursor) { ">" } else { " " }
       if ($Mode -eq "multi") {
         $box = if ($state[$Items[$i]]) { "[x]" } else { "[ ]" }
-        Write-Host " $pointer $box $($Items[$i])"
+        Write-MenuItem $pointer $Items[$i] $box $LabelKind
       } else {
-        Write-Host " $pointer $($Items[$i])"
+        Write-MenuItem $pointer $Items[$i] "" $LabelKind
       }
     }
     $hint = if ($Mode -eq "multi") { "space: toggle   a: all/none   enter: confirm" } else { "enter: select" }
@@ -109,7 +149,7 @@ function Select-Host {
   }
   if ($Detected.Count -eq 1) { return @($Detected[0]) }
   if ([Console]::IsInputRedirected) { throw "Multiple CLIs detected; pass -Cli claude|codex|opencode|agent|all." }
-  $choice = @(Select-Menu -Mode single -Items (@($Detected) + "all") -Title "Select target host:")[0]
+  $choice = @(Select-Menu -Mode single -Items (@($Detected) + "all") -Title "Select target host:" -LabelKind host)[0]
   if ($choice -eq "all") { return $Detected }
   return @($choice)
 }
@@ -467,11 +507,88 @@ function Install-SkillCreator {
   }
 }
 
+function Install-Crawl4AiSkill([string]$Destination) {
+  $source = Join-Path (Get-Repository) "skills/crawl4ai"
+  if (-not (Test-Path $source)) { throw "crawl4ai skill bundle missing from harness repository" }
+  Remove-Item $Destination -Recurse -Force -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Force (Split-Path $Destination -Parent) | Out-Null
+  Copy-Item $source $Destination -Recurse -Force
+}
+
+function Install-Crawl4AiPip {
+  if ($DryRun) {
+    Write-Host "DRY RUN - pip install -U crawl4ai"
+    Write-Host "DRY RUN - crawl4ai-setup"
+    Write-Host "DRY RUN - crawl4ai-doctor"
+    return
+  }
+  $venv = Join-Path $HOME ".local/share/harness/crawl4ai-venv"
+  $pip = Get-Command pip3 -ErrorAction SilentlyContinue
+  if (-not $pip) { $pip = Get-Command pip -ErrorAction SilentlyContinue }
+  $python = Get-Command python3 -ErrorAction SilentlyContinue
+  if (-not $python) { $python = Get-Command python -ErrorAction SilentlyContinue }
+  $installed = $false
+  if ($pip) {
+    try { Invoke-Native $pip.Source @("install", "-U", "crawl4ai"); $installed = $true } catch { }
+  }
+  if (-not $installed -and $python) {
+    try { Invoke-Native $python.Source @("-m", "pip", "install", "-U", "crawl4ai"); $installed = $true } catch { }
+  }
+  if (-not $installed) {
+    if (-not $python) { throw "python is required to install crawl4ai in a virtual environment" }
+    if (-not (Test-Path (Join-Path $venv "Scripts/python.exe")) -and -not (Test-Path (Join-Path $venv "bin/python"))) {
+      Invoke-Native $python.Source @("-m", "venv", $venv)
+    }
+    $venvPip = if (Test-Path (Join-Path $venv "Scripts/pip.exe")) { Join-Path $venv "Scripts/pip.exe" } else { Join-Path $venv "bin/pip" }
+    Invoke-Native $venvPip @("install", "-U", "crawl4ai")
+    $bin = if (Test-Path (Join-Path $venv "Scripts")) { Join-Path $venv "Scripts" } else { Join-Path $venv "bin" }
+    $localBin = Join-Path $HOME ".local/bin"
+    New-Item -ItemType Directory -Force $localBin | Out-Null
+    foreach ($tool in @("crawl4ai-setup", "crawl4ai-doctor")) {
+      $source = Join-Path $bin $tool
+      if (Test-Path $source) { Copy-Item $source (Join-Path $localBin $tool) -Force }
+    }
+    if ($env:PATH -notlike "*$localBin*") { $env:PATH = "$localBin$([IO.Path]::PathSeparator)$env:PATH" }
+  }
+  $setup = Get-Command crawl4ai-setup -ErrorAction SilentlyContinue
+  if (-not $setup) { throw "crawl4ai-setup not found after pip install" }
+  Invoke-Native $setup.Source
+  $doctor = Get-Command crawl4ai-doctor -ErrorAction SilentlyContinue
+  if (-not $doctor) { throw "crawl4ai-doctor not found after pip install" }
+  Invoke-Native $doctor.Source
+}
+
+function Install-Crawl4Ai {
+  Install-Crawl4AiPip
+  foreach ($target in $Targets) {
+    if ($PluginClis["crawl4ai"] -notcontains $target) { continue }
+    switch ($target) {
+      claude {
+        if ($DryRun) { Write-Host "DRY RUN - install crawl4ai skill to ~/.claude/skills/crawl4ai"; continue }
+        Install-Crawl4AiSkill (Join-Path $HOME ".claude/skills/crawl4ai")
+      }
+      opencode {
+        if ($DryRun) { Write-Host "DRY RUN - install crawl4ai skill to ~/.config/opencode/skills/crawl4ai"; continue }
+        $base = if ($env:XDG_CONFIG_HOME) { Join-Path $env:XDG_CONFIG_HOME "opencode" } else { Join-Path $HOME ".config/opencode" }
+        Install-Crawl4AiSkill (Join-Path $base "skills/crawl4ai")
+      }
+      { $_ -in @("codex", "pi") } {
+        if ($DryRun) { Write-Host "DRY RUN - install crawl4ai skill to ~/.agents/skills/crawl4ai"; continue }
+        Install-Crawl4AiSkill (Join-Path $HOME ".agents/skills/crawl4ai")
+      }
+      agent {
+        if ($DryRun) { Write-Host "DRY RUN - install crawl4ai skill to ~/.cursor/skills/crawl4ai"; continue }
+        Install-Crawl4AiSkill (Join-Path $HOME ".cursor/skills/crawl4ai")
+      }
+    }
+  }
+}
+
 function Install-PortableMcp([string]$Name) {
-  $server = if ($Name -eq "context7") {
-    [pscustomobject]@{ type="http"; url="https://mcp.context7.com/mcp" }
-  } else {
-    [pscustomobject]@{ type="stdio"; command="npx"; args=@("-y", "@playwright/mcp@latest") }
+  $server = switch ($Name) {
+    "context7" { [pscustomobject]@{ type="http"; url="https://mcp.context7.com/mcp" } }
+    "playwright" { [pscustomobject]@{ type="stdio"; command="npx"; args=@("-y", "@playwright/mcp@latest") } }
+    default { throw "unknown portable MCP: $Name" }
   }
   if ($DryRun) { Write-Host "DRY RUN - configure $Name MCP for: $($Targets -join ', ')"; return }
   $json = $server | ConvertTo-Json -Compress
@@ -504,7 +621,7 @@ $Selected = if ($No) {
   @("harness")
 } else {
   $candidates = @("harness") + @($Optional | Where-Object { @($PluginClis[$_] | Where-Object { $Targets -contains $_ }).Count -gt 0 })
-  @(Select-Menu -Mode multi -Items $candidates -Checked @("harness") -Title "Select what to install (harness recommended):")
+  @(Select-Menu -Mode multi -Items $candidates -Checked @("harness") -Title "Select what to install (harness recommended):" -LabelKind install)
 }
 
 foreach ($target in $Targets) {
@@ -532,6 +649,7 @@ if ($DryRun) {
 foreach ($item in $Selected) {
   if ($item -eq "skill-creator") { Install-SkillCreator; continue }
   if ($item -eq "codebase-memory-mcp") { Install-Memory; continue }
+  if ($item -eq "crawl4ai") { Install-Crawl4Ai; continue }
   if ($item -eq "context7" -or $item -eq "playwright") { Install-PortableMcp $item; continue }
   if ($item -eq "status-line") {
     foreach ($target in $Targets) {

@@ -307,7 +307,10 @@ Full symptom list: [site troubleshooting](https://vinicius91carvalho.github.io/h
 Role routing is not required to plan, generate, validate, integrate, or review work.
 
 Copy [`config/roles.example.json`](config/roles.example.json) to `.harness/roles.json` to route coding, validation, repair planning, and Goal Review through ordered tool/model candidates.
-The example is open-source-first: OpenCode Go and NVIDIA NIM volume models first, then OpenRouter free Qwen Coder, Cursor Composer / Grok when work gets hard, and Claude Opus / GPT-5.5 only as late rescue for stuck bugs.
+Coding stays open-source-first (OpenCode / free models, then Composer, then Claude/Codex rescue).
+Validation and Goal Review prefer Composer / Codex / Claude first so http/browser ACs are not stuck on pi (no MCP path).
+`reconcile.mjs` stores `observation_method` on Work Items; the orchestrator filters weak harnesses to the end for http/browser QA.
+Supervisor `status` exposes `workerHealth` and `mergeLock` so 20-minute polls can see real progress vs merge-lock wait vs stuck.
 Pi stays available as a transport for those expensive rescue models; it is not the everyday coding host.
 
 [herdr](https://herdr.dev/) is optional terminal visibility. It's auto-selected when the supervisor starts inside a herdr workspace (`HERDR_ENV=1`) with `herdr` installed; pass `--display background` to force background, or `--display herdr` to force herdr when available.

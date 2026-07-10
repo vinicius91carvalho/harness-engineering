@@ -157,6 +157,41 @@ test('pi herdr stream uses --mode json and formats thinking/tools', async () => 
   assert.match(fmt.assistantText(), /"ok":true/)
 })
 
+test('parseObject reports complete vs open verdict', async () => {
+  const { parseObject, hasCompleteVerdict } = await import('../skills/generator/lib/verdict.mjs')
+  const open = '===HARNESS-VERDICT-BEGIN===\n{"id":"x","ok":true}\n'
+  const closed = `${open}===HARNESS-VERDICT-END===\n`
+  assert.equal(hasCompleteVerdict(open), false)
+  assert.equal(hasCompleteVerdict(closed), true)
+  assert.equal(parseObject(closed).ok, true)
+})
+
+test('cursor agent herdr stream uses stream-json and formats thinking/tools', async () => {
+  const { withVisibleAgentMode, createAgentStreamFormatter } = await import('../skills/generator/lib/agent-stream.mjs')
+  assert.deepEqual(
+    withVisibleAgentMode('agent', ['-p', '--force', '--trust', '--model', 'composer-2.5', 'hi'], true),
+    ['-p', '--output-format', 'stream-json', '--stream-partial-output', '--force', '--trust', '--model', 'composer-2.5', 'hi'],
+  )
+  assert.deepEqual(withVisibleAgentMode('agent', ['-p', 'hi'], false), ['-p', 'hi'])
+
+  const fmt = createAgentStreamFormatter()
+  const pane = [
+    fmt.push(`${JSON.stringify({ type: 'system', subtype: 'init', model: 'Composer 2.5' })}\n`),
+    fmt.push(`${JSON.stringify({ type: 'thinking', subtype: 'delta', text: 'plan the next verification steps carefully ' })}\n`),
+    fmt.push(`${JSON.stringify({ type: 'thinking', subtype: 'completed' })}\n`),
+    fmt.push(`${JSON.stringify({ type: 'tool_call', subtype: 'started', tool_call: { shellToolCall: { description: 'curl health' } } })}\n`),
+    fmt.push(`${JSON.stringify({ type: 'tool_call', subtype: 'completed', tool_call: { shellToolCall: { description: 'curl health' } } })}\n`),
+    fmt.push(`${JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: '===HARNESS-VERDICT-BEGIN===\n{"ok":true}\n===HARNESS-VERDICT-END===\n' }] } })}\n`),
+    fmt.flush(),
+  ].join('')
+  assert.match(pane, /agent: working/)
+  assert.match(pane, /thinking: plan the next verification steps carefully/)
+  assert.match(pane, /tool → shell: curl health/)
+  assert.match(pane, /tool ✓ shell: curl health/)
+  assert.match(pane, /HARNESS-VERDICT-BEGIN/)
+  assert.match(fmt.assistantText(), /"ok":true/)
+})
+
 test('integration branch resolves from file and env', () => {
   withoutIntegrationBranchEnv(() => {
     const root = mkdtempSync(join(tmpdir(), 'integration-branch-'))
@@ -588,10 +623,99 @@ test('buildHostCommand passes model to pi and agent', async () => {
   )
   assert.deepEqual(
     buildHostCommand('agent', 'do work', 'grok-4.5-xhigh'),
-    ['agent', ['-p', '--force', '--trust', '--model', 'grok-4.5-xhigh', 'do work']],
+    ['agent', ['-p', '--force', '--trust', '--sandbox', 'disabled', '--model', 'grok-4.5-xhigh', 'do work']],
   )
   assert.deepEqual(
     buildHostCommand('agent', 'do work'),
-    ['agent', ['-p', '--force', '--trust', 'do work']],
+    ['agent', ['-p', '--force', '--trust', '--sandbox', 'disabled', 'do work']],
   )
+})
+
+test('worker-health classifies merge lock, verdict hang, and thinking', async () => {
+  const {
+    classifyPaneTail, assessWorkerHealth, paneReadSource,
+  } = await import('../skills/generator/lib/worker-health.mjs')
+  assert.equal(classifyPaneTail('orchestrator: waiting for merge lock (holder pid=1)'), 'merge_lock')
+  assert.equal(classifyPaneTail('thinking: next step\ntool → read'), 'tooling')
+  assert.equal(classifyPaneTail('===HARNESS-VERDICT-END===\nagent: still working (20s since last log)'), 'verdict_hung')
+  // Prior tool lines in the same window must not mask a post-verdict hang.
+  assert.equal(classifyPaneTail([
+    'tool → shell: Run AC-019',
+    'tool ✓ shell: Run AC-019',
+    'thinking: returning verdict',
+    '===HARNESS-VERDICT-BEGIN===',
+    '{"resolved":true,"notes":"ok"}',
+    'agent: still working (35s since last log)',
+  ].join('\n')), 'verdict_hung')
+  assert.equal(paneReadSource(0), 'visible')
+  assert.equal(paneReadSource(12), 'recent')
+
+  const waiting = assessWorkerHealth({
+    tailText: 'orchestrator: waiting for merge lock…',
+    mergeHolderAlive: true,
+    childAlive: false,
+    runStateAgeMs: 120_000,
+  })
+  assert.equal(waiting.verdict, 'waiting_expected')
+  assert.equal(waiting.recycle, false)
+
+  const stuckLock = assessWorkerHealth({
+    tailText: 'orchestrator: waiting for merge lock…',
+    mergeHolderAlive: false,
+    childAlive: false,
+    runStateAgeMs: 120_000,
+  })
+  assert.equal(stuckLock.verdict, 'stuck')
+
+  const healthy = assessWorkerHealth({
+    tailText: 'thinking: working\ntool → shell',
+    scrollDelta: 3,
+    childAlive: true,
+    lastAgentOutputAgeMs: 5_000,
+  })
+  assert.equal(healthy.verdict, 'healthy')
+})
+
+test('repair-router blocks coding exhaustion and routes quota/infra', async () => {
+  const { inferDefectClass, routeRepair, routePendingInput } = await import('../skills/generator/lib/repair-router.mjs')
+  assert.equal(inferDefectClass({}, 'Codex error: The usage limit has been reached'), 'quota')
+  assert.equal(inferDefectClass({}, 'DynamoHypothesisRepository still wired in bootstrap'), 'infra')
+  assert.equal(inferDefectClass({ defectClass: 'observation_mismatch' }, ''), 'observation_mismatch')
+
+  const exhausted = routePendingInput({ reason: 'coding agent failed three times' })
+  assert.equal(exhausted.action, 'pause')
+  assert.equal(exhausted.autoRetry, false)
+
+  const quota = routeRepair({ defectClass: 'quota' })
+  assert.equal(quota.action, 'switch_candidate')
+  assert.equal(quota.autoRetry, true)
+
+  const infra = routeRepair({ defectClass: 'infra' })
+  assert.equal(infra.action, 'block')
+  assert.equal(infra.autoRetry, false)
+})
+
+test('observation-method filters pi away for http/browser validation', async () => {
+  const {
+    inferObservationMethod, filterCandidatesForObservation, needsStrongValidationHost,
+  } = await import('../skills/generator/lib/observation-method.mjs')
+  assert.equal(inferObservationMethod({ category: 'static', description: 'grep for LICENSE' }), 'grep')
+  assert.equal(inferObservationMethod({
+    category: 'functional',
+    description: 'GET /api/v1/investigation/:id/stream emits SSE events',
+  }), 'http')
+  assert.equal(inferObservationMethod({
+    description: 'The dashboard SPA at /dashboard renders; clicking an incident opens detail',
+  }), 'browser')
+  assert.equal(needsStrongValidationHost(['http']), true)
+
+  const candidates = [
+    { harness: 'pi', model: 'x' },
+    { harness: 'agent', model: 'composer-2.5' },
+    { harness: 'codex', model: 'gpt-5.5' },
+  ]
+  const filtered = filterCandidatesForObservation(candidates, ['http'], 'INTEGRATION_QA')
+  assert.equal(filtered[0].harness, 'agent')
+  assert.ok(filtered.some((c) => c.harness === 'pi'))
+  assert.equal(filtered.at(-1).harness, 'pi')
 })

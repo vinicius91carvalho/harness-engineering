@@ -9,9 +9,10 @@ model=
 prompt=
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    -p|--print|--force|--trust) shift ;;
+    -p|--print|--force|--trust|--approve-mcps|--yolo) shift ;;
     exec|run) shift ;;
     --model) model=$2; shift 2 ;;
+    --sandbox) shift 2 ;;
     --dangerously-bypass-approvals-and-sandbox) shift ;;
     *) prompt=$1; shift ;;
   esac

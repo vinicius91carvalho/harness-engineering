@@ -7,7 +7,7 @@ CLAUDE_MARKETPLACE="harness-engineering"
 CODEX_MARKETPLACE="harness-engineering"
 REPO_URL="https://github.com/$MARKETPLACE_REPO.git"
 MEMORY_INSTALLER="https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh"
-OPTIONAL="ponytail skill-creator codebase-memory-mcp context7 playwright status-line shared-config mcp-servers"
+OPTIONAL="ponytail skill-creator codebase-memory-mcp context7 playwright crawl4ai status-line shared-config mcp-servers"
 
 ASSUME=""
 DRY=""
@@ -102,6 +102,45 @@ tty_available() { [ -r /dev/tty ] && [ -w /dev/tty ] && (set +e; : </dev/tty) >/
 word_count() { set -- $1; echo "$#"; }
 word_at() { list=$1; wanted=$2; i=1; for value in $list; do [ "$i" -eq "$wanted" ] && { echo "$value"; return; }; i=$((i + 1)); done; }
 
+MENU_DIM=$(printf '\033[2m')
+MENU_RESET=$(printf '\033[0m')
+
+menu_item_blurb() {
+  case "${MENU_LABEL_KIND:-}:$1" in
+    host:claude) printf '%s' "Anthropic agentic coding CLI with plugins, skills, and MCP." ;;
+    host:codex) printf '%s' "OpenAI Codex CLI with plugins and MCP support." ;;
+    host:opencode) printf '%s' "Open-source AI coding agent with skills, agents, and MCP." ;;
+    host:pi) printf '%s' "Pi CLI for headless agent workflows." ;;
+    host:agent) printf '%s' "Cursor Agent CLI for headless workflows in Cursor." ;;
+    host:all) printf '%s' "Install to every detected host above." ;;
+    install:harness) printf '%s' "Spec→build→QA pipeline with planner, generator, evaluator, supervisor, learning loop, and project backup." ;;
+    install:ponytail) printf '%s' "Lazy senior-dev mode: YAGNI, stdlib first, no unrequested abstractions." ;;
+    install:skill-creator) printf '%s' "Multi-agent pipeline to create, evaluate, benchmark, and refine AI coding skills." ;;
+    install:codebase-memory-mcp) printf '%s' "High-performance code intelligence MCP server. Indexes codebases into a persistent knowledge graph — average repo in milliseconds. 158 languages, sub-ms queries, 99%% fewer tokens." ;;
+    install:context7) printf '%s' "Up-to-date, version-specific library documentation through Upstash remote MCP." ;;
+    install:playwright) printf '%s' "Browser automation and E2E testing through Microsoft official Playwright MCP server." ;;
+    install:crawl4ai) printf '%s' "Web crawling and structured extraction. Installs the Python package plus a bundled skill per host." ;;
+    install:status-line) printf '%s' "Custom status bar for Claude; built-in status items for Codex (model, git branch, context usage)." ;;
+    install:shared-config) printf '%s' "Atomically merge the project shareable Claude settings while preserving your existing preferences." ;;
+    install:mcp-servers) printf '%s' "Restore MCP servers from the project inventory. Prompts once for redacted secrets per server." ;;
+  esac
+}
+
+menu_print_item() {
+  item=$1 pointer=$2 box=${3:-}
+  blurb=$(menu_item_blurb "$item")
+  if [ -n "$box" ]; then
+    printf '%s%s %s\n' "$pointer" "$box" "$item" >/dev/tty
+    indent='      '
+  else
+    printf '%s%s\n' "$pointer" "$item" >/dev/tty
+    indent='    '
+  fi
+  if [ -n "$blurb" ]; then
+    printf '%s%s%s%s\n' "$indent" "$MENU_DIM" "$blurb" "$MENU_RESET" >/dev/tty
+  fi
+}
+
 # Read one keypress from the terminal and echo a logical token (arrows, Enter,
 # Space, etc). Runs inside $() so its locals never leak.
 menu_key() {
@@ -145,9 +184,9 @@ select_menu() {
       [ "$i" -eq "$cursor" ] && pointer='> ' || pointer='  '
       if [ "$MENU_MODE" = multi ]; then
         case "$checked" in *" $item "*) box='[x]' ;; *) box='[ ]' ;; esac
-        printf '%s%s %s\n' "$pointer" "$box" "$item" >/dev/tty
+        menu_print_item "$item" "$pointer" "$box"
       else
-        printf '%s%s\n' "$pointer" "$item" >/dev/tty
+        menu_print_item "$item" "$pointer"
       fi
       i=$((i + 1))
     done
@@ -195,7 +234,7 @@ select_cli() {
   if [ "$count" -eq 1 ]; then CLI=$detected_clis; return; fi
   tty_available || die "multiple CLIs detected ($detected_clis); pass --cli claude|codex|opencode|pi|agent|all"
 
-  MENU_MODE=single; MENU_TITLE='Select target host:'; MENU_ITEMS="$detected_clis all"; MENU_CHECKED=
+  MENU_MODE=single; MENU_TITLE='Select target host:'; MENU_ITEMS="$detected_clis all"; MENU_CHECKED=; MENU_LABEL_KIND=host
   select_menu
   [ "$MENU_RESULT" = all ] && CLI=$detected_clis || CLI=$MENU_RESULT
 }
@@ -210,6 +249,7 @@ plugin_clis() {
     ponytail) echo 'claude codex opencode agent' ;;
     skill-creator) echo 'claude codex opencode pi agent' ;;
     codebase-memory-mcp|context7|playwright) echo 'claude codex opencode agent' ;;
+    crawl4ai) echo 'claude codex opencode pi agent' ;;
     mcp-servers) echo 'claude codex opencode agent' ;;
     status-line) echo 'claude codex' ;;
     shared-config) echo claude ;;
@@ -225,7 +265,7 @@ select_items() {
     supported=0; for cli in $CLI; do has_word "$(plugin_clis "$item")" "$cli" && supported=1; done
     [ "$supported" -eq 1 ] && candidates="$candidates $item"
   done
-  MENU_MODE=multi; MENU_TITLE='Select what to install (harness recommended):'; MENU_ITEMS="$candidates"; MENU_CHECKED=harness
+  MENU_MODE=multi; MENU_TITLE='Select what to install (harness recommended):'; MENU_ITEMS="$candidates"; MENU_CHECKED=harness; MENU_LABEL_KIND=install
   select_menu
   SELECTED=$MENU_RESULT
 }
@@ -599,6 +639,78 @@ install_skill_creator() {
   done
 }
 
+install_crawl4ai_skill() {
+  dest=$1
+  ensure_repo
+  source=$TEMP_REPO/skills/crawl4ai
+  [ -d "$source" ] || die 'crawl4ai skill bundle missing from harness repository'
+  mkdir -p "$(dirname "$dest")"
+  rm -rf "$dest"
+  cp -R "$source"/. "$dest"/
+}
+
+install_crawl4ai_pip() {
+  if [ -n "$DRY" ]; then
+    echo 'DRY RUN — pip install -U crawl4ai'
+    echo 'DRY RUN — crawl4ai-setup'
+    echo 'DRY RUN — crawl4ai-doctor'
+    return
+  fi
+  crawl4ai_venv=$HOME/.local/share/harness/crawl4ai-venv
+  crawl4ai_pip() {
+    if command -v pip3 >/dev/null 2>&1; then pip3 "$@"
+    elif command -v pip >/dev/null 2>&1; then pip "$@"
+    elif command -v python3 >/dev/null 2>&1; then python3 -m pip "$@"
+    else die 'pip or python3 is required to install crawl4ai'
+    fi
+  }
+  if crawl4ai_pip install -U crawl4ai 2>/dev/null; then :;
+  else
+    command -v python3 >/dev/null 2>&1 || die 'python3 is required to install crawl4ai in a virtual environment'
+    mkdir -p "$(dirname "$crawl4ai_venv")"
+    if [ ! -x "$crawl4ai_venv/bin/python" ]; then
+      python3 -m venv "$crawl4ai_venv" || die 'could not create crawl4ai virtual environment'
+    fi
+    "$crawl4ai_venv/bin/pip" install -U crawl4ai || die 'pip install crawl4ai failed'
+    mkdir -p "$HOME/.local/bin"
+    for tool in crawl4ai-setup crawl4ai-doctor; do
+      [ -x "$crawl4ai_venv/bin/$tool" ] || continue
+      ln -sf "$crawl4ai_venv/bin/$tool" "$HOME/.local/bin/$tool"
+    done
+    case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) PATH="$HOME/.local/bin:$PATH" ;; esac
+  fi
+  command -v crawl4ai-setup >/dev/null 2>&1 || die 'crawl4ai-setup not found after pip install'
+  crawl4ai-setup || die 'crawl4ai-setup failed'
+  crawl4ai-doctor || die 'crawl4ai-doctor reported installation problems'
+}
+
+install_crawl4ai() {
+  install_crawl4ai_pip
+  for cli in $CLI; do
+    has_word "$(plugin_clis crawl4ai)" "$cli" || continue
+    case "$cli" in
+      claude)
+        if [ -n "$DRY" ]; then echo 'DRY RUN — install crawl4ai skill to ~/.claude/skills/crawl4ai'
+        else install_crawl4ai_skill "$HOME/.claude/skills/crawl4ai"
+        fi ;;
+      opencode)
+        if [ -n "$DRY" ]; then echo 'DRY RUN — install crawl4ai skill to ~/.config/opencode/skills/crawl4ai'
+        else
+          base=${XDG_CONFIG_HOME:-$HOME/.config}/opencode
+          install_crawl4ai_skill "$base/skills/crawl4ai"
+        fi ;;
+      codex|pi)
+        if [ -n "$DRY" ]; then echo 'DRY RUN — install crawl4ai skill to ~/.agents/skills/crawl4ai'
+        else install_crawl4ai_skill "$HOME/.agents/skills/crawl4ai"
+        fi ;;
+      agent)
+        if [ -n "$DRY" ]; then echo 'DRY RUN — install crawl4ai skill to ~/.cursor/skills/crawl4ai'
+        else install_crawl4ai_skill "$HOME/.cursor/skills/crawl4ai"
+        fi ;;
+    esac
+  done
+}
+
 install_portable_mcp() {
   name=$1
   ensure_jq
@@ -648,6 +760,7 @@ for item in $SELECTED; do
   case "$item" in
     skill-creator) install_skill_creator ;;
     codebase-memory-mcp) install_memory ;;
+    crawl4ai) install_crawl4ai ;;
     context7|playwright) install_portable_mcp "$item" ;;
     status-line) for cli in $CLI; do case "$cli" in claude) enable_status_line ;; codex) enable_codex_status_line ;; esac; done ;;
     shared-config) apply_shared_config ;;

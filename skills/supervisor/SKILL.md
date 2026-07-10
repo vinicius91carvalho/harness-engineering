@@ -148,6 +148,31 @@ node "$CONTROL/scripts/harness-control.mjs" stop   --repo "$REPO"
 Never infer completion from an empty queue or agent prose. Completion requires a
 persisted `run_completed` event produced by mandatory Goal Review on the integrated plan branch.
 
+## Worker health and fail-closed ops
+
+`harness-control status` → `workerHealth` is the primary stuck signal
+(`healthy` | `waiting_expected` | `stuck` | `done`).
+Herdr `working` / run-state heartbeats alone are not proof of progress.
+Never recycle `waiting_expected` merge_lock when the holder is alive, or MCP warmup
+still under budget — only recycle `stuck`.
+Close the whole herdr tab when `workerHealth=done` / Run State is terminal.
+
+Every ~10 min read pane tails (`visible` when scroll=0); every ~20 min print fleet
+status including `workerHealth` and `mergeLock`.
+If the fleet is empty, finished tabs are still open, or health is `stuck`, act
+immediately and harden this skill / `monorepo-supervisor-ops` / harness code in the
+same turn — do not only narrate (fail-closed).
+
+Custom `retryQueue[context].guidance` wins over auto-retry generics.
+Never auto-retry `coding agent failed three times` — needs operator or Repair Plan
+guidance (verify-first when the AC is already satisfied).
+
+When monorepo ACs share APIs/stubs (e.g. web depends on core), finish the root
+project before dependents; pause/stop the dependent supervisor rather than thrashing.
+
+For multi-supervisor monorepo ops (empty-fleet recovery, composer-2.5 ops host,
+stream smoke checks), use the sibling `monorepo-supervisor-ops` skill.
+
 ## Herdr workflow (optional)
 
 Herdr is not required. When you run inside a herdr workspace (`HERDR_ENV=1`) and

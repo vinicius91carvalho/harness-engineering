@@ -10,15 +10,30 @@ const TOOL_EVENTS = new Set([
 ])
 
 export function shouldUseJsonAgentStream(program, visible) {
-  return Boolean(visible) && program === 'pi'
+  return Boolean(visible) && (program === 'pi' || program === 'agent')
 }
 
-/** Inject `--mode json` for pi so thinking/tool events stream under herdr. */
+/**
+ * Inject streaming flags so thinking/tool events appear under herdr:
+ * - pi: `--mode json`
+ * - agent (Cursor): `--output-format stream-json --stream-partial-output`
+ */
 export function withVisibleAgentMode(program, args, visible) {
   if (!shouldUseJsonAgentStream(program, visible)) return args
-  if (args.includes('--mode') || args.includes('-m')) return args
-  // Keep -p / prompt at the end; insert mode before them.
   const out = [...args]
+  if (program === 'agent') {
+    if (!out.includes('--output-format')) {
+      const printIdx = out.findIndex((arg) => arg === '-p' || arg === '--print')
+      const insert = ['--output-format', 'stream-json', '--stream-partial-output']
+      if (printIdx >= 0) out.splice(printIdx + 1, 0, ...insert)
+      else out.unshift(...insert)
+    } else if (!out.includes('--stream-partial-output')) {
+      out.push('--stream-partial-output')
+    }
+    return out
+  }
+  // pi
+  if (out.includes('--mode') || out.includes('-m')) return out
   const printIdx = out.findIndex((arg) => arg === '-p' || arg === '--print')
   if (printIdx >= 0) out.splice(printIdx, 0, '--mode', 'json')
   else out.unshift('--mode', 'json')
@@ -26,7 +41,20 @@ export function withVisibleAgentMode(program, args, visible) {
 }
 
 function toolLabel(event) {
-  return event.toolName || event.name || event.tool || event.toolCall?.name || 'tool'
+  if (event.toolName || event.name || event.tool || event.toolCall?.name) {
+    return event.toolName || event.name || event.tool || event.toolCall?.name
+  }
+  // Cursor agent stream-json: tool_call.shellToolCall / readToolCall / …
+  const call = event.tool_call
+  if (call && typeof call === 'object') {
+    const key = Object.keys(call).find((k) => k.endsWith('ToolCall') || k === 'function')
+    if (key) {
+      const desc = call[key]?.description || call[key]?.args?.description
+      const short = key.replace(/ToolCall$/, '')
+      return desc ? `${short}: ${String(desc).slice(0, 80)}` : short
+    }
+  }
+  return 'tool'
 }
 
 /**
@@ -67,11 +95,54 @@ export function createAgentStreamFormatter() {
   const handleEvent = (event) => {
     if (!event || typeof event !== 'object') return
     const type = event.type
-    if ((type === 'agent_start' || type === 'turn_start') && !announced) {
+    const subtype = event.subtype
+
+    if ((type === 'agent_start' || type === 'turn_start' || (type === 'system' && subtype === 'init')) && !announced) {
       emitLine('agent: working…')
       announced = true
       return
     }
+
+    // Cursor agent: thinking deltas
+    if (type === 'thinking') {
+      if (subtype === 'delta' && event.text) {
+        thinkingBuf += event.text
+        flushThinking(false)
+      } else if (subtype === 'completed') {
+        flushThinking(true)
+      }
+      return
+    }
+
+    // Cursor agent: assistant text deltas (and final full message — skip duplicate full)
+    if (type === 'assistant' && event.message?.role === 'assistant') {
+      const parts = event.message.content || []
+      const text = parts.filter((part) => part.type === 'text').map((part) => part.text || '').join('')
+      if (!text) return
+      // Final event often repeats the full answer; prefer accumulating deltas only.
+      // Never replace assistantText with a shorter summary that drops the harness verdict.
+      if (text.length > 80 && assistantText && text.startsWith(assistantText.slice(0, Math.min(40, assistantText.length)))) {
+        if (!(assistantText.includes('===HARNESS-VERDICT-BEGIN===') && !text.includes('===HARNESS-VERDICT-BEGIN==='))) {
+          assistantText = text
+        }
+        return
+      }
+      assistantText += text
+      textBuf += text
+      flushText(false)
+      return
+    }
+
+    if (type === 'result' && event.result) {
+      flushThinking(true)
+      flushText(true)
+      const resultText = String(event.result)
+      if (resultText && !assistantText.includes(resultText)) {
+        assistantText += resultText.endsWith('\n') ? resultText : `${resultText}\n`
+      }
+      return
+    }
+
     if (type === 'message_update') {
       const ev = event.assistantMessageEvent || {}
       if (ev.type === 'thinking_delta' && ev.delta) {
@@ -101,16 +172,18 @@ export function createAgentStreamFormatter() {
       }
       return
     }
-    if (TOOL_EVENTS.has(type)) {
+    if (TOOL_EVENTS.has(type) || type === 'tool_call') {
       const name = toolLabel(event)
-      if (type.includes('start') || type === 'tool_call') {
+      const isStart = subtype === 'started' || type.includes('start') || (type === 'tool_call' && subtype !== 'completed')
+      const isEnd = subtype === 'completed' || type.includes('end') || type === 'tool_result'
+      if (isStart && !isEnd) {
         if (lastTool !== `start:${name}`) {
           flushThinking(true)
           flushText(true)
           emitLine(`tool → ${name}`)
           lastTool = `start:${name}`
         }
-      } else if (type.includes('end') || type === 'tool_result') {
+      } else if (isEnd) {
         if (lastTool !== `end:${name}`) {
           emitLine(`tool ✓ ${name}`)
           lastTool = `end:${name}`

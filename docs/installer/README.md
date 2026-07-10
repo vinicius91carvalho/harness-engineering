@@ -29,9 +29,10 @@ item; `--no`/`-No` selects only harness. With several detected CLIs and no usabl
 terminal, `--cli` is required. Interactively, the host selector and the plugin
 checklist both move with Up/Down (the host menu also accepts numbers) and confirm
 with Enter; in the checklist, Space toggles the highlighted item, `a` selects or
-clears all (harness starts checked but is toggleable), and `q` cancels. Both menus
-repaint in place on the alternate screen, so navigation never duplicates lines and
-the terminal mode is always restored on exit.
+clears all (harness starts checked but is toggleable), and `q` cancels. Each option
+shows a dim description on the line below its name. Both menus repaint in place on
+the alternate screen, so navigation never duplicates lines and the terminal mode
+is always restored on exit.
 
 OpenCode detection checks `PATH` plus the official installer's user binary
 location (`~/.opencode/bin`), so it remains selectable before the current shell
@@ -52,7 +53,7 @@ clone of this repo under `~/.pi/agent/git/...`, so user-level skills win over
 package skills and avoid Pi skill-name collisions. A piped PowerShell run stages
 the repository before it needs assets, because `$PSScriptRoot` is empty.
 
-`codebase-memory-mcp`, Context7, and Playwright are optional MCP integrations on
+`codebase-memory-mcp`, Context7, Playwright, and Crawl4AI are optional integrations on
 all hosts. The memory server's upstream installer runs with `--skip-config`, its
 binary is verified, auto-indexing is enabled, then only selected hosts are configured.
 

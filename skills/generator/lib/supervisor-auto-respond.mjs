@@ -1,4 +1,6 @@
 /** Reasons the supervisor may retry without waiting for a human operator. */
+import { routePendingInput } from './repair-router.mjs'
+
 const AUTO_RETRY_PREFIXES = [
   'Retry could not resume the Claim Lease',
   'Worker exited with code',
@@ -15,6 +17,9 @@ const AUTO_RETRY_PREFIXES = [
 export function isAutoRetryableInput(request) {
   if (!request || request.status !== 'pending') return false
   const reason = String(request.reason || '')
+  // Explicit exclusions via repair router
+  const routed = routePendingInput(request)
+  if (!routed.autoRetry) return false
   if (request.scope === 'goal') {
     return reason.startsWith('Worker exited with code')
       && String(request.detail?.log || '').includes('goal-review')
@@ -25,6 +30,10 @@ export function isAutoRetryableInput(request) {
 
 export function autoRetryGuidance(request) {
   const reason = String(request?.reason || '')
+  const routed = routePendingInput(request)
+  // Prefer router guidance for classified defects (quota/infra/exhaustion/recycle).
+  if (routed.defectClass && routed.defectClass !== 'product') return routed.guidance
+  if (routed.action === 'pause' || routed.action === 'recycle') return routed.guidance
   if (reason.startsWith('Retry could not resume the Claim Lease')) {
     return 'Auto-retry: resume Claim Lease with force after bounded retry exhaustion.'
   }
@@ -39,9 +48,6 @@ export function autoRetryGuidance(request) {
   }
   if (reason === 'integration could not complete') {
     return 'Auto-retry: integration merge/checkpoint failure; retry merge and integrated verification.'
-  }
-  if (reason === 'coding agent failed three times') {
-    return 'Auto-retry: coding exhausted three attempts; apply smallest root-cause fix per Repair Plan.'
   }
   if (reason === 'Work Item blocked') {
     return 'Auto-retry: context blocked; resume with orchestrator Repair Plan.'

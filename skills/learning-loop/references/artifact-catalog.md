@@ -8,17 +8,29 @@ Each section says **when it's the right call** and **how to create it**.
 **When:** a multi-step procedure was re-derived from scratch, especially more than
 once (e.g. "build → run migrations → deploy to staging → smoke test → promote").
 
-**How:** write a minimal `skills/<name>/SKILL.md` with `name`/`description`
-frontmatter, explicit trigger phrases, and the procedure as imperative steps.
+**How:** write or extend a minimal `skills/<name>/SKILL.md` in
+**harness-engineering** with `name`/`description` frontmatter, explicit trigger
+phrases, and the procedure as imperative steps. Prefer extending an existing
+workflow skill (`supervisor`, `generator`, `monorepo-supervisor-ops`, …) over
+creating a near-duplicate. After approval, sync to `~/.agents/skills/<name>/`
+when live supervisors read from there.
 
-## instruction rule
+## instruction rule (workflow skill rule)
 
 **When:** the user corrected the same behavior repeatedly, or stated a rule
 ("always run tests before committing", "never edit generated files").
 
-**How:** propose one focused imperative rule under the relevant section of the
-project's `AGENTS.md`. This is advisory rather than deterministic, but it is portable
-across all three supported hosts. Use CI when deterministic enforcement is required.
+**How:** add one focused imperative rule to the **matching workflow skill** in
+harness-engineering — not `AGENTS.md` or `CLAUDE.md`.
+
+| Topic | Skill |
+|---|---|
+| Supervisor / herdr / worker health / fail-closed / fleet ops | `skills/supervisor/SKILL.md` and/or `skills/monorepo-supervisor-ops/SKILL.md` |
+| Coding / QA / repair / plan branch / roles / OSS-first | `skills/generator/SKILL.md` |
+| Learning-loop routing itself | `skills/learning-loop/SKILL.md` |
+| Install / backup / host config | `skills/update-project/SKILL.md` or `skills/setup/SKILL.md` |
+
+Keep the rule short and imperative. Sync the skill to `~/.agents` when ops need it live.
 
 ## subagent (agent)
 
@@ -97,13 +109,10 @@ to external resources.
 
 **Curate:** if a file already covers this fact, update it instead of creating a
 duplicate. Don't store what the repo already records (code structure, git history,
-CLAUDE.md) — if asked to, capture what was *non-obvious* about it instead.
+workflow skills) — if asked to, capture what was *non-obvious* about it instead.
 
-## CLAUDE.md addition
+## Do not use AGENTS.md / CLAUDE.md for pipeline learning
 
-**When:** you got a project convention wrong and were corrected, and the rule belongs
-in version-controlled project guidance (vs. user-specific memory).
-
-**How:** propose a focused `Edit` to the project's `CLAUDE.md` adding the rule under
-the most relevant existing heading. Keep it short and imperative; CLAUDE.md that
-drifts long stops being read.
+`AGENTS.md` and `CLAUDE.md` in harness-engineering are for marketplace, install,
+and layout guidance. Pipeline and ops lessons belong in workflow skills (above).
+Do not propose `AGENTS.md` / `CLAUDE.md` additions for harness behavior.

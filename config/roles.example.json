@@ -16,45 +16,45 @@
     { "harness": "codex", "model": "gpt-5.5" }
   ],
   "validation": [
+    { "harness": "agent", "model": "composer-2.5" },
+    { "harness": "codex", "model": "gpt-5.5" },
+    { "harness": "claude", "model": "claude-opus-4-8" },
+    { "harness": "agent", "model": "grok-4.5-high" },
     { "harness": "opencode", "model": "opencode-go/minimax-m3" },
     { "harness": "opencode", "model": "opencode-go/qwen3.7-plus" },
-    { "harness": "opencode", "model": "opencode-go/deepseek-v4-flash" },
-    { "harness": "opencode", "model": "nvidia/deepseek-ai/deepseek-v4-flash" },
-    { "harness": "opencode", "model": "openrouter/qwen/qwen3-coder:free" },
     { "harness": "opencode", "model": "opencode-go/qwen3.7-max" },
     { "harness": "opencode", "model": "opencode-go/deepseek-v4-pro" },
-    { "harness": "agent", "model": "composer-2.5" },
-    { "harness": "agent", "model": "grok-4.5-high" },
-    { "harness": "codex", "model": "gpt-5.5" },
-    { "harness": "claude", "model": "claude-opus-4-8" }
+    { "harness": "opencode", "model": "opencode-go/deepseek-v4-flash" },
+    { "harness": "opencode", "model": "nvidia/deepseek-ai/deepseek-v4-flash" },
+    { "harness": "opencode", "model": "openrouter/qwen/qwen3-coder:free" }
   ],
   "repairPlanning": [
+    { "harness": "agent", "model": "composer-2.5" },
+    { "harness": "codex", "model": "gpt-5.5" },
+    { "harness": "claude", "model": "claude-opus-4-8" },
     { "harness": "opencode", "model": "opencode-go/deepseek-v4-pro" },
     { "harness": "opencode", "model": "opencode-go/qwen3.7-max" },
     { "harness": "opencode", "model": "opencode-go/minimax-m3" },
     { "harness": "opencode", "model": "nvidia/deepseek-ai/deepseek-v4-pro" },
     { "harness": "agent", "model": "grok-4.5-high" },
-    { "harness": "agent", "model": "composer-2.5" },
     { "harness": "pi", "model": "anthropic/claude-opus-4-8:xhigh" },
-    { "harness": "pi", "model": "openai-codex/gpt-5.5:high" },
-    { "harness": "claude", "model": "claude-opus-4-8" },
-    { "harness": "codex", "model": "gpt-5.5" }
+    { "harness": "pi", "model": "openai-codex/gpt-5.5:high" }
   ],
   "goalReview": [
+    { "harness": "agent", "model": "composer-2.5" },
+    { "harness": "codex", "model": "gpt-5.5" },
+    { "harness": "claude", "model": "claude-opus-4-8" },
     { "harness": "opencode", "model": "opencode-go/qwen3.7-max" },
     { "harness": "opencode", "model": "opencode-go/deepseek-v4-pro" },
     { "harness": "opencode", "model": "opencode-go/minimax-m3" },
     { "harness": "opencode", "model": "nvidia/deepseek-ai/deepseek-v4-pro" },
-    { "harness": "agent", "model": "composer-2.5" },
-    { "harness": "agent", "model": "grok-4.5-high" },
-    { "harness": "codex", "model": "gpt-5.5" },
-    { "harness": "claude", "model": "claude-opus-4-8" }
+    { "harness": "agent", "model": "grok-4.5-high" }
   ],
   "noCredits": [
+    { "harness": "agent", "model": "composer-2.5" },
     { "harness": "opencode", "model": "opencode-go/deepseek-v4-flash" },
     { "harness": "opencode", "model": "nvidia/deepseek-ai/deepseek-v4-flash" },
     { "harness": "opencode", "model": "openrouter/qwen/qwen3-coder:free" },
-    { "harness": "agent", "model": "composer-2.5" },
     { "harness": "agent", "model": "grok-4.5-medium" }
   ]
 }

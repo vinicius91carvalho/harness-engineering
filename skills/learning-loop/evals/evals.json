@@ -18,13 +18,13 @@
       "id": 1,
       "name": "repeated-correction-becomes-instruction",
       "prompt": "Here is a transcript of a coding session I just finished (attached as session-repeated-correction.md). Run a learning-loop reflection on it: produce the findings report, then assume I approve every finding and scaffold them. Save the findings report as report.md and any artifacts you create into the outputs directory. Do not pause to ask me for approval.",
-      "expected_output": "A findings report that recommends an AGENTS.md rule requiring tests before commits and identifies that the user corrected this 3 times.",
+      "expected_output": "A findings report that recommends a workflow-skill rule requiring tests before commits (not AGENTS.md/CLAUDE.md) and identifies that the user corrected this 3 times.",
       "files": ["fixtures/session-repeated-correction.md"],
       "assertions": [
-        "Recommends an AGENTS.md instruction requiring tests before committing",
+        "Recommends a workflow skill rule requiring tests before committing",
         "Identifies the recurrence (the user corrected the same behavior about 3 times)",
-        "Routes the rule to AGENTS.md",
-        "Notes that CI is the portable option for deterministic enforcement"
+        "Routes the rule to a skills/*/SKILL.md (not AGENTS.md or CLAUDE.md)",
+        "Does not propose adding the rule to AGENTS.md or CLAUDE.md"
       ]
     },
     {
