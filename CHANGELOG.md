@@ -11,6 +11,27 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [2.4.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.3.1...v2.4.0) (2026-07-10)
+
+
+### ⚠ BREAKING CHANGES
+
+* deepen workflow architecture and grill planning decisions
+
+### Features
+
+* deepen workflow architecture and grill planning decisions ([c2a58b9](https://github.com/vinicius91carvalho/harness-engineering/commit/c2a58b9b1876b442cc1aa99f3c05b0358bc4411d))
+* installer blurbs, crawl4ai integration, and pipeline hardening ([beabe52](https://github.com/vinicius91carvalho/harness-engineering/commit/beabe5260860d5ada4746d030c4701f3a89523cf))
+
+
+### Bug Fixes
+
+* **governor:** allow explicit sub-128MB memory floors for tests ([e3b7f2b](https://github.com/vinicius91carvalho/harness-engineering/commit/e3b7f2b4ca78fc6cc4d3bd1d767c207db1b45e36))
+* **supervisor:** clear pid on complete and reset ledger in e2e ([cd98531](https://github.com/vinicius91carvalho/harness-engineering/commit/cd98531292e36e7efe952a244d74c4ce18af2467))
+* **test:** force mergecorrupt conflict after ledger cutover ([1a45087](https://github.com/vinicius91carvalho/harness-engineering/commit/1a450870acabd971374e4f57efb089fe0fc12bf4))
+* **test:** make governor deny test independent of host free RAM ([d89643b](https://github.com/vinicius91carvalho/harness-engineering/commit/d89643bbac8bdcee8e5fb90f9aa1b9482ad01dc9))
+* **test:** skip governor in orchestrator stubs for low-memory CI ([756f517](https://github.com/vinicius91carvalho/harness-engineering/commit/756f5177b8dbef993e8a47db35530ec568de4cfa))
+
 ### [2.3.1](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.3.0...v2.3.1) (2026-07-09)
 
 
