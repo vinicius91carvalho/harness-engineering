@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [2.8.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.7.1...v2.8.0) (2026-07-11)
+
+
+### Features
+
+* **generator:** reuse shared compose infra across workers ([da47f8b](https://github.com/vinicius91carvalho/harness-engineering/commit/da47f8b04c5718e00e581eea1fd0a97c9b7eab70))
+
 ### [2.7.1](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.7.0...v2.7.1) (2026-07-11)
 
 
