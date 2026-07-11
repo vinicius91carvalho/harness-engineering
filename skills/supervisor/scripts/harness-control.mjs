@@ -1497,12 +1497,28 @@ async function clearDeadLockCmd() {
 
 async function main() {
   if (commandName === 'start') return start()
-  if (commandName === 'status') return process.stdout.write(`${JSON.stringify(await readJson(stateFile, { status: 'not_started' }), null, 2)}\n`)
+  if (commandName === 'status') {
+    const state = await readJson(stateFile, { status: 'not_started' })
+    const { classify, fleetSnapshotFromState, shouldWake, foldProgress } = await importLib('wake-triage.mjs')
+    const fleet = fleetSnapshotFromState(state)
+    const recent = (await readEvents()).slice(-20)
+    const wakeTriage = {
+      shouldWake: shouldWake(recent, fleet),
+      fold: foldProgress(recent, fleet),
+      latest: recent.length ? { ...recent.at(-1), wakeTriage: classify(recent.at(-1), fleet) } : null,
+    }
+    return process.stdout.write(`${JSON.stringify({ ...state, wakeTriage }, null, 2)}\n`)
+  }
   if (commandName === 'capacity') return process.stdout.write(`${JSON.stringify(await capacity(baseConfig(), Number(options.active || 0)), null, 2)}\n`)
   if (commandName === 'events') {
+    const { classify, fleetSnapshotFromState } = await importLib('wake-triage.mjs')
+    const fleet = fleetSnapshotFromState(await readJson(stateFile, {}))
     const cursor = options.consumer ? await readJson(consumerFile(), {}) : {}
     const after = Math.max(Number(options.after || 0), Number(cursor.eventId || 0))
-    return process.stdout.write(`${JSON.stringify((await readEvents()).filter((event) => event.id > after), null, 2)}\n`)
+    const events = (await readEvents())
+      .filter((event) => event.id > after)
+      .map((event) => ({ ...event, wakeTriage: classify(event, fleet) }))
+    return process.stdout.write(`${JSON.stringify(events, null, 2)}\n`)
   }
   if (commandName === 'ack') {
     const id = Number(options.event)

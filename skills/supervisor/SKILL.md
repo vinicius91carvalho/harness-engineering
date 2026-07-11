@@ -118,6 +118,11 @@ node "$CONTROL/scripts/harness-control.mjs" events --repo "$REPO" --consumer her
 
 For each returned event:
 
+- **Wake Triage** (`skills/generator/lib/wake-triage.mjs`): each `events` row
+  includes `wakeTriage: { action, reason }` (`absorb` | `fold` | `wake`).
+  `input_required` and goal-scoped inputs always wake; healthy progress folds;
+  empty-fleet progress with remaining work stays actionable. Use `status.wakeTriage`
+  for a batch hint without parsing the full journal.
 - Deliver `immediate:true` events immediately. An `input_required` message must
   include its event ID, scope/context, reason, evidence, and permitted choices.
 - Deliver `progress` as the `--summary-minutes` status update (default 20). It

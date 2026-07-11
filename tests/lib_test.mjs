@@ -1452,3 +1452,74 @@ test('evidence artifacts are create-only', async () => {
   assert.equal(second.path, first.path)
   await assert.rejects(open(first.path, 'wx'), /EEXIST/)
 })
+
+test('wake triage always wakes on input_required', async () => {
+  const { classify } = await import('../skills/generator/lib/wake-triage.mjs')
+  assert.deepEqual(classify({ kind: 'input_required', scope: 'context', context: 'core' }), {
+    action: 'wake', reason: 'input required',
+  })
+  assert.deepEqual(classify({ kind: 'input_required', scope: 'goal', context: 'root' }), {
+    action: 'wake', reason: 'goal-scoped input required',
+  })
+})
+
+test('wake triage folds healthy progress and absorbs heartbeats', async () => {
+  const { classify, shouldWake, foldProgress } = await import('../skills/generator/lib/wake-triage.mjs')
+  const fleet = { workers: 2, counts: { total: 10, integrated: 3, blocked: 0 }, status: 'running' }
+  const progress = { id: 1, kind: 'progress', workers: 2, total: 10, integrated: 3, blocked: 0 }
+  assert.deepEqual(classify(progress, fleet), { action: 'fold', reason: 'routine progress snapshot' })
+  assert.deepEqual(classify({ id: 2, kind: 'worker_health', verdict: 'healthy' }, fleet), {
+    action: 'absorb', reason: 'healthy worker heartbeat',
+  })
+  assert.equal(shouldWake([progress, { id: 2, kind: 'worker_health', verdict: 'healthy' }], fleet), false)
+  const folded = foldProgress([
+    progress,
+    { id: 2, kind: 'worker_health', verdict: 'healthy' },
+    { id: 3, kind: 'progress', workers: 2, total: 10, integrated: 4, blocked: 0 },
+  ], fleet)
+  assert.equal(folded.foldedCount, 3)
+  assert.equal(folded.progressCount, 2)
+  assert.equal(folded.latestProgress.integrated, 4)
+})
+
+test('wake triage keeps empty-fleet progress actionable', async () => {
+  const { classify, shouldWake, isEmptyFleetActionable } = await import('../skills/generator/lib/wake-triage.mjs')
+  const fleet = {
+    workers: 0,
+    counts: { total: 5, integrated: 2, blocked: 1 },
+    pendingInputs: 0,
+    status: 'running',
+  }
+  const progress = { id: 4, kind: 'progress', workers: 0, total: 5, integrated: 2, blocked: 1 }
+  assert.equal(isEmptyFleetActionable(progress, fleet), true)
+  assert.deepEqual(classify(progress, fleet), {
+    action: 'wake',
+    reason: 'empty fleet with remaining work or pending inputs',
+  })
+  assert.equal(shouldWake([progress], fleet), true)
+})
+
+test('wake triage wakes on stuck workers and immediate failures', async () => {
+  const { classify, shouldWake } = await import('../skills/generator/lib/wake-triage.mjs')
+  const stuck = { id: 5, kind: 'worker_stuck', context: 'core' }
+  const health = { id: 6, kind: 'worker_health', verdict: 'stuck', context: 'core' }
+  assert.deepEqual(classify(stuck), { action: 'wake', reason: 'worker_stuck' })
+  assert.deepEqual(classify(health), { action: 'wake', reason: 'worker health stuck' })
+  assert.equal(shouldWake([stuck, health]), true)
+})
+
+test('wake triage fleet snapshot from supervisor state', async () => {
+  const { fleetSnapshotFromState, classify } = await import('../skills/generator/lib/wake-triage.mjs')
+  const fleet = fleetSnapshotFromState({
+    status: 'running',
+    workers: { core: { context: 'core' } },
+    progress: { total: 3, integrated: 1, blocked: 0 },
+    pendingInputs: { 7: { status: 'pending', kind: 'input_required' } },
+    retryQueue: { ghost: { guidance: 'retry' } },
+  })
+  assert.equal(fleet.workers, 1)
+  assert.equal(fleet.pendingInputs, 1)
+  assert.equal(fleet.retryQueueSize, 1)
+  const progress = { id: 8, kind: 'progress', workers: 0, total: 3, integrated: 1 }
+  assert.deepEqual(classify(progress, fleet).action, 'wake')
+})
