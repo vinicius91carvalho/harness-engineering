@@ -314,6 +314,40 @@ test('clearDeadLock removes absent merge lock as no-op', () => {
   })
 })
 
+test('clearStaleGeneratorLocks clears a dead same-host merge lock', async () => {
+  const { clearStaleGeneratorLocks, mergeLockHolder } = await import('../skills/generator/lib/claim-lease.mjs')
+  const { hostname } = await import('node:os')
+  withoutIntegrationBranchEnv(() => {
+    const root = mkdtempSync(join(tmpdir(), 'stale-locks-'))
+    spawnSync('git', ['init', '-b', 'main'], { cwd: root })
+    const lockDir = join(root, '.git', 'harness-locks', 'generator-merge')
+    mkdirSync(lockDir, { recursive: true })
+    writeFileSync(join(lockDir, 'owner'), '999999999\n')
+    writeFileSync(join(lockDir, 'host'), `${hostname()}\n`)
+    assert.equal(mergeLockHolder(root).busy, true)
+    const cleared = clearStaleGeneratorLocks(root)
+    assert.ok(cleared.some((row) => row.lock === 'merge' && row.cleared))
+    assert.equal(mergeLockHolder(root).busy, false)
+  })
+})
+
+test('clearStaleGeneratorLocks leaves a live-held merge lock alone', async () => {
+  const { clearStaleGeneratorLocks, mergeLockHolder } = await import('../skills/generator/lib/claim-lease.mjs')
+  const { hostname } = await import('node:os')
+  withoutIntegrationBranchEnv(() => {
+    const root = mkdtempSync(join(tmpdir(), 'live-locks-'))
+    spawnSync('git', ['init', '-b', 'main'], { cwd: root })
+    const lockDir = join(root, '.git', 'harness-locks', 'generator-merge')
+    mkdirSync(lockDir, { recursive: true })
+    writeFileSync(join(lockDir, 'owner'), `${process.pid}\n`)
+    writeFileSync(join(lockDir, 'host'), `${hostname()}\n`)
+    const cleared = clearStaleGeneratorLocks(root)
+    assert.equal(cleared.length, 0)
+    assert.equal(mergeLockHolder(root).busy, true)
+    assert.equal(String(mergeLockHolder(root).owner), String(process.pid))
+  })
+})
+
 test('authorizeFleetRecovery allows recovery when supervisor is not live', async () => {
   const { authorizeFleetRecovery } = await import('../skills/generator/lib/supervisor-lease.mjs')
   const controlRoot = mkdtempSync(join(tmpdir(), 'fleet-auth-'))

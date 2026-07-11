@@ -41,7 +41,7 @@ const { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } = 
 const { planTickAdmission } = await importLib('supervisor-admission.mjs')
 const { pruneOrphanPendingInputs, isCrashBoundContext } = await importLib('supervisor-claims.mjs')
 const { planAutoRetryResponses } = await importLib('supervisor-auto-respond.mjs')
-const { selectClaim, resumeClaim, releaseClaim, mergeLockHolder, clearDeadLock } = await importLib('claim-lease.mjs')
+const { selectClaim, resumeClaim, releaseClaim, mergeLockHolder, clearDeadLock, clearStaleGeneratorLocks } = await importLib('claim-lease.mjs')
 const { integrationBranchName, integrationBranchRef } = await importLib('integration-branch.mjs')
 const { ledgerPath, readLedger, applyLedgerToCatalog } = await importLib('execution-ledger.mjs')
 const {
@@ -1064,6 +1064,19 @@ class Supervisor {
     if ((['paused', 'stopped'].includes(control.status) || mayResume) && control.status !== this.state.status) {
       await this.save({ status: control.status })
     }
+    // Auto-clear dead same-host merge/state locks before admission. Status used
+    // to report holderAlive=false while the tick never cleared them, leaving an
+    // empty fleet with free capacity until a human ran clear-dead-lock.
+    const staleLocks = clearStaleGeneratorLocks(repo)
+    for (const cleared of staleLocks) {
+      await this.emit('stale_lock_cleared', { lock: cleared.lock, reason: cleared.reason }, false)
+    }
+    if (staleLocks.length > 0 && this.workers.size === 0 && Object.keys(this.state.crashCounts || {}).length > 0) {
+      // Crash-bound was often tripped by workers dying on the stale lock. After
+      // infra recovery with an empty fleet, allow one more auto-retry wave.
+      this.state.crashCounts = {}
+      await this.save()
+    }
     // Prune before auto-retry so orphaned context Input Requests (no live claim,
     // retry queue entry, or worker) are not written into retryQueue and kept alive.
     const claimsForPrune = await ownClaims()
@@ -1111,9 +1124,20 @@ class Supervisor {
         continue
       }
       const runState = await readJson(runStateFile(context), {})
+      // Ghost PID: run-state still names a live process, but this supervisor does
+      // not own a worker for the context. Do not pretend the retry succeeded —
+      // that cleared retryQueue and left an empty fleet. Terminate the orphan so
+      // a later tick can force-resume; rehydrate already ran above.
       if (processAlive(runState.ownerPid) || processAlive(runState.childPid)) {
-        const outcome = applyRetryResumeOutcome(this.state.retryQueue, context, retry, true)
-        this.state.retryQueue = outcome.updatedQueue
+        for (const pid of [runState.ownerPid, runState.childPid]) {
+          if (!processAlive(pid)) continue
+          try { process.kill(Number(pid), 'SIGTERM') } catch { /* ignore */ }
+        }
+        await this.emit('retry_deferred_orphan_pid', {
+          context,
+          ownerPid: runState.ownerPid || null,
+          childPid: runState.childPid || null,
+        }, false)
         await this.save()
         continue
       }

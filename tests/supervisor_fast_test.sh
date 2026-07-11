@@ -230,4 +230,43 @@ printf '%s\n' '{"supervisorPid":999999999,"supervisorHost":"'"$(hostname)"'","wo
 "$NODE" "$CONTROL" clear-dead-lock --repo "$TMP/fleet" --lock merge | jq -e '.cleared == false' >/dev/null
 echo 'ok - guarded fleet recovery commands authorize when supervisor is not live'
 
+mkdir -p "$TMP/emptyfleet"
+supervisor_common_init_git_repo "$TMP/emptyfleet" false
+mkdir -p "$TMP/emptyfleet/.git/harness-control" \
+  "$TMP/emptyfleet/.git/harness-runs" \
+  "$TMP/emptyfleet/.git/harness-locks/generator-merge"
+printf '%s\n' '{"stuckctx":{"context":"stuckctx","status":"building","worktree":"'"$TMP"'/emptyfleet","branch":"gen/stuckctx","port":9,"featureIds":[]}}' \
+  >"$TMP/emptyfleet/.git/generator-claims.json"
+printf '%s\n' '{"status":"failed","ownerPid":999999999,"childPid":null}' \
+  >"$TMP/emptyfleet/.git/harness-runs/stuckctx.json"
+printf '%s\n' '999999999' >"$TMP/emptyfleet/.git/harness-locks/generator-merge/owner"
+hostname >"$TMP/emptyfleet/.git/harness-locks/generator-merge/host"
+printf '%s\n' '{
+  "status":"running",
+  "supervisorPid":null,
+  "workers":{},
+  "crashCounts":{"stuckctx":5},
+  "retryQueue":{},
+  "pendingInputs":{
+    "42":{
+      "id":42,
+      "status":"pending",
+      "scope":"context",
+      "context":"stuckctx",
+      "kind":"input_required",
+      "immediate":true,
+      "reason":"Worker exited with code 1",
+      "choices":["retry","pause","abort"]
+    }
+  }
+}' >"$TMP/emptyfleet/.git/harness-control/state.json"
+supervisor_common_run_timeout 20 env PATH="$SUPERVISOR_PATH" "$NODE" "$CONTROL" run \
+  --repo "$TMP/emptyfleet" --host claude --once true --poll-ms 50 \
+  --max-workers 2 --quota-workers 2 --cpu-per-worker 0.25 \
+  --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100
+test ! -f "$TMP/emptyfleet/.git/harness-locks/generator-merge/owner"
+jq -e '(.crashCounts.stuckctx // 0) != 5 or (.crashCounts|length==0) or (.retryQueue.stuckctx != null) or (.pendingInputs["42"].status == "responded")' \
+  "$TMP/emptyfleet/.git/harness-control/state.json" >/dev/null
+echo 'ok - empty fleet tick clears dead merge lock and recovers past crash-bound'
+
 echo 'ok - supervisor fast tests passed'

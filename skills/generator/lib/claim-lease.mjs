@@ -748,3 +748,22 @@ export function clearDeadLock(repo, kind, { force = false } = {}) {
   }
   return { cleared: true, lock: kind, reason: force ? 'forced' : 'dead-holder' }
 }
+
+/**
+ * Clear same-host generator merge/state locks whose holder PID is dead.
+ * Supervisor ticks call this so empty fleets do not wait on a stale lock that
+ * status already reports as holderAlive=false. Never forces remote locks.
+ */
+export function clearStaleGeneratorLocks(repo) {
+  const cleared = []
+  for (const kind of ['merge', 'state']) {
+    try {
+      const result = clearDeadLock(repo, kind, { force: false })
+      if (result?.cleared) cleared.push(result)
+    } catch (error) {
+      if (error?.code === 'LOCK_HELD' || error?.code === 'LOCK_REMOTE') continue
+      throw error
+    }
+  }
+  return cleared
+}

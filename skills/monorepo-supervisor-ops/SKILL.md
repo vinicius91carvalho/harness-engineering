@@ -79,10 +79,19 @@ setsid -f env HERDR_ENV=1 node "$CONTROL" run --repo "$REPO" --host agent --disp
 
 ## Empty fleet recovery (workers={}, no herdr panes)
 
+Supervisor ticks now auto-clear dead same-host merge/state locks
+(`stale_lock_cleared` events) and, when the fleet is empty after a clear, reset
+crash-bound counts so auto-retry can resume. Ghost run-state PIDs outside
+`workers` no longer count as a successful retry (that used to drop `retryQueue`
+and leave capacity unused).
+
+Manual recovery remains for remote locks, quota pauses, and RAM pressure:
+
 When `status=running` but `workers={}`, herdr has only the default tab, or
 `capacity.limit=0` with no spawns:
 
-1. **Dead merge lock** — `mergeLock.holderAlive=false` or owner PID gone:
+1. **Dead merge lock** — `mergeLock.holderAlive=false` or owner PID gone
+   (usually auto-cleared; use CLI for remote/force):
    ```bash
    node "$CONTROL" clear-dead-lock --repo "$REPO" --lock merge --force true
 ```
