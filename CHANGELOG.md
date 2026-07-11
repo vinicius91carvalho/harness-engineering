@@ -11,6 +11,33 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [2.7.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.6.1...v2.7.0) (2026-07-11)
+
+
+### Features
+
+* **observation-gate:** hard-exclude weak validation hosts and soft-align coding ([3d0100d](https://github.com/vinicius91carvalho/harness-engineering/commit/3d0100d1e283b897b337f3c2601661cb3cbbfd97))
+* **single-goal-review-gate:** unify goalReviewAdmissible across supervisor and orchestrator ([2ec1df7](https://github.com/vinicius91carvalho/harness-engineering/commit/2ec1df7dc4def605fbd192c7872a73f6bf636686))
+* add evidence corpus reader and control-host beacon stop policy ([290ffc7](https://github.com/vinicius91carvalho/harness-engineering/commit/290ffc76d79b889a58aff979a866733cb29178b9))
+* add zero-token Wake Triage for Control Journal events ([9899c82](https://github.com/vinicius91carvalho/harness-engineering/commit/9899c82a3fe7847988db374a16382180bf1374e6))
+* **fleet-ops:** add fleet snapshot module and finished-tab reaper libs ([2db96da](https://github.com/vinicius91carvalho/harness-engineering/commit/2db96da25f00db54ee0ac3fbcc5c72193ec3cbb5))
+* **generator:** consolidate worker-outcome as canonical outcome module ([2b932d6](https://github.com/vinicius91carvalho/harness-engineering/commit/2b932d65d0da1c6866ba7f74156d72da5cd2960d))
+* **generator:** deepen failure-policy as single recovery module ([a164aa4](https://github.com/vinicius91carvalho/harness-engineering/commit/a164aa4966f483ba265624b537b2d3b2b9bf29cd))
+* **supervisor:** add fail-closed preflight before admission ([b5faa3e](https://github.com/vinicius91carvalho/harness-engineering/commit/b5faa3ef969228f048af515103eb30013f2cdfb1))
+
+
+### Bug Fixes
+
+* **failure-policy:** align SAFE_RECOVERY with repair-router semantics ([d126cf0](https://github.com/vinicius91carvalho/harness-engineering/commit/d126cf0cb886e80b04e4ce92307597c407e41573))
+* **supervisor:** allow preflight without a worker host CLI ([a8c9083](https://github.com/vinicius91carvalho/harness-engineering/commit/a8c908366d6e89a41db2af89f24bd2e59527d508))
+* **supervisor:** ignore untracked files in Goal Review dirty check ([5282339](https://github.com/vinicius91carvalho/harness-engineering/commit/5282339baee1c3fd4abce867bd014864710fa49b))
+
+
+### Documentation
+
+* **adr:** fleet ops automation waits on Fleet Snapshot ([957649a](https://github.com/vinicius91carvalho/harness-engineering/commit/957649aabdc3989525efb81e1b90742870ccabf9)), closes [#22](https://github.com/vinicius91carvalho/harness-engineering/issues/22)
+* **skills:** capture no-redelegate and empty-fleet auto-recovery rules ([954cfcd](https://github.com/vinicius91carvalho/harness-engineering/commit/954cfcdffe44479e7f8ae84c31ff323991b1f464))
+
 ### [2.6.1](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.6.0...v2.6.1) (2026-07-11)
 
 
