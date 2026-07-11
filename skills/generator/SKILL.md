@@ -47,6 +47,14 @@ Do not leave containers or servers running for a later task.
 Do not tear down stacks you did not start (other subprojects or live sibling contexts).
 Coding, isolated QA, and Integrated Verification prompts all carry this rule.
 
+**No nested Task/subagent re-delegation:** coding and QA workers ARE the assigned
+harness worker for that Work Item. They must execute it with their own tools and
+emit the harness verdict themselves. Never spawn Task/subagents or re-delegate to
+another coding-agent/qa-agent. Host rules that say the "main" agent must only
+orchestrate (AGENTS.md / CLAUDE.md) do not apply inside a worker session —
+`NO_REDELEGATE_RULE` in `prompts/feature.mjs` enforces this. Nested Task calls
+burn provider quota and never return a verdict.
+
 **Cross-project E2E (dependents like web → core):** when an AC requires real
 HTTP/SSE against another subproject, run that E2E against the live dependency
 (compose/API up) — mocks are not the pass path. If the failure is a dependency

@@ -164,6 +164,14 @@ If the fleet is empty, finished tabs are still open, or health is `stuck`, act
 immediately and harden this skill / `monorepo-supervisor-ops` / harness code in the
 same turn — do not only narrate (fail-closed).
 
+**Empty-fleet auto-recovery (tick-owned):** each supervisor tick clears dead
+same-host merge/state locks (`stale_lock_cleared`). When the fleet is empty after
+a clear, it resets crash-bound counts so auto-retry can run again. Ghost run-state
+PIDs outside `workers` are not treated as a successful retry (orphan SIGTERM +
+defer) — that used to drop `retryQueue` and leave free capacity unused. Use
+manual `clear-dead-lock --force` only for remote locks or when the tick cannot
+clear them. See `monorepo-supervisor-ops` for quota/RAM stalls.
+
 Custom `retryQueue[context].guidance` wins over auto-retry generics.
 Never auto-retry `coding agent failed three times` — needs operator or Repair Plan
 guidance (verify-first when the AC is already satisfied).
