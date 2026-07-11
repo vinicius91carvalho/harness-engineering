@@ -47,6 +47,7 @@ const { enrichGuidanceWithEvidence } = await importLib('evidence-guidance.mjs')
 const { buildOrchestratorArgv, buildWorkerBase, workerLogFileName, planWorkerHerdrMeta, planWorkerStop, planWorkerCleanupTargets, terminateProcessTree, persistWorkerPaneTail } = await importLib('worker-lifecycle.mjs')
 const { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } = await importLib('supervisor-tick.mjs')
 const { planTickAdmission, goalReviewGate } = await importLib('supervisor-admission.mjs')
+const { isCheckoutCleanForGoalReview } = await importLib('checkout-dirt.mjs')
 const { pruneOrphanPendingInputs, isCrashBoundContext } = await importLib('supervisor-claims.mjs')
 const { selectClaim, resumeClaim, releaseClaim, mergeLockHolder, clearDeadLock, clearStaleGeneratorLocks } = await importLib('claim-lease.mjs')
 const { integrationBranchName, integrationBranchRef } = await importLib('integration-branch.mjs')
@@ -493,7 +494,7 @@ class Supervisor {
       const goalStateName = projectPrefix ? `${projectId}--goal-review.json` : 'goal-review.json'
       const goalState = await readJson(join(commonGit, 'harness-runs', goalStateName), {})
       const head = git(['rev-parse', integrationBranchName(repo)], true).stdout.trim()
-      const clean = git(['status', '--porcelain'], true).stdout.trim() === ''
+      const clean = isCheckoutCleanForGoalReview(git(['status', '--porcelain'], true).stdout)
       if (goalState.status === 'complete' && goalState.reviewedHead === head && clean) status = 'complete'
     }
     this.state = {
@@ -1077,7 +1078,7 @@ class Supervisor {
     const goalStateName = projectPrefix ? `${projectId}--goal-review.json` : 'goal-review.json'
     const goalState = await readJson(join(commonGit, 'harness-runs', goalStateName), {})
     const head = git(['rev-parse', integrationBranchName(repo)], true).stdout.trim()
-    const clean = git(['status', '--porcelain'], true).stdout.trim() === ''
+    const clean = isCheckoutCleanForGoalReview(git(['status', '--porcelain'], true).stdout)
     const gate = goalReviewGate({
       catalog: snapshot.queue,
       counts: snapshot.counts,
@@ -1362,7 +1363,7 @@ async function start() {
   const goalState = await readJson(join(commonGit, 'harness-runs', goalStateName), {})
   const integrationBranch = integrationBranchName(repo)
   const head = git(['rev-parse', integrationBranch], true).stdout.trim()
-  const clean = git(['status', '--porcelain'], true).stdout.trim() === ''
+  const clean = isCheckoutCleanForGoalReview(git(['status', '--porcelain'], true).stdout)
   if (current.status === 'complete' && clean && goalState.reviewedHead === head) {
     return process.stdout.write(`${JSON.stringify({ started: false, status: 'complete', reviewedHead: head })}\n`)
   }

@@ -1,7 +1,8 @@
 /**
  * Goal Review treats the integration checkout as read-only, but workers
- * legitimately leave ephemeral runtime files under `.harness/` (app.pid, etc.).
- * Those must not fail the dirty check.
+ * legitimately leave ephemeral runtime files under `.harness/` (app.pid, etc.),
+ * and monorepos often have unrelated untracked files outside the Project Goal.
+ * Those must not fail the dirty check - only tracked modifications do.
  */
 const RUNTIME_DIRT = /(?:^|\/)\.harness\/[^/\s]+\.pid$/
 
@@ -19,6 +20,11 @@ export function isRuntimeCheckoutDirt(line) {
   return RUNTIME_DIRT.test(porcelainPath(line))
 }
 
+/** Untracked (`??`) and ignored (`!!`) paths do not block Goal Review. */
+export function isUntrackedOrIgnoredDirt(line) {
+  return /^\?\?|^!!/.test(String(line || ''))
+}
+
 /** Filter porcelain output down to dirt that blocks Goal Review. */
 export function meaningfulCheckoutDirt(porcelain) {
   return String(porcelain || '')
@@ -26,5 +32,11 @@ export function meaningfulCheckoutDirt(porcelain) {
     .map((line) => line.trimEnd())
     .filter(Boolean)
     .filter((line) => !isRuntimeCheckoutDirt(line))
+    .filter((line) => !isUntrackedOrIgnoredDirt(line))
     .join('\n')
+}
+
+/** True when porcelain has no tracked dirt that should block Goal Review. */
+export function isCheckoutCleanForGoalReview(porcelain) {
+  return meaningfulCheckoutDirt(porcelain) === ''
 }

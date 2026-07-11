@@ -18,6 +18,10 @@ import { interpretWorkerOutcome } from '../skills/generator/lib/worker-outcome.m
 import { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } from '../skills/generator/lib/supervisor-tick.mjs'
 import { planTickAdmission, goalReviewAdmissible, goalReviewGate } from '../skills/generator/lib/supervisor-admission.mjs'
 import { goalReviewAdmissible as goalReviewContract } from '../skills/generator/lib/completion-contract.mjs'
+import {
+  meaningfulCheckoutDirt,
+  isCheckoutCleanForGoalReview,
+} from '../skills/generator/lib/checkout-dirt.mjs'
 import { mkey, strikeOf, buildPlan, buildCandidates, lastCoder, candidatePool, isNoCreditsCandidate } from '../skills/generator/lib/route-plan.mjs'
 import { buildOrchestratorArgv, buildWorkerBase, planWorkerHerdrMeta, planWorkerStop, planWorkerCleanupTargets, terminateProcessTree } from '../skills/generator/lib/worker-lifecycle.mjs'
 import { pruneOrphanPendingInputs, isCrashBoundContext, liveClaimContexts } from '../skills/generator/lib/supervisor-claims.mjs'
@@ -791,6 +795,20 @@ test('goalReviewGate returns structured reasons from completion-contract', () =>
     }),
     { ok: false, reason: 'incomplete-queue' },
   )
+})
+
+test('meaningfulCheckoutDirt ignores untracked files and runtime pids', () => {
+  const porcelain = [
+    '?? unrelated.txt',
+    '?? monorepo/noise.md',
+    '!! .gitignore-local',
+    '?? .harness/app.pid',
+    ' M tracked.js',
+  ].join('\n')
+  assert.equal(meaningfulCheckoutDirt(porcelain), ' M tracked.js')
+  assert.equal(isCheckoutCleanForGoalReview('?? unrelated.txt\n?? .harness/app.pid\n'), true)
+  assert.equal(isCheckoutCleanForGoalReview(' M src/app.js\n'), false)
+  assert.equal(isCheckoutCleanForGoalReview(''), true)
 })
 
 test('goalReviewAdmissible boolean adapter covers fleet gates and already-reviewed-head short-circuit', () => {
