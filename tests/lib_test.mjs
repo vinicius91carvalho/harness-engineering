@@ -829,6 +829,21 @@ test('meaningfulCheckoutDirt ignores untracked files and runtime pids', () => {
   assert.equal(isCheckoutCleanForGoalReview(''), true)
 })
 
+test('meaningfulCheckoutDirt ignores turbo/next build caches', () => {
+  const porcelain = [
+    ' M .turbo/cache/abc-meta.json',
+    ' M .turbo/cache/abc.tar.zst',
+    ' M src/app.ts',
+    '?? .turbo/cache/new.tar.zst',
+    ' M .next/BUILD_ID',
+  ].join('\n')
+  assert.equal(meaningfulCheckoutDirt(porcelain), ' M src/app.ts')
+  assert.equal(
+    isCheckoutCleanForGoalReview(' M .turbo/cache/x.tar.zst\n?? .turbo/cache/y.tar.zst\n'),
+    true,
+  )
+})
+
 test('goalReviewAdmissible boolean adapter covers fleet gates and already-reviewed-head short-circuit', () => {
   const integrated = baseSnapshot({ total: 1, integrated: 1 })
   assert.equal(goalReviewAdmissible({ snapshot: integrated, activeWorkers: 0, slots: 1, hasGoalReviewWorker: false }), true)

@@ -1,10 +1,13 @@
 /**
  * Goal Review treats the integration checkout as read-only, but workers
  * legitimately leave ephemeral runtime files under `.harness/` (app.pid, etc.),
- * and monorepos often have unrelated untracked files outside the Project Goal.
- * Those must not fail the dirty check - only tracked modifications do.
+ * build caches (`.turbo/cache`), and monorepos often have unrelated untracked
+ * files outside the Project Goal. Those must not fail the dirty check - only
+ * meaningful tracked product modifications do.
  */
 const RUNTIME_DIRT = /(?:^|\/)\.harness\/[^/\s]+\.pid$/
+/** Turbo / Next / Vite / package-manager caches that churn without product intent. */
+const BUILD_CACHE_DIRT = /(?:^|\/)(?:\.turbo(?:\/|$)|\.next(?:\/|$)|\.nuxt(?:\/|$)|dist\/|\.cache(?:\/|$)|node_modules\/)/
 
 /** Path column from one `git status --porcelain` line. */
 export function porcelainPath(line) {
@@ -20,6 +23,10 @@ export function isRuntimeCheckoutDirt(line) {
   return RUNTIME_DIRT.test(porcelainPath(line))
 }
 
+export function isBuildCacheCheckoutDirt(line) {
+  return BUILD_CACHE_DIRT.test(porcelainPath(line))
+}
+
 /** Untracked (`??`) and ignored (`!!`) paths do not block Goal Review. */
 export function isUntrackedOrIgnoredDirt(line) {
   return /^\?\?|^!!/.test(String(line || ''))
@@ -32,6 +39,7 @@ export function meaningfulCheckoutDirt(porcelain) {
     .map((line) => line.trimEnd())
     .filter(Boolean)
     .filter((line) => !isRuntimeCheckoutDirt(line))
+    .filter((line) => !isBuildCacheCheckoutDirt(line))
     .filter((line) => !isUntrackedOrIgnoredDirt(line))
     .join('\n')
 }
