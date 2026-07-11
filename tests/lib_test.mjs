@@ -600,6 +600,57 @@ test('interpretWorkerOutcome context complete when integrated', () => {
   assert.deepEqual(result.stuck, [])
 })
 
+test('worker-outcome canonical API covers harness-control closed and live paths', async () => {
+  const {
+    parseVerdict,
+    validateOutcome,
+    readDurable,
+    writeDurable,
+    interpretClosed,
+    assessLive,
+    isInfraNoise,
+    isWorkerStuckByHealth,
+    classifyPaneTail,
+  } = await import('../skills/generator/lib/worker-outcome.mjs')
+
+  assert.deepEqual(parseVerdict('===HARNESS-VERDICT-BEGIN===\n{"goal":true}\n===HARNESS-VERDICT-END==='), { goal: true })
+  assert.equal(validateOutcome({ goal: true }).valid, true)
+  assert.equal(isInfraNoise('orchestrator: cannot read feature_list.json'), true)
+
+  const closed = interpretClosed({
+    key: 'goal-review',
+    tail: '',
+    persisted: null,
+    runState: { status: 'complete', phase: 'complete', lastResult: 'ok' },
+    featureIds: [],
+    queue: [],
+  })
+  assert.equal(closed.goal, true)
+
+  const health = assessLive({
+    tailText: 'thinking: working\ntool → shell',
+    scrollDelta: 2,
+    childAlive: true,
+    lastAgentOutputAgeMs: 1_000,
+  })
+  assert.equal(health.verdict, 'healthy')
+  assert.equal(classifyPaneTail('orchestrator: waiting for merge lock'), 'merge_lock')
+  assert.equal(isWorkerStuckByHealth({ verdict: 'stuck', recycle: true }), true)
+
+  const tmp = mkdtempSync(join(tmpdir(), 'worker-outcome-durable-'))
+  const stateFile = join(tmp, 'core.json')
+  await writeDurable(stateFile, {
+    invocationId: 'inv-1',
+    leaseToken: 'lease-1',
+    payload: { total: 1, passed: 1, stuck: [] },
+  })
+  const scoped = await readDurable(stateFile, {
+    expectedInvocationId: 'inv-1',
+    expectedLeaseToken: 'lease-1',
+  })
+  assert.equal(scoped.passed, 1)
+})
+
 test('drainRetryQueue respects slot budget on successful resume', () => {
   const retryQueue = {
     alpha: { guidance: 'retry alpha', attempts: 0 },

@@ -45,13 +45,15 @@ grep -q 'SKILL.md' scripts/install-reconcile.mjs
 node scripts/install-reconcile.mjs validate >/dev/null
 echo 'ok - Claude, Codex, Cursor Agent, and OpenCode manifests all key off the same skills/ directory convention'
 
-# ---- (ii) verdict parsing: both runtime scripts must import the shared lib ----
+# ---- (ii) verdict parsing: shared lib + worker-outcome canonical module ----
 GEN=skills/generator/orchestrator.mjs
 SUP=skills/supervisor/scripts/harness-control.mjs
 LIB=skills/generator/lib/verdict.mjs
+OUTCOME=skills/generator/lib/worker-outcome.mjs
 grep -q "from './lib/verdict.mjs'" "$GEN" || { echo "not ok - $GEN must import ./lib/verdict.mjs" >&2; exit 1; }
-grep -q "importLib('verdict.mjs')" "$SUP" || grep -q "lib/verdict.mjs" "$SUP" || { echo "not ok - $SUP must load skills/generator/lib/verdict.mjs" >&2; exit 1; }
-grep -q 'export function parseObject' "$LIB" || { echo "not ok - $LIB must export parseObject" >&2; exit 1; }
-echo 'ok - verdict parsing is centralized in skills/generator/lib/verdict.mjs'
+grep -q "importLib('worker-outcome.mjs')" "$SUP" || { echo "not ok - $SUP must load skills/generator/lib/worker-outcome.mjs" >&2; exit 1; }
+grep -q 'export function parseVerdict' "$OUTCOME" || { echo "not ok - $OUTCOME must export parseVerdict" >&2; exit 1; }
+grep -q 'parseObject' "$LIB" || { echo "not ok - $LIB must re-export parseObject" >&2; exit 1; }
+echo 'ok - verdict parsing is centralized in skills/generator/lib/worker-outcome.mjs'
 
-echo 'ok - manifest and parseObject parity guards passed'
+echo 'ok - manifest and worker-outcome parity guards passed'

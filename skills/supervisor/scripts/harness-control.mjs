@@ -32,11 +32,16 @@ const { readJson, atomicJson } = await importLib('fs-json.mjs')
 const { isProviderQuotaLimited } = await importLib('verdict.mjs')
 const { scopeClaims, runStateFile: runStatePath } = await importLib('project-keys.mjs')
 const { resolveProjectTopology } = await importLib('project-topology.mjs')
-const { readWorkerResult } = await importLib('worker-result.mjs')
 const { cleanupBrowserOrphans } = await importLib('browser-cleanup.mjs')
 const { cleanupWorktreeRuntime } = await importLib('worktree-teardown.mjs')
-const { isWorkerStuck, isWorkerStuckByHealth, stuckThresholdMs, assessWorkerHealth } = await importLib('stuck-worker.mjs')
-const { interpretWorkerOutcome } = await importLib('worker-outcome.mjs')
+const {
+  readDurable,
+  interpretClosed,
+  assessLive,
+  isWorkerStuck,
+  isWorkerStuckByHealth,
+  stuckThresholdMs,
+} = await importLib('worker-outcome.mjs')
 const { planWorkerClosedActions, buildOrchestratorArgv, buildWorkerBase, workerLogFileName, planWorkerHerdrMeta, planWorkerStop, planWorkerCleanupTargets, terminateProcessTree, persistWorkerPaneTail, shouldEnqueueStuckWorkerRetry } = await importLib('worker-lifecycle.mjs')
 const { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } = await importLib('supervisor-tick.mjs')
 const { planTickAdmission, goalReviewGate } = await importLib('supervisor-admission.mjs')
@@ -748,7 +753,7 @@ class Supervisor {
         const tail = readPaneTail(worker.paneId, 60)
         paneTail = tail
         const paneStatus = getPaneAgentStatus(worker.paneId)
-        health = assessWorkerHealth({
+        health = assessLive({
           runStateAgeMs,
           childAlive,
           paneStatus,
@@ -874,13 +879,13 @@ class Supervisor {
     let tail = capturedTail
     try { tail = (await readFile(worker.logFile, 'utf8')).slice(-64_000) || tail } catch {}
     const runState = await readJson(runStateFile(key), {})
-    const persisted = await readWorkerResult(runStateFile(key), {
+    const persisted = await readDurable(runStateFile(key), {
       expectedLeaseToken: runState.leaseToken || null,
       expectedReviewedHead: runState.reviewedHead || null,
       expectedInvocationId: runState.invocationId || null,
     })
     const queue = await queueWithLedger()
-    const result = interpretWorkerOutcome({
+    const result = interpretClosed({
       key,
       exitCode: code,
       tail,
