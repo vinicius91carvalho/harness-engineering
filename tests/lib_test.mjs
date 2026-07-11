@@ -1194,21 +1194,26 @@ test('resource governor prunes dead-pid reservations and reuses context', async 
     providers: {},
     updatedAt: new Date().toISOString(),
   }, null, 2)}\n`)
-  const observed = await observeCapacity(commonGit, {
-    maxWorkers: 2, quotaWorkers: 2, cpuPerWorker: 1,
-    memoryPerWorkerMb: 1, reserveMemoryMb: 0, maxLoadRatio: 0.99,
-  })
+  const governorOpts = {
+    maxWorkers: 2,
+    quotaWorkers: 2,
+    cpuPerWorker: 1,
+    // Keep memory tiny so low-free-RAM CI runners (macOS) still have memory slots;
+    // this test is about dead-pid pruning and same-context reuse, not load shedding.
+    memoryPerWorkerMb: 1,
+    reserveMemoryMb: 0,
+    maxLoadRatio: 100,
+  }
+  const observed = await observeCapacity(commonGit, governorOpts)
   // Dead pid must not count toward active workers after prune-on-admit.
   const first = await requestAdmission(commonGit, {
     projectId: 'core', context: 'remediation', provider: 'agent',
-    maxWorkers: 2, quotaWorkers: 2, cpuPerWorker: 1,
-    memoryPerWorkerMb: 1, reserveMemoryMb: 0, maxLoadRatio: 0.99,
+    ...governorOpts,
   })
   assert.equal(first.granted, true)
   const second = await requestAdmission(commonGit, {
     projectId: 'core', context: 'remediation', provider: 'agent',
-    maxWorkers: 2, quotaWorkers: 2, cpuPerWorker: 1,
-    memoryPerWorkerMb: 1, reserveMemoryMb: 0, maxLoadRatio: 0.99,
+    ...governorOpts,
   })
   assert.equal(second.granted, true)
   assert.equal(second.reused, true)
