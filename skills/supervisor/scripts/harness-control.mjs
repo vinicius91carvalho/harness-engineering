@@ -43,6 +43,7 @@ const {
   stuckThresholdMs,
 } = await importLib('worker-outcome.mjs')
 const { planWorkerClosedActions, shouldEnqueueStuckWorkerRetry, planAutoRetryResponses } = await importLib('failure-policy.mjs')
+const { enrichGuidanceWithEvidence } = await importLib('evidence-guidance.mjs')
 const { buildOrchestratorArgv, buildWorkerBase, workerLogFileName, planWorkerHerdrMeta, planWorkerStop, planWorkerCleanupTargets, terminateProcessTree, persistWorkerPaneTail } = await importLib('worker-lifecycle.mjs')
 const { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } = await importLib('supervisor-tick.mjs')
 const { planTickAdmission, goalReviewGate } = await importLib('supervisor-admission.mjs')
@@ -457,7 +458,10 @@ class Supervisor {
   async input(scope, reason, detail, context = null, choices = ['retry', 'pause', 'abort']) {
     const existing = Object.values(this.state.pendingInputs || {}).find((item) => item.status === 'pending' && item.scope === scope && item.context === context && item.reason === reason)
     if (existing) return existing
-    const event = await this.emit('input_required', { scope, context, reason, detail, choices }, true)
+    const enrichedDetail = { ...(detail || {}) }
+    const guidanceExcerpt = enrichGuidanceWithEvidence('', enrichedDetail)
+    if (guidanceExcerpt) enrichedDetail.guidanceExcerpt = guidanceExcerpt
+    const event = await this.emit('input_required', { scope, context, reason, detail: enrichedDetail, choices }, true)
     this.state.pendingInputs ||= {}
     this.state.pendingInputs[event.id] = { ...event, status: 'pending' }
     await this.save({ status: scope === 'goal' ? 'needs_input' : this.state.status })
@@ -964,9 +968,15 @@ class Supervisor {
       case 'goal_defects':
         await this.emit('goal_defects', { reopened: plan.reopened, defects: plan.defects }, true)
         break
-      case 'blocked_input':
-        await this.input(plan.scope, plan.reason, plan.detail, plan.context)
+      case 'blocked_input': {
+        const runState = await readJson(runStateFile(key), {})
+        const detail = {
+          ...(plan.detail || {}),
+          evidence: plan.detail?.evidence || runState.evidence || null,
+        }
+        await this.input(plan.scope, plan.reason, detail, plan.context)
         break
+      }
       case 'release':
         releaseClaim(repo, key)
         await this.emit('context_completed', { context: key, passed: plan.passed, total: plan.total })

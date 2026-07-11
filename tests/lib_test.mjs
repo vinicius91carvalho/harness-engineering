@@ -1281,6 +1281,102 @@ test('worker-health classifies merge lock, verdict hang, and thinking', async ()
   assert.equal(healthy.verdict, 'healthy')
 })
 
+test('assessLive classifies spawn_silence after phase banner without agent stream', async () => {
+  const {
+    classifyPaneTail, assessLive, isPhaseBannerLine, hasAgentStreamSignals,
+  } = await import('../skills/generator/lib/worker-outcome.mjs')
+
+  const bannerTail = [
+    'orchestrator: merge lock acquired',
+    '── CODING → agent attempt 1 ──',
+    'agent: still waiting for first token',
+  ].join('\n')
+  assert.equal(isPhaseBannerLine('── CODING → agent attempt 1 ──'), true)
+  assert.equal(hasAgentStreamSignals(bannerTail), false)
+  assert.equal(classifyPaneTail(bannerTail), 'spawn_silence')
+
+  const withinBudget = assessLive({
+    tailText: bannerTail,
+    childAlive: true,
+    lastAgentOutputAgeMs: 15_000,
+    scrollDelta: 0,
+    thresholds: { spawnSilenceBudgetMs: 60_000 },
+  })
+  assert.equal(withinBudget.verdict, 'waiting_expected')
+  assert.equal(withinBudget.tailClass, 'spawn_silence')
+  assert.equal(withinBudget.recycle, false)
+
+  const overdue = assessLive({
+    tailText: bannerTail,
+    childAlive: true,
+    lastAgentOutputAgeMs: 75_000,
+    scrollDelta: 0,
+    thresholds: { spawnSilenceBudgetMs: 60_000 },
+  })
+  assert.equal(overdue.verdict, 'stuck')
+  assert.equal(overdue.tailClass, 'spawn_silence')
+  assert.equal(overdue.recycle, true)
+
+  const agentStarted = [
+    '── QA → codex attempt 2 ──',
+    'agent: started (codex gpt-5)',
+  ].join('\n')
+  assert.equal(classifyPaneTail(agentStarted), 'mcp_warmup')
+})
+
+test('routeRepair recycles spawn_silence like mcp_warmup', () => {
+  const routed = routeRepair({
+    healthVerdict: 'stuck',
+    tailClass: 'spawn_silence',
+  })
+  assert.equal(routed.action, 'recycle')
+  assert.equal(routed.defectClass, 'infra')
+  assert.equal(routed.autoRetry, true)
+})
+
+test('evidenceGuidanceExcerpt reads expected/observed pairs without mutating artifacts', async () => {
+  const { evidenceGuidanceExcerpt, enrichGuidanceWithEvidence } = await import('../skills/generator/lib/evidence-guidance.mjs')
+  const { autoRetryGuidance } = await import('../skills/generator/lib/failure-policy.mjs')
+
+  const tmp = mkdtempSync(join(tmpdir(), 'evidence-guidance-'))
+  const artifact = join(tmp, 'WI-AC-001-1-qa-deadbeef.log')
+  const body = JSON.stringify({
+    id: 'WI-AC-001',
+    qa: false,
+    defects: ['expected GET /health returns 200; observed 503 Service Unavailable; evidence curl output'],
+  })
+  writeFileSync(artifact, [
+    'project=demo',
+    'context=core',
+    'id=WI-AC-001',
+    'attempt=1',
+    'kind=qa',
+    'digest=deadbeef',
+    '',
+    body,
+  ].join('\n'))
+  const before = readFileSync(artifact, 'utf8')
+
+  const excerpt = evidenceGuidanceExcerpt(artifact)
+  assert.match(excerpt, /expected: GET \/health returns 200/)
+  assert.match(excerpt, /observed: 503 Service Unavailable/)
+  assert.equal(readFileSync(artifact, 'utf8'), before)
+
+  const enriched = enrichGuidanceWithEvidence('Retry with smallest fix.', {
+    evidence: artifact,
+    defects: JSON.parse(body).defects,
+  })
+  assert.match(enriched, /Retry with smallest fix\./)
+  assert.match(enriched, /expected: GET \/health returns 200/)
+
+  const guidance = autoRetryGuidance({
+    reason: 'integration could not complete',
+    detail: { evidence: artifact },
+  })
+  assert.match(guidance, /integration merge/)
+  assert.match(guidance, /observed: 503 Service Unavailable/)
+})
+
 test('repair-router blocks coding exhaustion and routes quota/infra', async () => {
   const { inferDefectClass: inferFromFacade, routeRepair: routeFromFacade, routePendingInput: routePendingFromFacade } = await import('../skills/generator/lib/repair-router.mjs')
   assert.equal(inferFromFacade, inferDefectClass)
@@ -1663,8 +1759,8 @@ test('fleet snapshot builds structured multi-project bearings', async () => {
 
   const fleet = buildFleetSnapshot({
     projects: [
-      project,
-      buildProjectSnapshot({ id: 'appB', state: { status: 'complete' }, eventsTip: 9 }),
+      { id: 'appA', root: '/repo/appA', state: stateA, eventsTip: 17, wakeTriage: { shouldWake: true } },
+      { id: 'appB', state: { status: 'complete' }, eventsTip: 9 },
     ],
   })
   assert.equal(fleet.schema, FLEET_SNAPSHOT_SCHEMA)

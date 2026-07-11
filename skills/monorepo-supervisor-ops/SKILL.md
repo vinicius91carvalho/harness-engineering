@@ -207,17 +207,20 @@ One tab per worker. Label: `{taskId} - {role} - {project} - r{retry}`.
 Agent sidebar name remains `worker-<project>-<context>`.
 If `herdr tab list` shows null labels, rename immediately so the operator can see work.
 
-### Finished-worker tab cleanup (every 10-min check)
+### Finished-worker tab cleanup (automatic reaper)
 
-Never leave finished work visible:
+Never leave finished work visible.
+The supervisor runs `finished-tab-reaper.mjs` on each tick (rate-limited) and immediately after `workerClosed` / `workerHealth=done`, calling `closeStaleHarnessPanesForProject` with live-worker pane ids kept safe.
 
-1. From `harness-control status`, collect workers with `workerHealth=done` or
-   terminal Run State (`completed` / `failed` / `cancelled`).
+1. From `harness-control status` or `fleet-snapshot`, collect workers with `workerHealth=done` or terminal Run State (`completed` / `failed` / `cancelled`).
 2. Close the **whole tab** (`herdr tab close <tab_id>`), not only the pane.
-3. If status still lists a dead worker after close, clear that entry on the next
-   supervisor tick / restart — do not leave orphan tabs for the operator.
-4. If you find finished tabs open, treat it as a workflow defect: fix spawn/close
-   paths in harness and update this skill the same turn (fail-closed).
+3. If status still lists a dead worker after close, clear that entry on the next supervisor tick / restart — do not leave orphan tabs for the operator.
+4. If you find finished tabs open, treat it as a workflow defect: fix spawn/close paths in harness and update this skill the same turn (fail-closed).
+
+**Fleet Snapshot** (`skills/generator/lib/fleet-snapshot.mjs`, schema `harness-fleet-snapshot.v1`):
+cross-project bearings for monorepo recovery — journal tips, capacity/slots, active workers, stuck, pending inputs, optional `wakeTriage.shouldWake`.
+CLI: `harness-control fleet-snapshot --repo <path>`; `status` also embeds `fleetSnapshot` for the current project.
+Multi-project: build from an array of `{ root, state, eventsTip }` — do not scrape siblings inside harness-control ad hoc.
 
 ## Status poll (10-min pane logs + 20-min fleet)
 
@@ -264,7 +267,9 @@ On every QA / INTEGRATION_QA / Goal Review completion or failure:
    the evidence-log defects verbatim and forbids the workaround pass path.
 4. When responding to `Integrated Verification failed after Attempt N`, paste
    the concrete expected/observed pairs from that evidence log into
-   `--guidance` / `retryQueue[context].guidance`.
+   `--guidance` / `retryQueue[context].guidance` (supervisor auto-retry and
+   `input_required` events also attach `detail.guidanceExcerpt` when an evidence
+   path is present).
 
 Pane tails are for liveness; evidence logs are for pass/fail truth.
 

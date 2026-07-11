@@ -4,6 +4,10 @@
  * supervisor-tick or Resource Governor admission.
  */
 
+import { fleetSnapshotFromState } from './fleet-snapshot.mjs'
+
+export { fleetSnapshotFromState }
+
 const WAKE_KINDS = new Set([
   'worker_stuck',
   'supervisor_failed',
@@ -35,24 +39,6 @@ function remainingWork(counts = {}) {
 function progressCounts(event, fleetSnapshot) {
   if (event?.implemented != null || event?.blocked != null || event?.total != null) return event
   return fleetSnapshot?.counts || {}
-}
-
-/** Build a fleet snapshot from harness-control state.json. */
-export function fleetSnapshotFromState(state = {}) {
-  const workers = state.workers && typeof state.workers === 'object'
-    ? Object.keys(state.workers).length
-    : Number(state.workers ?? 0) || 0
-  const pendingInputs = Object.values(state.pendingInputs || {})
-    .filter((row) => row?.status === 'pending').length
-  const retryQueueSize = Object.keys(state.retryQueue || {}).length
-  return {
-    workers,
-    counts: state.progress || {},
-    pendingInputs,
-    retryQueueSize,
-    status: state.status || '',
-    capacity: state.capacity || null,
-  }
 }
 
 /**

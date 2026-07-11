@@ -231,6 +231,7 @@ _Avoid_: second supervisor, auto-ack to unblock stop, lease fence
 
 **Fleet Snapshot**:
 A structured cross-project bearings contract (journal tips, capacity, stuck, pending inputs) that fleet-ops recovery and monorepo ops consume instead of reparsing raw control files.
+Built by `skills/generator/lib/fleet-snapshot.mjs` (`harness-fleet-snapshot.v1`); exposed via `harness-control status` (`fleetSnapshot`) and `harness-control fleet-snapshot`.
 _Avoid_: monorepo skill dump into harness-control, ad-hoc sibling state scrapes
 
 **User**:

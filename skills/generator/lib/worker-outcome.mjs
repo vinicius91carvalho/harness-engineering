@@ -220,6 +220,7 @@ export const TAIL_CLASSES = [
   'verdict_hung',
   'merge_lock',
   'mcp_warmup',
+  'spawn_silence',
   'prompt',
   'idle_shell',
   'infra_error',
@@ -231,7 +232,24 @@ export const HEALTH_VERDICTS = ['healthy', 'waiting_expected', 'stuck', 'done']
 const HEALTH_DEFAULTS = {
   agentOutputStuckMs: Number(process.env.HARNESS_AGENT_OUTPUT_STUCK_MS || 600_000),
   mcpWarmupBudgetMs: Number(process.env.HARNESS_MCP_WARMUP_BUDGET_MS || 90_000),
+  spawnSilenceBudgetMs: Number(process.env.HARNESS_SPAWN_SILENCE_BUDGET_MS || 60_000),
   verdictHangMs: Number(process.env.HARNESS_VERDICT_HANG_MS || 60_000),
+}
+
+/** True when a line is an orchestrator phase banner without agent stream yet. */
+export function isPhaseBannerLine(line = '') {
+  const text = String(line || '')
+  return /──\s*(CODING|QA|INTEGRATION_QA|REPAIR_PLAN|GOAL_REVIEW|MERGE)\s*→/i.test(text)
+    || /orchestrator:.*\b(CODING|QA|INTEGRATION_QA|REPAIR_PLAN|GOAL_REVIEW|MERGE)\s*→/i.test(text)
+}
+
+/** True when pane tail shows live agent tokens (not orchestrator-only). */
+export function hasAgentStreamSignals(text = '') {
+  const recent = String(text || '')
+  return /^thinking:/im.test(recent)
+    || /\btool\s*(?:→|->)/.test(recent)
+    || /\btool\s*[✓✔]/.test(recent)
+    || /agent:\s+started/i.test(recent)
 }
 
 /** True if line is orchestrator pane heartbeat, not real agent progress. */
@@ -270,6 +288,11 @@ export function classifyPaneTail(tail = '') {
     && !/\btool\s*(?:→|->)/.test(postWindow)
     && !/^thinking:/im.test(postTailLines)) {
     return 'verdict_hung'
+  }
+
+  const recentHasPhaseBanner = lines.slice(-12).some((line) => isPhaseBannerLine(line))
+  if (recentHasPhaseBanner && !hasAgentStreamSignals(recent)) {
+    return 'spawn_silence'
   }
 
   if (/still waiting for first token|waiting for first token.*MCP/i.test(recent)
@@ -386,6 +409,24 @@ export function assessLive(signals = {}) {
       verdict: 'waiting_expected',
       tailClass,
       reason: 'MCP/plugin warmup before first token',
+      recycle: false,
+    }
+  }
+
+  if (tailClass === 'spawn_silence') {
+    const age = lastAgentOutputAgeMs ?? runStateAgeMs
+    if (age >= cfg.spawnSilenceBudgetMs && scrollDelta <= 0) {
+      return {
+        verdict: 'stuck',
+        tailClass,
+        reason: `Spawn silence exceeded ${cfg.spawnSilenceBudgetMs}ms after phase banner with no agent stream`,
+        recycle: true,
+      }
+    }
+    return {
+      verdict: 'waiting_expected',
+      tailClass,
+      reason: 'awaiting agent stream after phase banner',
       recycle: false,
     }
   }

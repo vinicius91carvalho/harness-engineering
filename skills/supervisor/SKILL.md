@@ -27,7 +27,9 @@ must pass through its Resource Governor.
    false `qa: true` with empty defects that INTEGRATION_QA later contradicts).
 3. When reporting progress or answering Input Requests, cite defects from the
    evidence log. Retry guidance must quote expected/observed pairs from that
-   final log — never invent from status alone.
+   final log — never invent from status alone. `harness-control input` and
+   auto-retry responses attach `detail.guidanceExcerpt` from create-only evidence
+   artifacts (read-only; see `evidence-guidance.mjs`).
 4. Never create raw coding subagents beside the supervisor: all workers must
    pass through its Resource Governor.
 
@@ -284,6 +286,7 @@ tabs (doing so leaves zombie workers: state lists pane IDs herdr no longer has).
 Finished workers close their **tab** immediately when Run State is terminal
 (`complete` / `blocked` / `failed`), the orchestrator/child exits, or the shell
 is idle after the job — finished agents must not linger.
+Each supervisor tick also runs the rate-limited finished-tab reaper (`finished-tab-reaper.mjs`), and `workerClosed` / `workerHealth=done` force an immediate reap via `closeStaleHarnessPanesForProject` (live worker pane ids are always kept).
 
 **Unattended Input Requests:** each tick auto-writes `retry` for pending context-scoped
 `input_required` events (worker exit, integration failure, claim-lease exhaustion,

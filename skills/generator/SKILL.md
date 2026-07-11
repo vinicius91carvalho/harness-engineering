@@ -91,6 +91,12 @@ are not auto-retried.
 **Lean Cursor agent MCP:** generator `agent` spawns without `--approve-mcps` so
 disabled Playwright/Crawl4AI do not delay first tokens on herdr panes.
 
+**Spawn-silence health:** when a pane shows only orchestrator phase banners
+(`── CODING → …` / `── QA → …`) with no `thinking:` / `tool →` stream for
+>60s (`HARNESS_SPAWN_SILENCE_BUDGET_MS`), `assessLive` classifies
+`tailClass=spawn_silence` and recycles like `mcp_warmup` (infra warmup, not a
+product defect).
+
 Let `PROJECT` be the directory containing `project_specs.xml`, `GIT_ROOT` be its
 Git top-level, `GEN` this skill directory, and `HOST` the current host (`claude`,
 `codex`, `opencode`, or `agent`). If invoked at a monorepo root, resolve a project through
