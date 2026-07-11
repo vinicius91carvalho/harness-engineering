@@ -313,6 +313,24 @@ test('worker lifecycle stop and cleanup plans cover herdr and background', () =>
     port: 9,
     workdir: '/wt',
     profileDir: null,
+    commonGit: null,
+    projectId: null,
+    context: null,
+  })
+  assert.deepEqual(planWorkerCleanupTargets({
+    port: 9,
+    worktree: '/wt',
+    context: 'dashboard',
+    commonGit: '/git',
+    projectId: 'web',
+    ownedResources: { port: 9, worktree: '/wt', commonGit: '/git', projectId: 'web', context: 'dashboard' },
+  }), {
+    port: 9,
+    workdir: '/wt',
+    profileDir: null,
+    commonGit: '/git',
+    projectId: 'web',
+    context: 'dashboard',
   })
   assert.equal(terminateProcessTree(null).terminated, false)
 })
@@ -1522,6 +1540,40 @@ test('control journal steals dead writer lock instead of timing out', async () =
   assert.ok(Date.now() - started < 5_000, 'dead lock steal must not wait for the 10s timeout')
   assert.equal(event.kind, 'run_started')
   assert.equal(existsSync(lock), false)
+})
+
+test('compose-shared refcount keeps infra up for sibling workers', async () => {
+  const {
+    acquireComposeShare,
+    releaseComposeShare,
+    composeShareCount,
+    planComposeTeardown,
+    isAppService,
+    isSharedInfraService,
+  } = await import('../skills/generator/lib/compose-shared.mjs')
+  const root = mkdtempSync(join(tmpdir(), 'compose-share-'))
+  assert.equal(isSharedInfraService('causeflow-postgres'), true)
+  assert.equal(isSharedInfraService('hindsight'), true)
+  assert.equal(isAppService('causeflow-api'), true)
+  assert.equal(isAppService('causeflow-postgres'), false)
+
+  acquireComposeShare(root, 'core', 'open-source-local-runtime')
+  acquireComposeShare(root, 'core', 'dashboard')
+  assert.equal(composeShareCount(root, 'core'), 2)
+
+  const afterOne = releaseComposeShare(root, 'core', 'dashboard')
+  assert.equal(afterOne.count, 1)
+  assert.equal(afterOne.lastHolder, false)
+  assert.equal(
+    planComposeTeardown({ shareCount: afterOne.count }).mode,
+    'app_services_only',
+  )
+
+  const afterLast = releaseComposeShare(root, 'core', 'open-source-local-runtime')
+  assert.equal(afterLast.count, 0)
+  assert.equal(afterLast.lastHolder, true)
+  assert.equal(planComposeTeardown({ shareCount: 0 }).mode, 'full_down')
+  assert.equal(planComposeTeardown({ shareCount: 1, force: true }).mode, 'full_down')
 })
 
 test('control journal compaction preserves pending input lineage', async () => {

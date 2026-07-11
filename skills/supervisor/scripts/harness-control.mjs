@@ -34,6 +34,7 @@ const { scopeClaims, runStateFile: runStatePath } = await importLib('project-key
 const { resolveProjectTopology } = await importLib('project-topology.mjs')
 const { cleanupBrowserOrphans } = await importLib('browser-cleanup.mjs')
 const { cleanupWorktreeRuntime } = await importLib('worktree-teardown.mjs')
+const { acquireComposeShare } = await importLib('compose-shared.mjs')
 const {
   readDurable,
   interpretClosed,
@@ -414,6 +415,19 @@ class Supervisor {
       logFile,
       reservationId: admission.reservation?.id || null,
     })
+    workerBase.commonGit = commonGit
+    workerBase.projectId = projectId || 'root'
+    workerBase.ownedResources = {
+      ...(workerBase.ownedResources || {}),
+      commonGit,
+      projectId: projectId || 'root',
+      context: claim.context,
+    }
+    // Shared compose infra lease — sibling workers reuse postgres/redis/hindsight
+    // instead of each bringing a full stack (RAM exhaustion on small hosts).
+    try {
+      acquireComposeShare(commonGit, projectId || 'root', claim.context)
+    } catch { /* best-effort; teardown still works without a lease */ }
 
     if (quotaTestTail != null) {
       await mkdir(logDir, { recursive: true })
@@ -1625,7 +1639,12 @@ async function killWorker() {
   const targets = planWorkerCleanupTargets(worker)
   const cleanup = {
     browsers: cleanupBrowserOrphans(targets),
-    runtime: cleanupWorktreeRuntime(targets),
+    runtime: cleanupWorktreeRuntime({
+      ...targets,
+      commonGit: targets.commonGit || commonGit,
+      projectId: targets.projectId || projectId || 'root',
+      context: targets.context || context,
+    }),
   }
   if (state.workers?.[context]) {
     const nextWorkers = { ...state.workers }

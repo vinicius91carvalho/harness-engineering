@@ -71,6 +71,13 @@ path. Prove against the running compose/image endpoint (`docker exec`, curl on t
 documented published port such as Core `:3099`). Rebuild/recreate the container after
 Dockerfile or image content changes before re-verifying.
 
+**Shared compose infra (RAM):** postgres/redis/hindsight-class services are host-wide
+leases (`compose-shared.mjs`). Concurrent workers must reuse healthy infra on the
+documented ports — do not spawn a second full stack per WI. Teardown stops/rm only
+app services under test while siblings still hold the lease; full `compose down`
+runs for the last holder. `RESOURCE_CLEANUP_RULE` encodes the agent-facing contract;
+supervisor `cleanupWorktreeRuntime` enforces it on kill/close.
+
 **Integrate flag drift:** if Checkpoint / integrate loops while the plan branch
 already has `integration=true` for that WI (worktree `feature_list` lag), sync
 flags and skip re-merge thrash — do not keep coding. See

@@ -225,8 +225,8 @@ stop/pause the dependent project until a dependency-root finishes.
 | Goal review exits with code 1 | Often merge lock wait — not a product failure |
 | Memory pressure / `Session terminated` | Lower `--max-workers` / `--memory-per-worker-mb`; kill heavy mint/docker leftovers |
 | `capacity.limit=0` + high load | Docker build or CPU spike — wait; do not thrash recycles |
-| Many `docker ps` leftovers after WIs finish | Workers must `compose down` / `docker rm` what they started (generator RESOURCE_CLEANUP_RULE). Supervisor `kill-worker` / `workerClosed` / operator `stop` also run `cleanupWorktreeRuntime`. Stop orphans not owned by a live worker; keep only stacks a running context still needs. Harden prompts/skills same turn. |
-| RAM exhausted while `workers={}` | Leftover `next`/`tsx`/compose from prior contexts — run `kill-worker`/`stop` (teardown) or manual compose down; do not admit more workers until `capacity.available>=1`. |
+| Many `docker ps` leftovers after WIs finish | Workers must tear down what they started (generator RESOURCE_CLEANUP_RULE). Shared infra (postgres/redis/hindsight) is ref-counted via `compose-shared.mjs` — last holder may `compose down`; siblings only stop/rm app services. Supervisor `kill-worker` / `workerClosed` / operator `stop` run `cleanupWorktreeRuntime`. Stop orphans not owned by a live holder; keep stacks a running context still needs. Harden prompts/skills same turn. |
+| RAM exhausted while many compose stacks up | Prefer reuse: one shared infra stack per project, rebuild only api/worker/dashboard under test. Do not admit more workers until `capacity.available>=1` and `docker stats` shows headroom. Pause lower-priority siblings (Hard rule 6). |
 | Blocker idle, sibling `next-server` huge RSS | Hard rule 12: kill/pause lower-priority sibling (web dashboard before core QA), admit blocker, update workflow if the playbook was missing. |
 
 ## Herdr layout

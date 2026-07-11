@@ -111,6 +111,9 @@ export function planWorkerCleanupTargets(worker) {
     port: owned.port ?? worker?.port ?? null,
     workdir: owned.worktree ?? worker?.worktree ?? null,
     profileDir: owned.profileDir ?? null,
+    commonGit: owned.commonGit ?? worker?.commonGit ?? null,
+    projectId: owned.projectId ?? worker?.projectId ?? null,
+    context: owned.context ?? worker?.context ?? null,
   }
 }
 

@@ -2,6 +2,12 @@ import { existsSync, readFileSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { terminateProcessTree } from './worker-lifecycle.mjs'
+import {
+  composeShareCount,
+  isAppService,
+  planComposeTeardown,
+  releaseComposeShare,
+} from './compose-shared.mjs'
 
 const COMPOSE_FILES = [
   'compose.yaml',
@@ -76,9 +82,78 @@ function stopAppPid(workdir) {
   return { stopped: true, pid }
 }
 
-export function composeDown(workdir, { timeoutMs = 120_000 } = {}) {
+function listComposeServices(dir) {
+  const result = spawnSync('docker', ['compose', 'config', '--services'], {
+    cwd: dir,
+    encoding: 'utf8',
+    timeout: 30_000,
+  })
+  if (result.status !== 0) return []
+  return String(result.stdout || '')
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+/**
+ * Tear down compose for a worktree.
+ * When other harness contexts still hold the shared infra lease, only stop/rm
+ * app services (api/worker/dashboard/…) and leave postgres/redis/hindsight up.
+ */
+export function composeDown(workdir, {
+  timeoutMs = 120_000,
+  force = false,
+  commonGit = null,
+  projectId = null,
+  context = null,
+  shareCount = null,
+} = {}) {
   const dir = composeProjectDir(workdir)
   if (!dir) return { ran: false, dir: null }
+
+  let remaining = shareCount
+  if (remaining == null && commonGit && context) {
+    // Release this context first so last-holder can full-down.
+    const released = releaseComposeShare(commonGit, projectId, context)
+    remaining = released.count
+  } else if (remaining == null && commonGit) {
+    remaining = composeShareCount(commonGit, projectId)
+  } else if (remaining == null) {
+    remaining = 0
+  }
+
+  const plan = planComposeTeardown({ shareCount: remaining, force, context })
+  if (plan.mode === 'app_services_only') {
+    const services = listComposeServices(dir).filter((name) => isAppService(name))
+    if (!services.length) {
+      return {
+        ran: true,
+        dir,
+        mode: plan.mode,
+        reason: plan.reason,
+        status: 0,
+        skippedFullDown: true,
+        services: [],
+        error: null,
+      }
+    }
+    const result = spawnSync(
+      'docker',
+      ['compose', 'rm', '-sf', '--', ...services],
+      { cwd: dir, encoding: 'utf8', timeout: timeoutMs },
+    )
+    return {
+      ran: true,
+      dir,
+      mode: plan.mode,
+      reason: plan.reason,
+      status: result.status,
+      skippedFullDown: true,
+      services,
+      error: result.error?.message || null,
+    }
+  }
+
   const result = spawnSync('docker', ['compose', 'down', '--remove-orphans'], {
     cwd: dir,
     encoding: 'utf8',
@@ -87,7 +162,10 @@ export function composeDown(workdir, { timeoutMs = 120_000 } = {}) {
   return {
     ran: true,
     dir,
+    mode: plan.mode,
+    reason: plan.reason,
     status: result.status,
+    skippedFullDown: false,
     error: result.error?.message || null,
   }
 }
@@ -96,7 +174,14 @@ export function composeDown(workdir, { timeoutMs = 120_000 } = {}) {
  * Tear down servers and compose stacks owned by one worktree/port.
  * Supervisor-side counterpart to RESOURCE_CLEANUP_RULE (agents often skip it).
  */
-export function cleanupWorktreeRuntime({ workdir, port } = {}) {
+export function cleanupWorktreeRuntime({
+  workdir,
+  port,
+  commonGit = null,
+  projectId = null,
+  context = null,
+  forceComposeDown = false,
+} = {}) {
   if (process.platform === 'win32') {
     return { appPid: { stopped: false }, killed: 0, compose: { ran: false, dir: null } }
   }
@@ -105,6 +190,11 @@ export function cleanupWorktreeRuntime({ workdir, port } = {}) {
   }
   const appPid = stopAppPid(workdir)
   const killed = killPatterns(runtimeKillPatterns({ workdir, port }))
-  const compose = composeDown(workdir)
+  const compose = composeDown(workdir, {
+    force: forceComposeDown,
+    commonGit,
+    projectId,
+    context,
+  })
   return { appPid, killed, compose }
 }

@@ -15,8 +15,14 @@ export const RESOURCE_CLEANUP_RULE =
   'this agent\'s own command line (that suicides the worker and drops the verdict). ' +
   'Stop the worktree server only via the exact PID in `.harness/app.pid` ' +
   '(`kill "$(cat .harness/app.pid)"` — nothing broader). ' +
-  'For compose stacks you brought up: `docker compose down --remove-orphans` ' +
-  '(or `docker compose -p <project> down --remove-orphans`). ' +
+  'SHARED COMPOSE INFRA: if postgres/redis/hindsight (or other documented infra) are already ' +
+  'healthy on their published ports, REUSE them — do not bring up a second full stack and do ' +
+  'not `docker compose down` shared infra while sibling harness workers may need it. Prefer ' +
+  '`docker compose up -d --no-deps <app-services>` / rebuild only services under test ' +
+  '(api/worker/website/dashboard/test-app). Tear down only app services you started ' +
+  '(`docker compose rm -sf <app-services>` or stop those exact containers). Full ' +
+  '`docker compose down --remove-orphans` is allowed only when you are the last user of that ' +
+  'stack (no healthy shared infra still required by another live worker). ' +
   'For named WI/AC containers you created: `docker rm -f` on those exact names ' +
   '(wi-ac-*, ac0*). Do not tear down compose stacks or containers you did not start. ' +
   'Cleanup failures belong in notes/defects; never skip the verdict to clean up.'
