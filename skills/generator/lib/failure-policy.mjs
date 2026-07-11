@@ -30,10 +30,11 @@ const DURABLE_APPROVAL_PATTERNS = [
   /every coding candidate declined/i,
 ]
 
+// Values must stay aligned with routeRepair in repair-router.mjs (ADR: observation_mismatch→repair_plan, infra→block).
 const SAFE_RECOVERY_BY_CLASS = {
   product: 'repair_plan',
-  observation_mismatch: 'switch_candidate',
-  infra: 'switch_candidate',
+  observation_mismatch: 'repair_plan',
+  infra: 'block',
   quota: 'provider_cooldown',
   merge_conflict: 'repair_plan',
   capacity: 'defer',
@@ -85,7 +86,7 @@ export function classifyFailure({
     return { class: 'quota', safeRecovery: 'provider_cooldown', consumesAttempt: false }
   }
   if (/auth|unauthorized|login|api.?key|not logged/.test(lower)) {
-    return { class: 'infra', safeRecovery: 'switch_candidate', consumesAttempt: false }
+    return { class: 'infra', safeRecovery: SAFE_RECOVERY_BY_CLASS.infra, consumesAttempt: false }
   }
   if (/merge conflict|conflict marker/.test(lower)) {
     return { class: 'merge_conflict', safeRecovery: 'repair_plan', consumesAttempt: true }

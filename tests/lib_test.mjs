@@ -720,7 +720,7 @@ test('route-plan buildPlan sorts by strikes', () => {
 })
 
 test('route-plan buildCandidates direct mode', () => {
-  const candidates = buildCandidates({
+  const { candidates } = buildCandidates({
     plan: null,
     kind: 'CODING',
     attempt: 1,
@@ -785,11 +785,25 @@ test('failure-policy denies durable approval cases and auto-retry', () => {
   assert.equal(isAutoRetryableReason('QA failed after Attempt 3'), false)
 })
 
-test('classifyFailure unifies quota and infra signals', () => {
+test('classifyFailure unifies quota, infra, and observation_mismatch with repair-router recovery', () => {
   const quota = classifyFailure({ reason: '429 rate limit exceeded' })
   assert.equal(quota.class, 'quota')
+  assert.equal(quota.safeRecovery, 'provider_cooldown')
+
   const infra = classifyFailure({ reason: 'DynamoHypothesisRepository still wired in bootstrap' })
   assert.equal(infra.class, 'infra')
+  assert.equal(infra.safeRecovery, 'block')
+
+  const auth = classifyFailure({ reason: 'API key unauthorized' })
+  assert.equal(auth.class, 'infra')
+  assert.equal(auth.safeRecovery, 'block')
+
+  const observation = classifyFailure({
+    defectClass: 'observation_mismatch',
+    reason: 'grep-only audit should not start a server',
+  })
+  assert.equal(observation.class, 'observation_mismatch')
+  assert.equal(observation.safeRecovery, 'repair_plan')
 })
 
 test('worker-result fences stale invocation and validates verdicts', async () => {
@@ -1130,6 +1144,7 @@ test('repair-router blocks coding exhaustion and routes quota/infra', async () =
 test('observation-method filters pi away for http/browser validation', async () => {
   const {
     inferObservationMethod, filterCandidatesForObservation, needsStrongValidationHost,
+    observationGateFailure,
   } = await import('../skills/generator/lib/observation-method.mjs')
   assert.equal(inferObservationMethod({ category: 'static', description: 'grep for LICENSE' }), 'grep')
   assert.equal(inferObservationMethod({
@@ -1148,8 +1163,16 @@ test('observation-method filters pi away for http/browser validation', async () 
   ]
   const filtered = filterCandidatesForObservation(candidates, ['http'], 'INTEGRATION_QA')
   assert.equal(filtered[0].harness, 'agent')
-  assert.ok(filtered.some((c) => c.harness === 'pi'))
-  assert.equal(filtered.at(-1).harness, 'pi')
+  assert.ok(!filtered.some((c) => c.harness === 'pi'))
+
+  const piOnly = filterCandidatesForObservation([{ harness: 'pi', model: 'x' }], ['http'], 'INTEGRATION_QA')
+  assert.deepEqual(piOnly, [])
+  const gate = observationGateFailure(['http'], 'INTEGRATION_QA', [{ harness: 'pi', model: 'x' }], piOnly)
+  assert.equal(gate.ok, false)
+  assert.match(gate.reason, /Observation Hard Gate/)
+
+  const codingFiltered = filterCandidatesForObservation(candidates, ['http'], 'CODING')
+  assert.deepEqual(codingFiltered, candidates)
 })
 
 test('control journal fails closed on corrupt JSONL', async () => {
