@@ -15,7 +15,7 @@ for (let i = 0; i < rawArgs.length; i += 2) {
   if (!key?.startsWith('--') || value === undefined) fatal(`invalid argument: ${key || ''}`)
   options[key.slice(2)] = value
 }
-if (!commandName) fatal('usage: harness-control.mjs {start|run|status|fleet-snapshot|capacity|events|ack|respond|quota|pause|resume|stop|kill-supervisor|release-supervisor-lock|kill-worker|release-lease|clear-dead-lock} --repo <path> ...')
+if (!commandName) fatal('usage: harness-control.mjs {start|run|status|fleet-snapshot|capacity|events|ack|respond|quota|pause|resume|stop|kill-supervisor|release-supervisor-lock|kill-worker|release-lease|clear-dead-lock|preflight} --repo <path> ...')
 
 const scriptFile = fileURLToPath(import.meta.url)
 const supervisorLib = resolve(dirname(scriptFile), '..', 'lib')
@@ -52,6 +52,8 @@ const { pruneOrphanPendingInputs, isCrashBoundContext } = await importLib('super
 const { selectClaim, resumeClaim, releaseClaim, mergeLockHolder, clearDeadLock, clearStaleGeneratorLocks } = await importLib('claim-lease.mjs')
 const { integrationBranchName, integrationBranchRef } = await importLib('integration-branch.mjs')
 const { ledgerPath, readLedger, applyLedgerToCatalog } = await importLib('execution-ledger.mjs')
+const { observeCapacity, pruneDeadReservations } = await importLib('resource-governor.mjs')
+const { evidenceGuidanceExcerpt } = await importLib('evidence-guidance.mjs')
 const {
   resolveDisplayMode, spawnAgent, closeWorkerDisplay, renameWorkerTab,
   buildWorkerTabLabel, roleFromPhase, readPaneTail, getPaneAgentStatus, paneExists,
@@ -60,8 +62,29 @@ const {
   listHarnessWorkerTabs, closeDanglingShellPanes, closeStaleHarnessPanesForProject,
   closeAllDanglingHarnessShells, listPaneScroll,
 } = await import(pathToFileURL(join(supervisorLib, 'herdr-spawn.mjs')).href)
+const { runSupervisorPreflight } = await import(pathToFileURL(join(supervisorLib, 'supervisor-preflight.mjs')).href)
 const orchestrator = join(generatorDir, 'orchestrator.mjs')
 const reconciler = join(generatorDir, 'reconcile.mjs')
+
+async function executePreflight({ repair = true, config = null } = {}) {
+  const cfg = config || baseConfig()
+  return runSupervisorPreflight({
+    repo,
+    commonGit,
+    projectId,
+    projectPrefix,
+    stateFile,
+    reconciler,
+    repair,
+    nodeExecPath: process.execPath,
+    capacityOptions: governorOptions(cfg),
+    deps: {
+      pruneDeadReservations,
+      observeCapacity,
+      evidenceGuidanceExcerpt,
+    },
+  })
+}
 
 function fatal(message, code = 2) {
   process.stderr.write(`harness-control: ${message}\n`)
@@ -509,6 +532,24 @@ class Supervisor {
     }
     await this.save()
     if (!previous.startedAt) await this.emit('run_started', { host: this.config.host, config: this.config })
+    // First-invocation / restart preflight: clear ghosts before admission.
+    const preflight = await executePreflight({ repair: true, config: this.config })
+    this.state = await readJson(stateFile, this.state)
+    await this.emit('supervisor_preflight', {
+      ok: preflight.ok,
+      reconcileOk: preflight.reconcileOk,
+      actions: preflight.actions,
+      warnings: preflight.warnings,
+      blockers: preflight.blockers,
+      capacityAvailable: preflight.capacity?.available ?? preflight.capacity?.slots ?? null,
+    }, !preflight.ok)
+    if (!preflight.ok) {
+      const reason = preflight.blockers.map((b) => b.message || b.kind).join('; ') || 'preflight failed'
+      await this.input('goal', 'Planning or reconciliation required', { preflight, error: reason }, null, ['amend', 'abort'])
+      this.stopping = true
+      await this.save({ status: 'needs_input' })
+      return
+    }
     await this.rehydrateHerdrWorkers()
   }
 
@@ -1267,16 +1308,12 @@ class Supervisor {
     try {
       await this.initialize()
       await this.processResponses()
+      // Only stop here when initialize marked stopping (failed preflight). A
+      // needs_input status from pending goal Inputs must still tick so context
+      // orphan pruning and worker admission can proceed for unrelated work.
       if (this.stopping || this.state.status === 'paused' || this.state.status === 'stopped') {
         this.stopping = true
         await this.save({ status: this.state.status })
-        return
-      }
-      const validation = exec(process.execPath, [reconciler, repo, '--check'], repo, true)
-      if (validation.status !== 0) {
-        await this.input('goal', 'Planning or reconciliation required', { error: (validation.stderr || validation.stdout).trim() }, null, ['amend', 'abort'])
-        this.stopping = true
-        await this.save({ status: 'needs_input' })
         return
       }
       while (!this.stopping && this.state.status !== 'stopped' && this.state.status !== 'complete') {
@@ -1376,6 +1413,15 @@ async function start() {
   const remoteLive = current.supervisorHost && current.supervisorHost !== hostname()
     && (current.supervisorPid || current.status === 'starting') && heartbeatAge < leaseSeconds
   if (localLive || remoteLive) fatal(`already running on ${current.supervisorHost} as pid ${current.supervisorPid}`)
+  // Mandatory first-invocation preflight after proving no live supervisor owns the lease.
+  const preflight = await executePreflight({ repair: true, config: baseConfig() })
+  if (!preflight.ok) {
+    return process.stdout.write(`${JSON.stringify({
+      started: false,
+      status: 'needs_input',
+      preflight,
+    })}\n`)
+  }
   const token = randomUUID()
   const acquired = await acquireSupervisorLock(token, null, 'starting', leaseSeconds)
   try {
@@ -1396,11 +1442,18 @@ async function start() {
     await updateSupervisorLock(token, acquired?.fenceGeneration || 1, 'starting', child.pid)
     const latest = await readJson(stateFile, {})
     await atomicJson(stateFile, { ...latest, repo, supervisorPid: child.pid, supervisorHost: hostname() })
-    process.stdout.write(`${JSON.stringify({ started: true, pid: child.pid, stateFile, eventFile })}\n`)
+    process.stdout.write(`${JSON.stringify({ started: true, pid: child.pid, stateFile, eventFile, preflight })}\n`)
   } catch (error) {
     await releaseSupervisorLock(token)
     throw error
   }
+}
+
+async function preflightCmd() {
+  const repair = options.repair !== 'false'
+  const report = await executePreflight({ repair, config: baseConfig() })
+  process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
+  if (!report.ok) process.exitCode = 2
 }
 
 async function respond() {
@@ -1688,6 +1741,7 @@ async function main() {
   if (commandName === 'kill-worker') return killWorker()
   if (commandName === 'release-lease') return releaseLease()
   if (commandName === 'clear-dead-lock') return clearDeadLockCmd()
+  if (commandName === 'preflight') return preflightCmd()
   if (commandName === 'run') {
     const supervisor = new Supervisor(baseConfig())
     process.on('SIGINT', () => supervisor.stop('SIGINT'))

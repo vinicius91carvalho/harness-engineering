@@ -45,6 +45,13 @@ Route "always/never" corrections into the matching skill instead:
 | Learning-loop itself | `skills/learning-loop/` |
 | Install / backup / host config | `skills/update-project/` or `skills/setup/` |
 
+**Any fix must land in the workflow too — that is how the harness self-improves.**
+If the operator freed RAM, killed a sibling worker, cleared ghosts, or synced a
+missing install file to unblock a run, that recovery is unfinished until the
+same lesson is written into the matching skill (and harness code when mechanical)
+and synced - see supervisor Hard rule 5 / monorepo-ops Hard rule 11. Session-only
+fixes teach nothing to the next run.
+
 Memory entries remain for user/project facts that are not workflow procedure.
 
 ## Step 1 — Scope the reflection

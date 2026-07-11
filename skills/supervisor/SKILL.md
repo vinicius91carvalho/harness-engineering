@@ -32,6 +32,23 @@ must pass through its Resource Governor.
    artifacts (read-only; see `evidence-guidance.mjs`).
 4. Never create raw coding subagents beside the supervisor: all workers must
    pass through its Resource Governor.
+5. **Any fix must land in the workflow too — that is how the harness self-improves.**
+   A live recovery (free RAM, kill a sibling worker, clear a ghost lease, sync a
+   missing skill module, seed retry guidance, patch a one-off command) is not
+   finished until the same lesson is written into `skills/supervisor/`,
+   `skills/monorepo-supervisor-ops/`, and/or harness code under
+   `skills/generator/` + `skills/supervisor/scripts/`, with a regression check
+   when the defect is mechanical, then synced to `~/.agents` (and OpenCode
+   copies). Session-only fixes that never update the workflow are a defect:
+   the next run will re-derive the same recovery by hand.
+6. **Blocker project wins host RAM.** When the root/blocker subproject
+   (`workers={}`, remaining WIs, `memory.slots=0` / `capacity.available=0`) while
+   a dependent sibling still holds large runtimes (`next-server`, `tsx`, compose),
+   fail-closed the same turn: `kill-worker --force true` (or pause) the
+   lower-priority sibling context, re-check capacity, admit the blocker, seed
+   evidence-backed `retryQueue` guidance. Prefer root-before-dependent order
+   (e.g. core QA/INTEGRATION before web dashboard E2E). See
+   `monorepo-supervisor-ops` empty-fleet §6.
 
 Let `REPO` be the selected harness project directory (which may be below the Git
 top-level), `CONTROL` this skill directory, and
@@ -58,14 +75,45 @@ the sibling `planner` skill to create it. Make reversible defaults autonomously;
 ask only when a material product, safety, credential, or destructive choice has
 no safe default.
 
-Before starting the supervisor, use the sibling `generator` skill's scaffold and
-reconciliation procedure so both `project_specs.xml` and a valid
-`project_specs.xml` and `feature_list.json` exist on the integration branch (see `.harness/integration-branch`). Do not report a long-running goal as started
-until this validation succeeds:
+## Mandatory preflight (first invocation / every start)
+
+Before reporting a goal as started — and before `start`/`run` admit workers —
+run harness-control preflight. This is fail-closed and automatic inside
+`harness-control start` and supervisor `initialize()`; still invoke it explicitly
+when driving by hand so you see the report:
 
 ```bash
 GENERATOR="$CONTROL/../generator"
 [ -d "$GENERATOR" ] || GENERATOR="$CONTROL/../harness-generator"
+node "$CONTROL/scripts/harness-control.mjs" preflight --repo "$REPO"
+# optional report-only: --repair false
+```
+
+Preflight always:
+
+1. `reconcile.mjs --check` (blocks start on failure → `needs_input` / amend)
+2. Prunes dead Resource Governor reservations
+3. Clears dead Claim Lease entries only when claim session **and** run-state
+   owner/child PIDs are dead (never under a live herdr orchestrator; does not
+   `git branch -D` — orphan worktree dirs are removed separately)
+4. Marks ghost Run States (`running` + dead PIDs) as `abandoned`
+5. Clears stale `capacity` / dead `workerHealth` / dead `workers` snapshots
+6. Seeds evidence-backed `retryQueue` guidance when the queue is empty or only
+   generic `Auto-retry:` text (from latest QA / INTEGRATION_QA evidence log)
+7. Removes unregistered leftover `*-wt-*` worktree dirs not held by a live run
+8. Reports memory admission (warns if slots=0; does not block start)
+
+Dead merge/state locks stay for the supervisor tick (empty-fleet recovery resets
+crash-bound when it clears them). Use `clear-dead-lock` only for remote/force.
+
+Do not call `start` until `preflight.ok` is true (or let `start` refuse with
+`started:false` / `needs_input`). At a monorepo root, run preflight per
+subproject path (`core`, `web`, …), not once at the monorepo root.
+
+Also ensure `project_specs.xml` + `feature_list.json` exist on the integration
+branch (see `.harness/integration-branch`):
+
+```bash
 node "$GENERATOR/reconcile.mjs" "$REPO" --check
 ```
 
@@ -75,11 +123,13 @@ Always inspect first. The state is authoritative after chat compaction or a new
 Supervisor session:
 
 ```bash
+node "$CONTROL/scripts/harness-control.mjs" preflight --repo "$REPO"
 node "$CONTROL/scripts/harness-control.mjs" status --repo "$REPO"
 node "$CONTROL/scripts/harness-control.mjs" start --repo "$REPO" --host "$WORKER_HOST"
 ```
 
-`start` uses an atomic singleton lease and refuses a live local supervisor or a
+`start` runs preflight (repair) after proving no live supervisor lease, then
+uses an atomic singleton lease and refuses a live local supervisor or a
 fresh remote supervisor lease. If
 the prior supervisor is gone, the replacement reads Run State, leaves live Claim
 Leases alone, resumes abandoned local contexts, and asks before taking over a
@@ -211,10 +261,16 @@ Close the whole herdr tab when `workerHealth=done` / Run State is terminal.
    cites the evidence-log defects verbatim (see `monorepo-supervisor-ops`).
 5. Every ~20 min print fleet progress to the user using evidence-backed facts,
    not status alone.
+6. **RAM / sibling starvation check:** if this project has remaining work,
+   `workers={}` (or a resumable Run State with dead PIDs), and
+   `capacity.memory.slots=0` while `ps` shows sibling `next-server` / heavy
+   worktree runtimes, free sibling capacity before the next progress narration
+   (Hard rule 6). Re-admit the blocker, then let dependents resume.
 
 If the fleet is empty, finished tabs are still open, or health is `stuck`, act
 immediately and harden this skill / `monorepo-supervisor-ops` / harness code in the
-same turn — do not only narrate (fail-closed).
+same turn — do not only narrate (fail-closed). **Acting without updating the
+workflow is also incomplete** (Hard rule 5: self-improvement).
 
 **Empty-fleet auto-recovery (tick-owned):** each supervisor tick clears dead
 same-host merge/state locks (`stale_lock_cleared`). When the fleet is empty after

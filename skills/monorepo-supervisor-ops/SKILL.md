@@ -24,19 +24,37 @@ Use this when several subprojects share one Git top-level (e.g. `core`, `web`,
    on `status` / progress counters / pane tails.
 10. **Learning stays in workflow skills:** durable ops lessons update `skills/*` in
    harness-engineering (and sync to `~/.agents`), not `AGENTS.md` / `CLAUDE.md`.
+11. **Any fix must land in the workflow too — that is how the harness
+    self-improves.** Session-only recoveries (kill a worker, free RAM, clear
+    ghosts, seed guidance, sync a missing `~/.agents` module) are unfinished
+    until the same lesson updates `skills/supervisor/` and/or this skill (and
+    harness code when mechanical) the same turn, then syncs. Closing an
+    incident with only a live command and no skill/code change is a workflow
+    defect: the next run will pay the same cost again.
+12. **Blocker project wins host RAM.** Root/blocker empty fleet +
+    `memory.slots=0` while dependents hold `next-server` / compose / heavy
+    worktree PIDs → `kill-worker --force true` (or pause) the lower-priority
+    sibling **same turn**, re-check `capacity` until `available>=1`, admit the
+    blocker, then resume dependents. CauseFlow order: **core before web**
+    (dashboard E2E depends on core golden-path QA/INTEGRATION).
 
 ## Sync harness changes to live skills
 
 After editing in the harness-engineering repo:
 
 ```bash
-cp skills/generator/lib/{agent-spawn,agent-stream,supervisor-auto-respond,worker-health,repair-router,observation-method,control-journal,resource-governor,worktree-teardown,worker-lifecycle,browser-cleanup,claim-lease}.mjs ~/.agents/skills/generator/lib/
+cp skills/generator/lib/{agent-spawn,agent-stream,supervisor-auto-respond,worker-health,repair-router,observation-method,control-journal,resource-governor,worktree-teardown,worker-lifecycle,browser-cleanup,claim-lease,evidence-guidance}.mjs ~/.agents/skills/generator/lib/
 cp skills/generator/prompts/feature.mjs ~/.agents/skills/generator/prompts/
 cp skills/generator/orchestrator.mjs ~/.agents/skills/generator/
 cp skills/supervisor/scripts/harness-control.mjs ~/.agents/skills/supervisor/scripts/
-cp skills/supervisor/lib/herdr-spawn.mjs ~/.agents/skills/supervisor/lib/
+cp skills/supervisor/lib/{herdr-spawn,supervisor-preflight}.mjs ~/.agents/skills/supervisor/lib/
+cp skills/supervisor/SKILL.md ~/.agents/skills/supervisor/SKILL.md
 cp skills/monorepo-supervisor-ops/SKILL.md ~/.agents/skills/monorepo-supervisor-ops/SKILL.md
 ```
+
+**First invocation:** `harness-control preflight --repo <subproject>` (also runs
+inside `start` / supervisor `initialize`). Clears ghost runs/leases/governor
+slots and gates on `reconcile --check` before admission.
 
 Also document: Control Journal must keep monotonic ids (`journal-meta.json`); Resource Governor must prune dead-pid reservations and reuse same-context admissions so orchestrators do not double-book slots.
 
@@ -124,6 +142,15 @@ When `status=running` but `workers={}`, herdr has only the default tab, or
    --force true` on lower-priority contexts, free orphan docker/node leftovers,
    then re-check `capacity` until `available>=1` and admit the blocker. Do not
    leave the blocked project idle while siblings keep burning RAM.
+
+   **Concrete CauseFlow pattern (2026-07-11):** core Run State `resuming` /
+   `phase: qa` for WI-AC-060 with `workers={}` while web dashboard held two
+   `next-server` processes (~GB each) → `capacity.memory.slots=0`. Fix: 
+   `kill-worker --repo …/web --context dashboard --force true` (teardown kills
+   `.harness/app.pid` / next), seed core `retryQueue` with evidence-backed QA
+   guidance, confirm core admits, leave web OSS worker if capacity allows, let
+   dashboard re-admit after core progresses. Narrating "web healthy, core idle"
+   without this step is a supervisor defect.
 7. **"Preparing worktree … already exists"** — leftover checkout dirs that are
    not in `git worktree list` block `worktree add`. `prepareWorktree` now
    `rm -rf`s unregistered leftovers after `worktree remove`/`prune`. If a live
@@ -200,6 +227,7 @@ stop/pause the dependent project until a dependency-root finishes.
 | `capacity.limit=0` + high load | Docker build or CPU spike — wait; do not thrash recycles |
 | Many `docker ps` leftovers after WIs finish | Workers must `compose down` / `docker rm` what they started (generator RESOURCE_CLEANUP_RULE). Supervisor `kill-worker` / `workerClosed` / operator `stop` also run `cleanupWorktreeRuntime`. Stop orphans not owned by a live worker; keep only stacks a running context still needs. Harden prompts/skills same turn. |
 | RAM exhausted while `workers={}` | Leftover `next`/`tsx`/compose from prior contexts — run `kill-worker`/`stop` (teardown) or manual compose down; do not admit more workers until `capacity.available>=1`. |
+| Blocker idle, sibling `next-server` huge RSS | Hard rule 12: kill/pause lower-priority sibling (web dashboard before core QA), admit blocker, update workflow if the playbook was missing. |
 
 ## Herdr layout
 

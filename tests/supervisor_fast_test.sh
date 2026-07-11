@@ -151,6 +151,7 @@ echo 'ok - a subproject'"'"'s status/claims inspection never sees a sibling subp
 mkdir -p "$TMP/installed/skills/harness-supervisor/scripts" "$TMP/installed/skills/harness-supervisor/lib"
 cp "$CONTROL" "$TMP/installed/skills/harness-supervisor/scripts/harness-control.mjs"
 cp "$ROOT/skills/supervisor/lib/herdr-spawn.mjs" "$TMP/installed/skills/harness-supervisor/lib/herdr-spawn.mjs"
+cp "$ROOT/skills/supervisor/lib/supervisor-preflight.mjs" "$TMP/installed/skills/harness-supervisor/lib/supervisor-preflight.mjs"
 cp -R "$ROOT/skills/generator" "$TMP/installed/skills/harness-generator"
 git clone -q "$TMP/repo" "$TMP/namespaced"
 git -C "$TMP/namespaced" config user.name test
@@ -268,5 +269,67 @@ test ! -f "$TMP/emptyfleet/.git/harness-locks/generator-merge/owner"
 jq -e '(.crashCounts.stuckctx // 0) != 5 or (.crashCounts|length==0) or (.retryQueue.stuckctx != null) or (.pendingInputs["42"].status == "responded")' \
   "$TMP/emptyfleet/.git/harness-control/state.json" >/dev/null
 echo 'ok - empty fleet tick clears dead merge lock and recovers past crash-bound'
+
+# --- preflight: ghost run + dead claim + stale capacity ---
+git clone -q "$TMP/repo" "$TMP/preflight"
+git -C "$TMP/preflight" config user.name test
+git -C "$TMP/preflight" config user.email test@example.invalid
+supervisor_common_write_feature_queue "$TMP/preflight/feature_list.json" false
+git -C "$TMP/preflight" add feature_list.json && git -C "$TMP/preflight" commit -qm 'queue'
+COMMON_GIT="$(git -C "$TMP/preflight" rev-parse --git-common-dir)"
+COMMON_GIT="$(cd "$TMP/preflight" && cd "$COMMON_GIT" && pwd)"
+mkdir -p "$COMMON_GIT/harness-runs" "$COMMON_GIT/harness-control" "$COMMON_GIT/harness-governor"
+# claim with dead session (building)
+printf '%s\n' '{
+  "foundation": {
+    "project": "root",
+    "context": "foundation",
+    "session": "99999999",
+    "status": "building",
+    "worktree": "'"$TMP"'/preflight-wt-foundation",
+    "branch": "gen/foundation"
+  }
+}' >"$COMMON_GIT/generator-claims.json"
+printf '%s\n' '{
+  "context": "foundation",
+  "status": "running",
+  "phase": "coding",
+  "ownerPid": 99999999,
+  "childPid": 99999998,
+  "worktree": "'"$TMP"'/preflight-wt-foundation"
+}' >"$COMMON_GIT/harness-runs/foundation.json"
+printf '%s\n' '{
+  "status": "stopped",
+  "supervisorPid": null,
+  "capacity": {"available": 0, "stale": true},
+  "workerHealth": {"foundation": {"verdict": "healthy", "childPid": 99999998}},
+  "workers": {},
+  "retryQueue": {}
+}' >"$COMMON_GIT/harness-control/state.json"
+printf '%s\n' '{
+  "version": 1,
+  "reservations": {
+    "dead-slot": {
+      "id": "dead-slot",
+      "projectId": "root",
+      "context": "foundation",
+      "pid": 99999999,
+      "at": "2020-01-01T00:00:00.000Z"
+    }
+  },
+  "providers": {},
+  "updatedAt": "2020-01-01T00:00:00.000Z"
+}' >"$COMMON_GIT/harness-governor/reservations.json"
+mkdir -p "$TMP/preflight-wt-foundation"
+"$NODE" "$CONTROL" preflight --repo "$TMP/preflight" --repair true >/tmp/harness-preflight-out.json
+jq -e '.ok == true and .reconcileOk == true' /tmp/harness-preflight-out.json >/dev/null
+jq -e '.status == "abandoned"' "$COMMON_GIT/harness-runs/foundation.json" >/dev/null
+jq -e '.reservations == {} or (.reservations|length==0)' "$COMMON_GIT/harness-governor/reservations.json" >/dev/null
+jq -e '.capacity == null and (.workerHealth.foundation|not)' "$COMMON_GIT/harness-control/state.json" >/dev/null
+# dead claim should be cleared (foundation key gone)
+if [ -f "$COMMON_GIT/generator-claims.json" ]; then
+  jq -e '.foundation|not' "$COMMON_GIT/generator-claims.json" >/dev/null
+fi
+echo 'ok - preflight abandons ghost runs, prunes governor, clears stale health, clears dead claims'
 
 echo 'ok - supervisor fast tests passed'

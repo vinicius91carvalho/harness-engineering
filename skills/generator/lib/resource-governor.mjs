@@ -100,6 +100,20 @@ export async function observeCapacity(commonGit, options = {}) {
   return { ...capacity, activeWorkers, file, state, slots: capacity.available }
 }
 
+/** Persist-prune dead/expired governor reservations (supervisor preflight). */
+export async function pruneDeadReservations(commonGit) {
+  return withGovernorLock(commonGit, async () => {
+    const file = governorPath(commonGit)
+    const before = await readState(file)
+    const beforeIds = Object.keys(before.reservations || {})
+    const state = pruneExpired({ ...before, reservations: { ...(before.reservations || {}) } })
+    const afterIds = Object.keys(state.reservations || {})
+    const removed = beforeIds.filter((id) => !afterIds.includes(id))
+    await writeState(file, state)
+    return { removed, remaining: afterIds.length }
+  })
+}
+
 export async function requestAdmission(commonGit, {
   projectId,
   context,
