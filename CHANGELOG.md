@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### [2.6.1](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.6.0...v2.6.1) (2026-07-11)
+
+
+### Bug Fixes
+
+* **supervisor:** auto-recover empty fleet from dead merge locks ([aeee497](https://github.com/vinicius91carvalho/harness-engineering/commit/aeee4974b79fa4f70b1f2c1a7014e019d649a76a))
+
 ## [2.6.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.5.0...v2.6.0) (2026-07-11)
 
 
