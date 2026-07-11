@@ -11,6 +11,29 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [2.6.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.5.0...v2.6.0) (2026-07-11)
+
+
+### Features
+
+* add lavish-axi, no-mistakes, treehouse, and firstmate optionals ([b9009d0](https://github.com/vinicius91carvalho/harness-engineering/commit/b9009d000a9e95b8928947eb90f3bc3763314a88))
+* mandate WI resource cleanup and fix Agent optional plugin pollution ([8765303](https://github.com/vinicius91carvalho/harness-engineering/commit/87653032657ed0d0dfc10113e1cbcd87297b1b6c))
+
+
+### Bug Fixes
+
+* **generator:** forbid nested Task re-delegation in worker prompts ([9db652c](https://github.com/vinicius91carvalho/harness-engineering/commit/9db652c9a2abda486703a7320e03ecdfb52bc123))
+* **generator:** name in-flight tool in herdr pane heartbeats ([239854d](https://github.com/vinicius91carvalho/harness-engineering/commit/239854d9ba79fbccf77cfd216f95f50ffeb542e7))
+* **generator:** stop redundant integrate loops; tidy README layout ([0c534b9](https://github.com/vinicius91carvalho/harness-engineering/commit/0c534b906f3991acd9c3ae046060008ccb372c35))
+* **supervisor:** restore Control Journal ids and governor admission ([a8c0bb4](https://github.com/vinicius91carvalho/harness-engineering/commit/a8c0bb43317bee98041d0766360b594cfc99ddd1))
+* **tests:** match qa-agent stubs before coding-agent ([42eeb45](https://github.com/vinicius91carvalho/harness-engineering/commit/42eeb45381821f1f934fee61a9c18c4ada6835be))
+* **tests:** raise governor maxLoadRatio in dead-pid admission test ([2e6620e](https://github.com/vinicius91carvalho/harness-engineering/commit/2e6620ef0ffbb62639ceaea2adff566acc3cd4e1))
+
+
+### Documentation
+
+* **readme:** add live-run screenshots and reorder sections ([8671544](https://github.com/vinicius91carvalho/harness-engineering/commit/86715443d180e4a870bdc253ff28ab729aabd931))
+
 ## [2.5.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.4.0...v2.5.0) (2026-07-10)
 
 
