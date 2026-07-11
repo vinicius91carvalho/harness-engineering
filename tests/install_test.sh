@@ -21,7 +21,7 @@ printf '%s %s\n' "$(basename "$0")" "$*" >>"$HARNESS_TEST_LOG"
 EOF
   chmod +x "$TMP/bin/$cli"
 done
-for tool in pip pip3 crawl4ai-setup crawl4ai-doctor; do
+for tool in pip pip3 crawl4ai-setup crawl4ai-doctor npx curl git; do
   cat >"$TMP/bin/$tool" <<'EOF'
 #!/bin/sh
 printf '%s %s\n' "$(basename "$0")" "$*" >>"$HARNESS_TEST_LOG"
@@ -95,6 +95,11 @@ grep -q 'install crawl4ai skill to ~/.claude/skills/crawl4ai' "$TMP/out" || fail
 grep -q 'MCP inventory for:claude codex opencode pi agent' "$TMP/out" || fail 'MCP inventory should target every selected host'
 grep -q 'marketplace upgrade ponytail' "$TMP/out" || fail 'Codex Ponytail marketplace should be idempotent'
 grep -q 'plugin add ponytail@ponytail' "$TMP/out" || fail 'Codex Ponytail should use its upstream marketplace'
+grep -q 'npx skills add kunchenguid/lavish-axi --skill lavish -g' "$TMP/out" || fail 'lavish-axi skill install should appear in dry-run'
+grep -q 'curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh' "$TMP/out" || fail 'no-mistakes installer should appear in dry-run'
+grep -q 'no-mistakes init in each repository' "$TMP/out" || fail 'no-mistakes init follow-up should appear in dry-run'
+grep -q 'curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh' "$TMP/out" || fail 'treehouse installer should appear in dry-run'
+grep -q 'git clone --depth 1 https://github.com/kunchenguid/firstmate.git' "$TMP/out" || fail 'firstmate clone should appear in dry-run'
 pass 'dry-run performs no writes or host commands'
 
 : >"$HARNESS_TEST_LOG"
@@ -204,6 +209,9 @@ fi
 if grep -q 'codebase-memory-mcp' "$ROOT/.claude-plugin/marketplace.json"; then
   fail 'memory MCP must not be represented as a marketplace plugin'
 fi
+if grep -Eq '"name": "(lavish-axi|no-mistakes|treehouse|firstmate)"' "$ROOT/.claude-plugin/marketplace.json"; then
+  fail 'non-marketplace externals must not be listed in the Claude marketplace'
+fi
 if grep -Eq 'skill-creator|hookify|claude-md-management|claude-code-setup|ralph-loop|typescript-lsp|pyright-lsp|rust-analyzer-lsp|"name": "remember"|"name": "codex"' "$ROOT/.claude-plugin/marketplace.json"; then
   fail 'Claude-only plugins must not remain in the marketplace'
 fi
@@ -251,6 +259,13 @@ cmp -s "$script_path" "$ROOT/scripts/statusline.sh" || fail 'persisted statuslin
 [ -z "$(find "$TMP/systmp" -mindepth 1 -maxdepth 1 -name 'harness-installer.*' 2>/dev/null)" ] \
   || fail 'installer temp clone should have been cleaned up'
 pass 'statusline persists after the installer cleans up its temp clone'
+
+cat >"$TMP/bin/git" <<'EOF'
+#!/bin/sh
+printf '%s %s\n' "$(basename "$0")" "$*" >>"$HARNESS_TEST_LOG"
+exit 0
+EOF
+chmod +x "$TMP/bin/git"
 
 "$ROOT/install.sh" --help >"$TMP/out" 2>&1 || fail '--help should succeed'
 grep -q -- '--version' "$TMP/out" || fail 'help should document --version'

@@ -21,13 +21,17 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const catalogPath = join(root, 'config/installable-catalog.json')
 
 const MARKETPLACE_HOSTS = {
-  claude: { file: '.claude-plugin/marketplace.json', plugins: ['harness', 'ponytail'] },
+  claude: {
+    file: '.claude-plugin/marketplace.json',
+    plugins: ['harness', 'ponytail'],
+  },
   codex: { file: '.agents/plugins/marketplace.json', plugins: ['harness', 'ponytail', 'skill-creator'] },
   cursor: { file: '.cursor-plugin/marketplace.json', plugins: ['harness', 'ponytail', 'skill-creator'] },
 }
 
 const FORBIDDEN_MARKETPLACE = new Set([
   'codebase-memory-mcp', 'context7', 'playwright', 'crawl4ai',
+  'lavish-axi', 'no-mistakes', 'treehouse', 'firstmate',
   'status-line', 'shared-config', 'mcp-servers',
 ])
 
@@ -146,7 +150,7 @@ export async function validateMarketplaces(repo = root) {
   }
 
   const optional = optionalModuleIds(catalog).sort().join(' ')
-  const fallback = 'codebase-memory-mcp context7 crawl4ai mcp-servers playwright ponytail shared-config skill-creator status-line'
+  const fallback = 'codebase-memory-mcp context7 crawl4ai firstmate lavish-axi mcp-servers no-mistakes playwright ponytail shared-config skill-creator status-line treehouse'
   const expectedOptional = fallback.split(' ').sort().join(' ')
   if (optional !== expectedOptional) {
     errors.push(`optional module ids drifted from installer fallback (${optional} vs ${expectedOptional})`)

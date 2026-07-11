@@ -35,6 +35,49 @@
       "acquisition": { "npm": "@dietrichgebert/ponytail", "github": "DietrichGebert/ponytail" }
     },
     {
+      "id": "lavish-axi",
+      "kind": "external",
+      "optional": true,
+      "hosts": ["claude", "codex", "opencode", "agent"],
+      "description": "Lavish Editor for agent HTML artifacts",
+      "acquisition": {
+        "skills": { "repo": "kunchenguid/lavish-axi", "name": "lavish", "global": true }
+      }
+    },
+    {
+      "id": "no-mistakes",
+      "kind": "external",
+      "optional": true,
+      "hosts": ["claude", "codex", "opencode", "pi", "agent"],
+      "description": "Git push gate with AI validation pipeline",
+      "acquisition": {
+        "installer": "https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh",
+        "installerWindows": "https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.ps1"
+      }
+    },
+    {
+      "id": "treehouse",
+      "kind": "external",
+      "optional": true,
+      "hosts": ["claude", "codex", "opencode", "agent"],
+      "description": "Reusable git worktree pool for agents",
+      "acquisition": {
+        "installer": "https://kunchenguid.github.io/treehouse/install.sh",
+        "installerWindows": "https://kunchenguid.github.io/treehouse/install.ps1"
+      }
+    },
+    {
+      "id": "firstmate",
+      "kind": "external",
+      "optional": true,
+      "hosts": ["claude", "codex", "opencode", "pi", "agent"],
+      "description": "Orchestrator agent with a supervised agent crew",
+      "acquisition": {
+        "clone": "https://github.com/kunchenguid/firstmate.git",
+        "cloneDir": ".local/share/firstmate"
+      }
+    },
+    {
       "id": "codebase-memory-mcp",
       "kind": "external",
       "optional": true,

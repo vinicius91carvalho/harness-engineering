@@ -25,6 +25,15 @@ Maintained decisions:
 
 - Ponytail is compatible with all three hosts. Other third-party plugins appear
   only where their upstream packaging is documented.
+- `lavish-axi`, `no-mistakes`, `treehouse`, and `firstmate` are not Claude
+  marketplace plugins. The catalog records their real acquisition policy:
+  - `skills` — `npx skills add <repo> --skill <name>` with optional `global`
+    for user-wide install (lavish-axi).
+  - `installer` / `installerWindows` — upstream shell or PowerShell one-liner
+    (no-mistakes, treehouse, codebase-memory-mcp). `no-mistakes init` is a
+    per-repository follow-up the harness installer does not run.
+  - `clone` / `cloneDir` — shallow git clone into a persistent home directory
+    (firstmate; override with `FIRSTMATE_HOME`).
 - MCP inventory entries are translated to each selected host's native shape;
   secrets are resolved before writing, never left as literal placeholders.
   Same-name user entries are replaced so repeated installs remain idempotent.

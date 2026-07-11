@@ -14,8 +14,12 @@ $MarketplaceRepo = "vinicius91carvalho/harness-engineering"
 $ClaudeMarketplace = "harness-engineering"
 $CodexMarketplace = "harness-engineering"
 $MemoryInstaller = "https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.ps1"
+$NoMistakesInstaller = "https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.ps1"
+$TreehouseInstaller = "https://kunchenguid.github.io/treehouse/install.ps1"
+$FirstmateRepo = "https://github.com/kunchenguid/firstmate.git"
+$FirstmateHome = if ($env:FIRSTMATE_HOME) { $env:FIRSTMATE_HOME } else { Join-Path $HOME ".local/share/firstmate" }
 $RepoRoot = if ($PSScriptRoot) { $PSScriptRoot } else { $null }
-$DefaultOptional = @("ponytail", "skill-creator", "codebase-memory-mcp", "context7", "playwright", "crawl4ai", "status-line", "shared-config", "mcp-servers")
+$DefaultOptional = @("ponytail", "lavish-axi", "no-mistakes", "treehouse", "firstmate", "skill-creator", "codebase-memory-mcp", "context7", "playwright", "crawl4ai", "status-line", "shared-config", "mcp-servers")
 $Optional = $DefaultOptional
 if ($RepoRoot -and (Test-Path (Join-Path $RepoRoot "config/installable-catalog.json")) -and (Get-Command node -ErrorAction SilentlyContinue)) {
   $catalogOptional = & node (Join-Path $RepoRoot "scripts/install-reconcile.mjs") optional-ids 2>$null
@@ -79,6 +83,10 @@ function Get-MenuBlurb([string]$Kind, [string]$Item) {
     "host:all" { return "Install to every detected host above." }
     "install:harness" { return "Spec→build→QA pipeline with planner, generator, evaluator, supervisor, learning loop, and project backup." }
     "install:ponytail" { return "Lazy senior-dev mode: YAGNI, stdlib first, no unrequested abstractions." }
+    "install:lavish-axi" { return "Lavish Editor for agent HTML artifacts. Installs the lavish skill globally via npx skills." }
+    "install:no-mistakes" { return "Git push gate with AI validation. Installs the upstream binary; run no-mistakes init per repository afterward." }
+    "install:treehouse" { return "Reusable git worktree pool for agents. Installs the upstream treehouse CLI." }
+    "install:firstmate" { return "Orchestrator agent crew home. Clones firstmate to ~/.local/share/firstmate for harness launch." }
     "install:skill-creator" { return "Multi-agent pipeline to create, evaluate, benchmark, and refine AI coding skills." }
     "install:codebase-memory-mcp" { return "High-performance code intelligence MCP server. Indexes codebases into a persistent knowledge graph — average repo in milliseconds. 158 languages, sub-ms queries, 99% fewer tokens." }
     "install:context7" { return "Up-to-date, version-specific library documentation through Upstash remote MCP." }
@@ -654,6 +662,60 @@ function Install-Crawl4Ai {
   }
 }
 
+function Install-LavishAxi {
+  if ($DryRun) {
+    Write-Host "DRY RUN - npx skills add kunchenguid/lavish-axi --skill lavish -g"
+    return
+  }
+  if (-not (Get-Command npx -ErrorAction SilentlyContinue)) { throw "npx is required to install the lavish skill" }
+  Invoke-Native npx @("skills", "add", "kunchenguid/lavish-axi", "--skill", "lavish", "-g")
+  Write-InstallReceipt lavish-axi @{ skills = "kunchenguid/lavish-axi"; skill = "lavish"; global = $true }
+}
+
+function Install-NoMistakes {
+  if ($DryRun) {
+    Write-Host "DRY RUN - irm $NoMistakesInstaller | iex"
+    Write-Host "DRY RUN - note: run no-mistakes init in each repository you want to gate (not run by the harness installer)"
+    return
+  }
+  try { Invoke-Expression (Invoke-WebRequest $NoMistakesInstaller -UseBasicParsing).Content }
+  catch { throw "no-mistakes installer failed: $_" }
+  $binary = Get-Command no-mistakes -ErrorAction SilentlyContinue
+  $version = if ($binary) { try { & $binary.Source --version 2>$null } catch { "unknown" } } else { "unknown" }
+  Write-InstallReceipt no-mistakes @{ binary = ($binary.Source ?? "unknown"); version = ($version ?? "unknown") }
+  Write-Host "install.ps1: run no-mistakes init in each repository you want to gate"
+}
+
+function Install-Treehouse {
+  if ($DryRun) {
+    Write-Host "DRY RUN - irm $TreehouseInstaller | iex"
+    return
+  }
+  try { Invoke-Expression (Invoke-WebRequest $TreehouseInstaller -UseBasicParsing).Content }
+  catch { throw "treehouse installer failed: $_" }
+  $binary = Get-Command treehouse -ErrorAction SilentlyContinue
+  $version = if ($binary) { try { & $binary.Source --version 2>$null } catch { "unknown" } } else { "unknown" }
+  Write-InstallReceipt treehouse @{ binary = ($binary.Source ?? "unknown"); version = ($version ?? "unknown") }
+}
+
+function Install-Firstmate {
+  if ($DryRun) {
+    Write-Host "DRY RUN - git clone --depth 1 $FirstmateRepo $FirstmateHome"
+    Write-Host "DRY RUN - note: cd into the clone and launch your agent harness (see firstmate README)"
+    return
+  }
+  if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw "git is required to install firstmate" }
+  if (Test-Path (Join-Path $FirstmateHome ".git")) {
+    Invoke-Native git @("-C", $FirstmateHome, "pull", "--ff-only")
+  } else {
+    New-Item -ItemType Directory -Force (Split-Path $FirstmateHome -Parent) | Out-Null
+    Invoke-Native git @("clone", "--depth", "1", $FirstmateRepo, $FirstmateHome)
+  }
+  $revision = try { (git -C $FirstmateHome rev-parse --short HEAD 2>$null).Trim() } catch { "unknown" }
+  Write-InstallReceipt firstmate @{ clone = $FirstmateHome; revision = ($revision ?? "unknown") }
+  Write-Host "install.ps1: firstmate home at $FirstmateHome - cd there and launch your agent harness"
+}
+
 function Install-PortableMcp([string]$Name) {
   $server = switch ($Name) {
     "context7" { [pscustomobject]@{ type="http"; url="https://mcp.context7.com/mcp" } }
@@ -720,6 +782,10 @@ foreach ($item in $Selected) {
   if ($item -eq "skill-creator") { Install-SkillCreator; continue }
   if ($item -eq "codebase-memory-mcp") { Install-Memory; continue }
   if ($item -eq "crawl4ai") { Install-Crawl4Ai; continue }
+  if ($item -eq "lavish-axi") { Install-LavishAxi; continue }
+  if ($item -eq "no-mistakes") { Install-NoMistakes; continue }
+  if ($item -eq "treehouse") { Install-Treehouse; continue }
+  if ($item -eq "firstmate") { Install-Firstmate; continue }
   if ($item -eq "context7" -or $item -eq "playwright") { Install-PortableMcp $item; continue }
   if ($item -eq "status-line") {
     foreach ($target in $Targets) {

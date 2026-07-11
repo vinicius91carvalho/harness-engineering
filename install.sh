@@ -7,8 +7,12 @@ CLAUDE_MARKETPLACE="harness-engineering"
 CODEX_MARKETPLACE="harness-engineering"
 REPO_URL="https://github.com/$MARKETPLACE_REPO.git"
 MEMORY_INSTALLER="https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh"
+NO_MISTAKES_INSTALLER="https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh"
+TREEHOUSE_INSTALLER="https://kunchenguid.github.io/treehouse/install.sh"
+FIRSTMATE_REPO="https://github.com/kunchenguid/firstmate.git"
+FIRSTMATE_HOME=${FIRSTMATE_HOME:-$HOME/.local/share/firstmate}
 REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd || true)
-DEFAULT_OPTIONAL="ponytail skill-creator codebase-memory-mcp context7 playwright crawl4ai status-line shared-config mcp-servers"
+DEFAULT_OPTIONAL="ponytail lavish-axi no-mistakes treehouse firstmate skill-creator codebase-memory-mcp context7 playwright crawl4ai status-line shared-config mcp-servers"
 OPTIONAL=$DEFAULT_OPTIONAL
 if [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/config/installable-catalog.json" ] && command -v node >/dev/null 2>&1; then
   OPTIONAL=$(node "$REPO_ROOT/scripts/install-reconcile.mjs" optional-ids 2>/dev/null) || OPTIONAL=$DEFAULT_OPTIONAL
@@ -121,6 +125,10 @@ menu_item_blurb() {
     host:all) printf '%s' "Install to every detected host above." ;;
     install:harness) printf '%s' "Spec→build→QA pipeline with planner, generator, evaluator, supervisor, learning loop, and project backup." ;;
     install:ponytail) printf '%s' "Lazy senior-dev mode: YAGNI, stdlib first, no unrequested abstractions." ;;
+    install:lavish-axi) printf '%s' "Lavish Editor for agent HTML artifacts. Installs the lavish skill globally via npx skills." ;;
+    install:no-mistakes) printf '%s' "Git push gate with AI validation. Installs the upstream binary; run no-mistakes init per repository afterward." ;;
+    install:treehouse) printf '%s' "Reusable git worktree pool for agents. Installs the upstream treehouse CLI." ;;
+    install:firstmate) printf '%s' "Orchestrator agent crew home. Clones firstmate to ~/.local/share/firstmate for harness launch." ;;
     install:skill-creator) printf '%s' "Multi-agent pipeline to create, evaluate, benchmark, and refine AI coding skills." ;;
     install:codebase-memory-mcp) printf '%s' "High-performance code intelligence MCP server. Indexes codebases into a persistent knowledge graph — average repo in milliseconds. 158 languages, sub-ms queries, 99%% fewer tokens." ;;
     install:context7) printf '%s' "Up-to-date, version-specific library documentation through Upstash remote MCP." ;;
@@ -778,6 +786,60 @@ install_crawl4ai() {
   done
 }
 
+install_lavish_axi() {
+  if [ -n "$DRY" ]; then
+    echo 'DRY RUN — npx skills add kunchenguid/lavish-axi --skill lavish -g'
+    return
+  fi
+  command -v npx >/dev/null 2>&1 || die 'npx is required to install the lavish skill'
+  npx skills add kunchenguid/lavish-axi --skill lavish -g || die 'lavish-axi skill install failed'
+  record_receipt lavish-axi '{"skills":"kunchenguid/lavish-axi","skill":"lavish","global":true}'
+}
+
+install_no_mistakes() {
+  if [ -n "$DRY" ]; then
+    echo "DRY RUN — curl -fsSL $NO_MISTAKES_INSTALLER | sh"
+    echo 'DRY RUN — note: run no-mistakes init in each repository you want to gate (not run by the harness installer)'
+    return
+  fi
+  command -v curl >/dev/null 2>&1 || die 'curl is required to install no-mistakes'
+  curl -fsSL "$NO_MISTAKES_INSTALLER" | sh || die 'no-mistakes installer failed; inspect the upstream installer output'
+  binary=$(command -v no-mistakes 2>/dev/null || true)
+  version=$([ -n "$binary" ] && "$binary" --version 2>/dev/null || true)
+  record_receipt no-mistakes "{\"binary\":\"${binary:-unknown}\",\"version\":\"${version:-unknown}\"}"
+  echo 'install.sh: run no-mistakes init in each repository you want to gate'
+}
+
+install_treehouse() {
+  if [ -n "$DRY" ]; then
+    echo "DRY RUN — curl -fsSL $TREEHOUSE_INSTALLER | sh"
+    return
+  fi
+  command -v curl >/dev/null 2>&1 || die 'curl is required to install treehouse'
+  curl -fsSL "$TREEHOUSE_INSTALLER" | sh || die 'treehouse installer failed; inspect the upstream installer output'
+  binary=$(command -v treehouse 2>/dev/null || true)
+  version=$([ -n "$binary" ] && "$binary" --version 2>/dev/null || true)
+  record_receipt treehouse "{\"binary\":\"${binary:-unknown}\",\"version\":\"${version:-unknown}\"}"
+}
+
+install_firstmate() {
+  if [ -n "$DRY" ]; then
+    echo "DRY RUN — git clone --depth 1 $FIRSTMATE_REPO $FIRSTMATE_HOME"
+    echo 'DRY RUN — note: cd into the clone and launch your agent harness (see firstmate README)'
+    return
+  fi
+  command -v git >/dev/null 2>&1 || die 'git is required to install firstmate'
+  if [ -d "$FIRSTMATE_HOME/.git" ]; then
+    git -C "$FIRSTMATE_HOME" pull --ff-only || die 'firstmate update failed'
+  else
+    mkdir -p "$(dirname "$FIRSTMATE_HOME")"
+    git clone --depth 1 "$FIRSTMATE_REPO" "$FIRSTMATE_HOME" || die 'firstmate clone failed'
+  fi
+  revision=$(git -C "$FIRSTMATE_HOME" rev-parse --short HEAD 2>/dev/null || echo unknown)
+  record_receipt firstmate "{\"clone\":\"$FIRSTMATE_HOME\",\"revision\":\"$revision\"}"
+  echo "install.sh: firstmate home at $FIRSTMATE_HOME - cd there and launch your agent harness"
+}
+
 install_portable_mcp() {
   name=$1
   ensure_jq
@@ -828,6 +890,10 @@ for item in $SELECTED; do
     skill-creator) install_skill_creator ;;
     codebase-memory-mcp) install_memory ;;
     crawl4ai) install_crawl4ai ;;
+    lavish-axi) install_lavish_axi ;;
+    no-mistakes) install_no_mistakes ;;
+    treehouse) install_treehouse ;;
+    firstmate) install_firstmate ;;
     context7|playwright) install_portable_mcp "$item" ;;
     status-line) for cli in $CLI; do case "$cli" in claude) enable_status_line ;; codex) enable_codex_status_line ;; esac; done ;;
     shared-config) apply_shared_config ;;
