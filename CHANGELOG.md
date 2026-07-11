@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### [2.7.1](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.7.0...v2.7.1) (2026-07-11)
+
+
+### Bug Fixes
+
+* **supervisor:** steal dead Control Journal locks on start ([6e2f415](https://github.com/vinicius91carvalho/harness-engineering/commit/6e2f415440a316280a5984a10b4d69b099347c59))
+
 ## [2.7.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.6.1...v2.7.0) (2026-07-11)
 
 
