@@ -304,8 +304,11 @@ printf '%s\n' '{
   "capacity": {"available": 0, "stale": true},
   "workerHealth": {"foundation": {"verdict": "healthy", "childPid": 99999998}},
   "workers": {},
-  "retryQueue": {}
+  "retryQueue": {},
+  "mergeLock": {"owner": "99999999", "host": "test-host", "holderAlive": true}
 }' >"$COMMON_GIT/harness-control/state.json"
+# Stale journal.lock from a dead writer must be cleared by preflight
+printf '%s\n' '99999999.dead-journal-lock' >"$COMMON_GIT/harness-control/journal.lock"
 printf '%s\n' '{
   "version": 1,
   "reservations": {
@@ -325,11 +328,13 @@ mkdir -p "$TMP/preflight-wt-foundation"
 jq -e '.ok == true and .reconcileOk == true' /tmp/harness-preflight-out.json >/dev/null
 jq -e '.status == "abandoned"' "$COMMON_GIT/harness-runs/foundation.json" >/dev/null
 jq -e '.reservations == {} or (.reservations|length==0)' "$COMMON_GIT/harness-governor/reservations.json" >/dev/null
-jq -e '.capacity == null and (.workerHealth.foundation|not)' "$COMMON_GIT/harness-control/state.json" >/dev/null
+jq -e '.capacity == null and (.workerHealth.foundation|not) and (.mergeLock == null)' "$COMMON_GIT/harness-control/state.json" >/dev/null
+test ! -f "$COMMON_GIT/harness-control/journal.lock"
+jq -e '[.actions[].kind] | index("journal_lock_cleared") != null' /tmp/harness-preflight-out.json >/dev/null
 # dead claim should be cleared (foundation key gone)
 if [ -f "$COMMON_GIT/generator-claims.json" ]; then
   jq -e '.foundation|not' "$COMMON_GIT/generator-claims.json" >/dev/null
 fi
-echo 'ok - preflight abandons ghost runs, prunes governor, clears stale health, clears dead claims'
+echo 'ok - preflight abandons ghost runs, prunes governor, clears stale health, clears dead claims, clears dead journal.lock'
 
 echo 'ok - supervisor fast tests passed'

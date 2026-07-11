@@ -1,5 +1,5 @@
 import { appendFile, mkdir, readFile, rename, writeFile, unlink } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
@@ -18,10 +18,36 @@ export function journalPaths(controlRoot) {
   }
 }
 
+/** Token format: `${pid}.${uuid}`. Live holder → true; missing/unreadable/dead → false. */
+export function journalLockHolderAlive(lockPath) {
+  if (!existsSync(lockPath)) return false
+  try {
+    const token = String(readFileSync(lockPath, 'utf8') || '').trim()
+    const pid = Number(String(token).split('.')[0])
+    if (!Number.isFinite(pid) || pid <= 0) return false
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function stealDeadJournalLock(lockPath) {
+  if (!existsSync(lockPath)) return false
+  if (journalLockHolderAlive(lockPath)) return false
+  try {
+    await unlink(lockPath)
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function withJournalLock(lockPath, fn) {
   await mkdir(dirname(lockPath), { recursive: true })
   const token = `${process.pid}.${randomUUID()}`
   const started = Date.now()
+  let stoleDead = false
   while (true) {
     try {
       const { open } = await import('node:fs/promises')
@@ -31,6 +57,12 @@ async function withJournalLock(lockPath, fn) {
       break
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error
+      // Crashed writers leave journal.lock behind; steal once so initialize() cannot
+      // brick the supervisor with "control journal lock timeout".
+      if (!stoleDead && await stealDeadJournalLock(lockPath)) {
+        stoleDead = true
+        continue
+      }
       if (Date.now() - started > 10_000) throw new Error('control journal lock timeout')
       await new Promise((r) => setTimeout(r, 25))
     }

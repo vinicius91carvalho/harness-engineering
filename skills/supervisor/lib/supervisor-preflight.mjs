@@ -206,6 +206,57 @@ export async function runSupervisorPreflight({
   const state = readJsonSafe(stateFile, {})
   let stateDirty = false
   const nextState = { ...state }
+
+  // 5a) Dead Control Journal lock — crashed supervisors leave journal.lock behind.
+  //     Without this, initialize() emit() dies with "control journal lock timeout".
+  const journalLockPath = join(dirname(stateFile), 'journal.lock')
+  if (existsSync(journalLockPath)) {
+    let holderAlive = false
+    try {
+      const token = String(readFileSync(journalLockPath, 'utf8') || '').trim()
+      const pid = Number(String(token).split('.')[0])
+      holderAlive = processAlive(pid)
+    } catch {
+      holderAlive = false
+    }
+    if (!holderAlive) {
+      if (repair) {
+        try {
+          rmSync(journalLockPath, { force: true })
+          actions.push({ kind: 'journal_lock_cleared', path: journalLockPath })
+        } catch (error) {
+          warnings.push({ kind: 'journal_lock_clear_failed', path: journalLockPath, error: error.message })
+        }
+      } else {
+        warnings.push({ kind: 'stale_journal_lock', path: journalLockPath })
+      }
+    } else {
+      actions.push({ kind: 'journal_lock_ok' })
+    }
+  }
+
+  // 5b) Ghost mergeLock snapshot when the lock dir is gone or the owner PID is dead
+  if (nextState.mergeLock?.owner) {
+    const mergeDir = join(commonGit, 'harness-locks', 'generator-merge')
+    const lockPresent = existsSync(mergeDir)
+    const owner = nextState.mergeLock.owner
+    const ownerAlive = processAlive(owner)
+    if (!lockPresent || !ownerAlive) {
+      if (repair) {
+        nextState.mergeLock = null
+        stateDirty = true
+        actions.push({
+          kind: 'cleared_ghost_mergeLock',
+          owner: String(owner),
+          lockPresent,
+          ownerAlive,
+        })
+      } else {
+        warnings.push({ kind: 'ghost_mergeLock', mergeLock: nextState.mergeLock })
+      }
+    }
+  }
+
   if (nextState.capacity) {
     delete nextState.capacity
     stateDirty = true

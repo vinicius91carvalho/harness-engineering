@@ -97,7 +97,10 @@ Preflight always:
    owner/child PIDs are dead (never under a live herdr orchestrator; does not
    `git branch -D` — orphan worktree dirs are removed separately)
 4. Marks ghost Run States (`running` + dead PIDs) as `abandoned`
-5. Clears stale `capacity` / dead `workerHealth` / dead `workers` snapshots
+5. Clears stale `capacity` / dead `workerHealth` / dead `workers` snapshots,
+   ghost `mergeLock` rows when the lock dir is absent or the owner PID is dead,
+   and dead Control Journal locks (`journal.lock` whose writer PID is gone —
+   otherwise `initialize()` dies with `control journal lock timeout`)
 6. Seeds evidence-backed `retryQueue` guidance when the queue is empty or only
    generic `Auto-retry:` text (from latest QA / INTEGRATION_QA evidence log)
 7. Removes unregistered leftover `*-wt-*` worktree dirs not held by a live run

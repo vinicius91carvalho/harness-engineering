@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, appendFileSync, chmodSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, appendFileSync, chmodSync, existsSync } from 'node:fs'
 import { readFile, writeFile as writeFileAsync, appendFile as appendFileAsync, mkdir as mkdirAsync } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1506,6 +1506,22 @@ test('control journal fails closed on corrupt JSONL', async () => {
   const events = await readControlEvents(goodRoot, join(goodRoot, 'events.jsonl'))
   assert.equal(events.length, 1)
   assert.equal(events[0].kind, 'run_started')
+})
+
+test('control journal steals dead writer lock instead of timing out', async () => {
+  const {
+    appendControlEvent, journalLockHolderAlive, journalPaths,
+  } = await import('../skills/generator/lib/control-journal.mjs')
+  const root = mkdtempSync(join(tmpdir(), 'journal-dead-lock-'))
+  const { lock } = journalPaths(root)
+  // Impossible PID — holder must be treated as dead and stolen on append.
+  writeFileSync(lock, '999999999.dead-lock-token\n')
+  assert.equal(journalLockHolderAlive(lock), false)
+  const started = Date.now()
+  const event = await appendControlEvent(root, { kind: 'run_started', runId: 'after-steal' })
+  assert.ok(Date.now() - started < 5_000, 'dead lock steal must not wait for the 10s timeout')
+  assert.equal(event.kind, 'run_started')
+  assert.equal(existsSync(lock), false)
 })
 
 test('control journal compaction preserves pending input lineage', async () => {
