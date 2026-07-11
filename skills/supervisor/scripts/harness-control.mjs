@@ -217,9 +217,9 @@ function workerHost() {
   fatal('no worker host found; pass --host claude|codex|opencode|pi|agent')
 }
 
-function baseConfig() {
+function capacityConfig({ requireHost = false } = {}) {
   return {
-    host: workerHost(),
+    host: requireHost ? workerHost() : (options.host || 'default'),
     display: resolveDisplayMode(options),
     maxWorkers: Math.max(1, Math.floor(number('max-workers', 4))),
     quotaWorkers: Math.max(0, Math.floor(number('quota-workers', 2))),
@@ -234,6 +234,10 @@ function baseConfig() {
     pollMs: Math.max(250, number('poll-ms', 2000)),
     supervisorLeaseSeconds: Math.max(10, number('supervisor-lease-seconds', 30)),
   }
+}
+
+function baseConfig() {
+  return capacityConfig({ requireHost: true })
 }
 
 async function capacity(config, active = 0) {
@@ -1451,7 +1455,7 @@ async function start() {
 
 async function preflightCmd() {
   const repair = options.repair !== 'false'
-  const report = await executePreflight({ repair, config: baseConfig() })
+  const report = await executePreflight({ repair, config: capacityConfig() })
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
   if (!report.ok) process.exitCode = 2
 }
