@@ -1284,6 +1284,21 @@ class Supervisor {
     this.stopping = true
     const control = await readJson(controlFile, {})
     const operatorStop = control.status === 'stopped'
+    if (operatorStop) {
+      const { stopAllowed, turnEndDrain } = await importLib('control-beacon.mjs')
+      const snapshot = await buildBeaconSnapshotFromState(this.state)
+      const decision = stopAllowed('soft', snapshot)
+      if (!decision.allowed) {
+        await this.emit('input_required', {
+          scope: 'goal',
+          reason: `soft stop blocked: ${decision.reason}`,
+          choices: ['retry', 'pause', 'abort'],
+        }, true)
+        this.stopping = false
+        return
+      }
+      void turnEndDrain()
+    }
     // SIGINT / unexpected SIGTERM: keep herdr orchestrators for rehydrate.
     // Explicit `harness-control stop`: tear down panes, process trees, and
     // worktree runtimes (tsx/next/compose) so they cannot exhaust host RAM.
@@ -1378,9 +1393,51 @@ async function respond() {
   process.stdout.write(`${JSON.stringify({ accepted: true, eventId: id })}\n`)
 }
 
+async function readConsumerCursors() {
+  const consumerCursors = {}
+  try {
+    const { readdir } = await import('node:fs/promises')
+    const names = await readdir(cursorDir)
+    for (const name of names) {
+      if (!name.endsWith('.json')) continue
+      const consumer = name.slice(0, -5)
+      consumerCursors[consumer] = await readJson(join(cursorDir, name), {})
+    }
+  } catch { /* no cursors yet */ }
+  return consumerCursors
+}
+
+async function buildBeaconSnapshotFromState(state = {}) {
+  const { beaconSnapshot } = await importLib('control-beacon.mjs')
+  const events = await readEvents()
+  const journalTip = events.length ? Number(events[events.length - 1].id) || 0 : 0
+  const workers = Object.fromEntries(
+    Object.entries(state.workers || {}).map(([context, worker]) => [
+      context,
+      { ...worker, live: worker.pid ? processAlive(worker.pid) : true },
+    ]),
+  )
+  return beaconSnapshot({
+    workers,
+    journalTip,
+    consumerCursors: await readConsumerCursors(),
+    pendingInputs: state.pendingInputs || {},
+    processAlive,
+  })
+}
+
 async function setStatus(status) {
   const state = await readJson(stateFile, null)
   if (!state) fatal('no supervisor state')
+  if (status === 'stopped') {
+    const { stopAllowed } = await importLib('control-beacon.mjs')
+    const snapshot = await buildBeaconSnapshotFromState(state)
+    const decision = stopAllowed('soft', snapshot)
+    if (!decision.allowed) {
+      process.stdout.write(`${JSON.stringify({ status, blocked: true, reason: decision.reason })}\n`)
+      return
+    }
+  }
   await atomicJson(controlFile, { status, at: new Date().toISOString() })
   if (status === 'stopped' && state.supervisorHost === hostname() && processAlive(state.supervisorPid)) process.kill(state.supervisorPid, 'SIGTERM')
   process.stdout.write(`${JSON.stringify({ status })}\n`)
@@ -1396,8 +1453,12 @@ async function fleetAuth() {
 }
 
 async function killSupervisor() {
-  await fleetAuth()
+  const auth = await fleetAuth()
   const state = await readJson(stateFile, {})
+  const { stopAllowed } = await importLib('control-beacon.mjs')
+  const snapshot = await buildBeaconSnapshotFromState(state)
+  const decision = stopAllowed('force', snapshot, { authorized: Boolean(auth.authorized) })
+  if (!decision.allowed) fatal(decision.reason)
   const pid = Number(state.supervisorPid)
   if (!pid) fatal('no supervisorPid in state')
   const signal = options.signal === 'SIGTERM' ? 'SIGTERM' : 'SIGKILL'

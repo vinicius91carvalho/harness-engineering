@@ -171,6 +171,15 @@ node "$CONTROL/scripts/harness-control.mjs" resume --repo "$REPO"
 node "$CONTROL/scripts/harness-control.mjs" stop   --repo "$REPO"
 ```
 
+**Control-host beacon (ADR-0019):** `harness-control stop` and in-process shutdown
+consult `skills/generator/lib/control-beacon.mjs` before soft stop.
+Soft stop is denied while workers are live, required journal consumers (default
+`herdr-notify`) are behind the journal tip, or an `input_required` is unacked.
+After a bounded wait (~60s) surface an Input Request instead of forcing exit.
+`kill-supervisor` and `--force` fleet recovery remain authorized force paths
+(ADR-0016). Turn-end shutdown always plans `{ waitForFinalizers: true }` before
+lease release.
+
 Never infer completion from an empty queue or agent prose. Completion requires a
 persisted `run_completed` event produced by mandatory Goal Review on the integrated plan branch.
 

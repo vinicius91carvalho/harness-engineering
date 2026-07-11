@@ -57,6 +57,23 @@ Decide what you're reflecting *on*:
 - **Continuity:** use the current host's documented memory/instruction surface and
   `codebase-memory-mcp` when configured. Never inspect credentials, histories,
   caches, or session databases.
+- **Optional — evidence-corpus:** when the session involved harness QA / Goal Review
+  failures, mine create-only Evidence Artifacts instead of pane tails:
+
+```bash
+node -e "
+import { scan, extractVerdicts, clusterDefects, recurrenceReport, proposeRoutes } from './skills/learning-loop/lib/evidence-corpus.mjs';
+const corpus = await scan({ repo: process.cwd() });
+const verdicts = extractVerdicts(corpus);
+const clusters = clusterDefects(verdicts);
+const recurring = recurrenceReport(clusters, 2);
+console.log(JSON.stringify({ corpus, recurring, routes: proposeRoutes(recurring) }, null, 2));
+"
+```
+
+  Apply the same recurrence bar (≥2) to clustered defects.
+  `proposeRoutes()` returns suggested `skills/*` paths only — **never** auto-apply
+  patches; present routes in Step 3 and scaffold only after explicit approval.
 
 If there's barely any session to reflect on (a couple of trivial exchanges), say so
 and stop — there's nothing worth automating yet. Manufacturing findings from a thin

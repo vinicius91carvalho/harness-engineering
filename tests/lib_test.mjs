@@ -1523,3 +1523,118 @@ test('wake triage fleet snapshot from supervisor state', async () => {
   const progress = { id: 8, kind: 'progress', workers: 0, total: 3, integrated: 1 }
   assert.deepEqual(classify(progress, fleet).action, 'wake')
 })
+
+test('evidence-corpus scans verdicts and proposes skill routes', async () => {
+  const {
+    scan,
+    extractVerdicts,
+    clusterDefects,
+    recurrenceReport,
+    proposeRoutes,
+  } = await import('../skills/learning-loop/lib/evidence-corpus.mjs')
+  const { VERDICT_BEGIN, VERDICT_END } = await import('../skills/generator/lib/verdict.mjs')
+  const tmp = mkdtempSync(join(tmpdir(), 'evidence-corpus-'))
+  const evidenceDir = join(tmp, '.git', 'harness-evidence', 'root', 'run-a', 'core')
+  mkdirSync(evidenceDir, { recursive: true })
+  const verdictBody = `${VERDICT_BEGIN}\n${JSON.stringify({
+    implementation: false,
+    defects: ['empty title rejected'],
+    notes: 'validation gap',
+  })}\n${VERDICT_END}`
+  writeFileSync(join(evidenceDir, 'WI-1-1-qa-abc.log'), [
+    'project=root',
+    'run=run-a',
+    'context=core',
+    'id=WI-1',
+    'attempt=1',
+    'kind=qa',
+    'digest=abc',
+    'at=2026-01-01T00:00:00.000Z',
+    '',
+    verdictBody,
+  ].join('\n'))
+  writeFileSync(join(evidenceDir, 'WI-2-1-qa-def.log'), [
+    'project=root',
+    'run=run-a',
+    'context=core',
+    'id=WI-2',
+    'attempt=1',
+    'kind=qa',
+    'digest=def',
+    'at=2026-01-02T00:00:00.000Z',
+    '',
+    verdictBody,
+  ].join('\n'))
+  writeFileSync(join(evidenceDir, 'broken.log'), 'partial header without body')
+  writeFileSync(join(evidenceDir, 'bad-json.log'), [
+    'project=root',
+    'id=WI-3',
+    'kind=qa',
+    'attempt=1',
+    '',
+    '{not json',
+  ].join('\n'))
+
+  const corpus = await scan({ repo: tmp })
+  assert.equal(corpus.count, 2)
+  assert.ok(corpus.skipped.partial >= 1)
+  assert.ok(corpus.skipped.nonJson >= 1)
+
+  const verdicts = extractVerdicts(corpus)
+  assert.equal(verdicts.length, 2)
+  const clusters = clusterDefects(verdicts)
+  const recurring = recurrenceReport(clusters, 2)
+  assert.ok(recurring.length >= 1)
+  const routes = proposeRoutes(recurring)
+  assert.ok(routes.some((row) => row.route.startsWith('skills/')))
+  assert.ok(routes.every((row) => !row.route.includes('..')))
+})
+
+test('control-beacon blocks soft stop and allows force when authorized', async () => {
+  const {
+    beaconSnapshot,
+    stopAllowed,
+    turnEndDrain,
+    DEFAULT_REQUIRED_CONSUMERS,
+  } = await import('../skills/generator/lib/control-beacon.mjs')
+
+  const live = beaconSnapshot({
+    workers: [{ context: 'core', live: true }],
+    journalTip: 5,
+    consumerCursors: { 'herdr-notify': { eventId: 5 } },
+    pendingInputs: {},
+  })
+  assert.equal(stopAllowed('soft', live).allowed, false)
+  assert.match(stopAllowed('soft', live).reason, /live workers/)
+
+  const idle = beaconSnapshot({
+    workers: [{ context: 'core', live: false }],
+    journalTip: 5,
+    consumerCursors: { 'herdr-notify': { eventId: 5 } },
+    pendingInputs: {},
+  })
+  assert.equal(stopAllowed('soft', idle).allowed, true)
+
+  const behind = beaconSnapshot({
+    workers: [],
+    journalTip: 10,
+    consumerCursors: { 'herdr-notify': { eventId: 3 } },
+    pendingInputs: {},
+    requiredConsumers: DEFAULT_REQUIRED_CONSUMERS,
+  })
+  assert.equal(stopAllowed('soft', behind).allowed, false)
+  assert.match(stopAllowed('soft', behind).reason, /behind journal tip/)
+
+  const pending = beaconSnapshot({
+    workers: [],
+    journalTip: 2,
+    consumerCursors: { 'herdr-notify': { eventId: 2 } },
+    pendingInputs: { 1: { kind: 'input_required', status: 'pending' } },
+  })
+  assert.equal(stopAllowed('soft', pending).allowed, false)
+  assert.match(stopAllowed('soft', pending).reason, /input_required/)
+
+  assert.equal(stopAllowed('force', idle, { authorized: false }).allowed, false)
+  assert.equal(stopAllowed('force', live, { authorized: true }).allowed, true)
+  assert.deepEqual(turnEndDrain(), { waitForFinalizers: true })
+})
