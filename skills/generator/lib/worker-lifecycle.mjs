@@ -1,4 +1,6 @@
 import { spawnSync } from 'node:child_process'
+import { appendFile, mkdir } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import { isHarnessInfrastructureError } from './stuck-worker.mjs'
 
 /**
@@ -57,6 +59,20 @@ export function workerLogFileName(context) {
   return `${String(context).replace(/[^a-zA-Z0-9_-]/g, '_')}-${Date.now()}.log`
 }
 
+/** Persist herdr pane tail so workerClosed can classify infra errors after the pane is gone. */
+export async function persistWorkerPaneTail(logFile, tailText) {
+  if (!logFile || !String(tailText || '').trim()) return false
+  await mkdir(dirname(logFile), { recursive: true })
+  const marker = '\n--- supervisor captured pane tail ---\n'
+  await appendFile(logFile, `${marker}${tailText}\n`, 'utf8')
+  return true
+}
+
+/** Stuck herdr workers with infra errors must not auto-resume via retryQueue. */
+export function shouldEnqueueStuckWorkerRetry(health) {
+  return health?.tailClass !== 'infra_error'
+}
+
 export function planWorkerHerdrMeta({
   claim,
   projectId,
@@ -77,10 +93,18 @@ export function planWorkerHerdrMeta({
 
 export function planWorkerStop(worker, { signal = 'SIGTERM' } = {}) {
   if (!worker) return { kind: 'noop' }
-  if (worker.type === 'herdr' && (worker.paneId || worker.tabId)) {
-    return { kind: 'close_display', paneId: worker.paneId, tabId: worker.tabId }
-  }
   const pid = worker.child?.pid || worker.childPid || worker.ownedResources?.processGroup || null
+  // Herdr: close the pane, but always terminate the orchestrator tree when known —
+  // pane-only stop left tsx/next/compose children holding RAM after "kill-worker".
+  if (worker.type === 'herdr' && (worker.paneId || worker.tabId)) {
+    return {
+      kind: 'close_display',
+      paneId: worker.paneId,
+      tabId: worker.tabId,
+      alsoTerminatePid: pid,
+      signal,
+    }
+  }
   if (pid) return { kind: 'terminate_tree', pid, signal }
   return { kind: 'noop' }
 }
@@ -97,11 +121,14 @@ export function planWorkerCleanupTargets(worker) {
 export function terminateProcessTree(pid, signal = 'SIGTERM') {
   if (!pid) return { terminated: false }
   const sig = signal === 'SIGKILL' ? 'SIGKILL' : 'SIGTERM'
+  const killArg = sig === 'SIGKILL' ? '-9' : '-15'
   if (process.platform !== 'win32') {
     try {
       spawnSync('pkill', [`-${sig === 'SIGKILL' ? '9' : '15'}`, '-P', String(pid)], { stdio: 'ignore' })
       try { process.kill(-pid, sig) } catch {}
     } catch {}
+    // Prefer the kill(1) binary — some sandboxes no-op Node process.kill.
+    spawnSync('kill', [killArg, String(pid)], { stdio: 'ignore' })
   }
   try { process.kill(pid, sig) } catch {}
   return { terminated: true, pid, signal: sig }
@@ -122,6 +149,7 @@ export function planWorkerClosedActions({
   retryQueue,
   autoRepair,
   logFile,
+  prevTailClass,
 }) {
   if (rateLimited) {
     return {
@@ -174,7 +202,8 @@ export function planWorkerClosedActions({
     ? `Worker exited with code ${exitCode}: ${lastLine}`
     : `Worker exited with code ${exitCode}`
 
-  if (isHarnessInfrastructureError(tail)) {
+  const infraError = isHarnessInfrastructureError(tail) || prevTailClass === 'infra_error'
+  if (infraError) {
     if (autoRepair && !harnessRepairs?.[key]) {
       return {
         action: 'harness_repair',

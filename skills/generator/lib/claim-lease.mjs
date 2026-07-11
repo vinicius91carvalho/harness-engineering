@@ -214,6 +214,11 @@ function restoreFeatureListFromIntegration(repo) {
 function removeWorktree(repo, checkout) {
   git(repo, ['worktree', 'remove', '--force', checkout], { allowFailure: true })
   git(repo, ['worktree', 'prune'], { allowFailure: true })
+  // Unregistered leftover dirs (crash / partial remove) are not cleared by
+  // `git worktree remove` and then block `worktree add` with "already exists".
+  if (existsSync(checkout) && !worktreeRegistered(repo, checkout)) {
+    rmSync(checkout, { recursive: true, force: true })
+  }
 }
 
 function branchExists(repo, branch) {

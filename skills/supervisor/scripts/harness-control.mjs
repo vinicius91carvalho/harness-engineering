@@ -34,11 +34,12 @@ const { scopeClaims, runStateFile: runStatePath } = await importLib('project-key
 const { resolveProjectTopology } = await importLib('project-topology.mjs')
 const { readWorkerResult } = await importLib('worker-result.mjs')
 const { cleanupBrowserOrphans } = await importLib('browser-cleanup.mjs')
+const { cleanupWorktreeRuntime } = await importLib('worktree-teardown.mjs')
 const { isWorkerStuck, isWorkerStuckByHealth, stuckThresholdMs, assessWorkerHealth } = await importLib('stuck-worker.mjs')
 const { interpretWorkerOutcome } = await importLib('worker-outcome.mjs')
-const { planWorkerClosedActions, buildOrchestratorArgv, buildWorkerBase, workerLogFileName, planWorkerHerdrMeta, planWorkerStop, planWorkerCleanupTargets, terminateProcessTree } = await importLib('worker-lifecycle.mjs')
+const { planWorkerClosedActions, buildOrchestratorArgv, buildWorkerBase, workerLogFileName, planWorkerHerdrMeta, planWorkerStop, planWorkerCleanupTargets, terminateProcessTree, persistWorkerPaneTail, shouldEnqueueStuckWorkerRetry } = await importLib('worker-lifecycle.mjs')
 const { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } = await importLib('supervisor-tick.mjs')
-const { planTickAdmission } = await importLib('supervisor-admission.mjs')
+const { planTickAdmission, goalReviewGate } = await importLib('supervisor-admission.mjs')
 const { pruneOrphanPendingInputs, isCrashBoundContext } = await importLib('supervisor-claims.mjs')
 const { planAutoRetryResponses } = await importLib('supervisor-auto-respond.mjs')
 const { selectClaim, resumeClaim, releaseClaim, mergeLockHolder, clearDeadLock, clearStaleGeneratorLocks } = await importLib('claim-lease.mjs')
@@ -318,6 +319,7 @@ class Supervisor {
     const plan = planWorkerStop(worker, { signal })
     if (plan.kind === 'close_display') {
       closeWorkerDisplay(plan.paneId, plan.tabId)
+      if (plan.alsoTerminatePid) terminateProcessTree(plan.alsoTerminatePid, plan.signal)
       return plan
     }
     if (plan.kind === 'terminate_tree') {
@@ -328,8 +330,12 @@ class Supervisor {
   }
 
   cleanupWorkerResources(worker) {
-    if (!worker) return { killed: 0 }
-    return cleanupBrowserOrphans(planWorkerCleanupTargets(worker))
+    if (!worker) return { browsers: { killed: 0 }, runtime: null }
+    const targets = planWorkerCleanupTargets(worker)
+    return {
+      browsers: cleanupBrowserOrphans(targets),
+      runtime: cleanupWorktreeRuntime(targets),
+    }
   }
 
   async startWorkerRuntime({
@@ -733,12 +739,14 @@ class Supervisor {
       }
       const childAlive = Boolean(runState.childPid && processAlive(runState.childPid))
       let health
+      let paneTail = ''
 
       if (worker.type === 'herdr' && worker.paneId && paneExists(worker.paneId)) {
         const scroll = scrollMap.get(worker.paneId) ?? 0
         const prev = prevScroll.get(worker.paneId)
         const scrollDelta = prev == null ? 0 : scroll - prev
         const tail = readPaneTail(worker.paneId, 60)
+        paneTail = tail
         const paneStatus = getPaneAgentStatus(worker.paneId)
         health = assessWorkerHealth({
           runStateAgeMs,
@@ -783,16 +791,20 @@ class Supervisor {
         phase: runState.phase,
         health,
       }, true)
-      if (worker.type === 'herdr') this.applyWorkerStop(worker)
-      else this.applyWorkerStop(worker, 'SIGTERM')
-      if (worker.type !== 'herdr') {
+      if (worker.type === 'herdr') {
+        if (paneTail) await persistWorkerPaneTail(worker.logFile, paneTail)
+        this.applyWorkerStop(worker)
+      } else {
+        this.applyWorkerStop(worker, 'SIGTERM')
         setTimeout(() => this.applyWorkerStop(worker, 'SIGKILL'), 5000)
       }
-      this.state.retryQueue ||= {}
-      this.state.retryQueue[key] = {
-        guidance: health.reason
-          || 'Supervisor detected a stuck worker with no recent agent output; resume after confirming the worktree is healthy',
-        attempts: this.state.retryQueue[key]?.attempts || 0,
+      if (shouldEnqueueStuckWorkerRetry(health)) {
+        this.state.retryQueue ||= {}
+        this.state.retryQueue[key] = {
+          guidance: health.reason
+            || 'Supervisor detected a stuck worker with no recent agent output; resume after confirming the worktree is healthy',
+          attempts: this.state.retryQueue[key]?.attempts || 0,
+        }
       }
       await this.save()
     }
@@ -814,10 +826,13 @@ class Supervisor {
         || runState.nextAction === 'release-claim'
       const gone = !paneExists(worker.paneId)
       const tail = gone ? '' : readPaneTail(worker.paneId)
+      const ownerAlive = Boolean(runState.ownerPid && processAlive(runState.ownerPid))
       const childAlive = processAlive(runState.childPid)
       const startedMs = worker.startedAt ? Date.parse(worker.startedAt) : 0
       const warmedUp = startedMs > 0 && Date.now() - startedMs > 45_000
-      const orphanShell = !terminal && !gone && (
+      // Nested agent early-exit (verdict received → SIGTERM) leaves childPid dead while
+      // the orchestrator is still applying the ledger. Never treat that as an orphan.
+      const orphanShell = !terminal && !gone && !ownerAlive && (
         detectPaneOrchestratorExited(tail)
         || (runState.childPid && !childAlive)
         || (warmedUp && !childAlive && paneShowsIdleShell(tail))
@@ -885,6 +900,7 @@ class Supervisor {
       retryQueue: this.state.retryQueue,
       autoRepair: process.env.HARNESS_AUTO_REPAIR === 'true',
       logFile: worker.logFile,
+      prevTailClass: this.state.workerHealth?.[key]?.tailClass,
     })
 
     if (plan.emitHarnessIssue) {
@@ -1020,16 +1036,27 @@ class Supervisor {
   }
 
   async maybeGoalReview(snapshot, active, available, guidance = '') {
-    if (!snapshot.queue.length || snapshot.counts.integrated !== snapshot.counts.total || active > 0 || available < 1 || this.workers.has('goal-review')) return false
     const goalStateName = projectPrefix ? `${projectId}--goal-review.json` : 'goal-review.json'
     const goalState = await readJson(join(commonGit, 'harness-runs', goalStateName), {})
     const head = git(['rev-parse', integrationBranchName(repo)], true).stdout.trim()
     const clean = git(['status', '--porcelain'], true).stdout.trim() === ''
-    if (goalState.status === 'complete' && goalState.reviewedHead === head && clean) {
+    const gate = goalReviewGate({
+      catalog: snapshot.queue,
+      counts: snapshot.counts,
+      activeWorkers: active,
+      slots: available,
+      hasGoalReviewWorker: this.workers.has('goal-review'),
+      integrationHead: head,
+      reviewedHead: goalState.reviewedHead || '',
+      cleanCheckout: clean,
+      status: goalState.status || '',
+    })
+    if (gate.reason === 'already-reviewed-head') {
       this.stopping = true
       await this.save({ status: 'complete' })
       return true
     }
+    if (!gate.ok) return false
     const queued = this.state.retryQueue?.['goal-review']
     const reviewGuidance = guidance || queued?.guidance || ''
     if (queued) delete this.state.retryQueue['goal-review']
@@ -1255,15 +1282,18 @@ class Supervisor {
 
   async stop(signal) {
     this.stopping = true
-    // Do not close herdr panes on SIGINT/SIGTERM — orchestrators keep running
-    // and the next supervisor start rehydrates them.
+    const control = await readJson(controlFile, {})
+    const operatorStop = control.status === 'stopped'
+    // SIGINT / unexpected SIGTERM: keep herdr orchestrators for rehydrate.
+    // Explicit `harness-control stop`: tear down panes, process trees, and
+    // worktree runtimes (tsx/next/compose) so they cannot exhaust host RAM.
     for (const worker of this.workers.values()) {
-      if (worker.type === 'herdr') continue
+      if (worker.type === 'herdr' && !operatorStop) continue
       this.applyWorkerStop(worker, 'SIGTERM')
+      if (operatorStop) this.cleanupWorkerResources(worker)
     }
     await this.emit('supervisor_stopped', { signal }, true)
-    const control = await readJson(controlFile, {})
-    await this.save({ status: control.status === 'stopped' ? 'stopped' : 'interrupted', lastSignal: signal })
+    await this.save({ status: operatorStop ? 'stopped' : 'interrupted', lastSignal: signal })
     await this.drainFinalizers()
     await releaseSupervisorLock(this.leaseToken)
     process.exit(130)
@@ -1428,15 +1458,23 @@ async function killWorker() {
     }
   const signal = options.signal === 'SIGKILL' ? 'SIGKILL' : 'SIGTERM'
   const stopPlan = planWorkerStop(worker, { signal })
-  if (stopPlan.kind === 'close_display') closeWorkerDisplay(stopPlan.paneId, stopPlan.tabId)
-  else if (stopPlan.kind === 'terminate_tree') terminateProcessTree(stopPlan.pid, stopPlan.signal)
-  cleanupBrowserOrphans(planWorkerCleanupTargets(worker))
+  if (stopPlan.kind === 'close_display') {
+    closeWorkerDisplay(stopPlan.paneId, stopPlan.tabId)
+    if (stopPlan.alsoTerminatePid) terminateProcessTree(stopPlan.alsoTerminatePid, signal)
+  } else if (stopPlan.kind === 'terminate_tree') {
+    terminateProcessTree(stopPlan.pid, stopPlan.signal)
+  }
+  const targets = planWorkerCleanupTargets(worker)
+  const cleanup = {
+    browsers: cleanupBrowserOrphans(targets),
+    runtime: cleanupWorktreeRuntime(targets),
+  }
   if (state.workers?.[context]) {
     const nextWorkers = { ...state.workers }
     delete nextWorkers[context]
     await atomicJson(stateFile, { ...state, workers: nextWorkers })
   }
-  process.stdout.write(`${JSON.stringify({ context, stop: stopPlan })}\n`)
+  process.stdout.write(`${JSON.stringify({ context, stop: stopPlan, cleanup })}\n`)
 }
 
 async function releaseLease() {

@@ -20,19 +20,44 @@
  */
 
 import { shouldFinalizePendingGoal } from './supervisor-tick.mjs'
-import { completionSatisfied } from './completion-contract.mjs'
+import { goalReviewAdmissible as goalReviewGate } from './completion-contract.mjs'
+
+export { goalReviewGate }
+
+function goalReviewGateFromSnapshot({
+  snapshot,
+  activeWorkers,
+  slots,
+  hasGoalReviewWorker,
+  checks = null,
+  ledger = null,
+  integrationHead = '',
+  reviewedHead = '',
+  cleanCheckout = true,
+  status = '',
+}) {
+  return goalReviewGate({
+    checks,
+    catalog: snapshot?.queue,
+    ledger,
+    integrationHead,
+    reviewedHead,
+    cleanCheckout,
+    activeWorkers,
+    status,
+    slots,
+    hasGoalReviewWorker,
+    counts: snapshot?.counts,
+  })
+}
 
 /**
- * Admission precondition for starting a new Goal Review worker.
- * Uses Completion Contract for queue completeness; adapter still checks git head/clean.
+ * Boolean adapter for planTickAdmission. Treats already-reviewed-head as true so
+ * maybeGoalReview can complete without spawning (preserves the short-circuit).
  */
-export function goalReviewAdmissible({ snapshot, activeWorkers, slots, hasGoalReviewWorker, checks = null, ledger = null }) {
-  if (!snapshot?.queue?.length) return false
-  if (activeWorkers !== 0 || slots < 1 || hasGoalReviewWorker) return false
-  if (checks) {
-    return completionSatisfied({ checks, catalog: snapshot.queue, ledger })
-  }
-  return snapshot.counts.integrated === snapshot.counts.total
+export function goalReviewAdmissible(params) {
+  const gate = goalReviewGateFromSnapshot(params)
+  return gate.ok || gate.reason === 'already-reviewed-head'
 }
 
 /**
@@ -47,14 +72,39 @@ export function goalReviewAdmissible({ snapshot, activeWorkers, slots, hasGoalRe
  * them); the last shape lets the adapter resume recoverable claims while slots
  * remain, then claim new work with whatever is left.
  */
-export function planTickAdmission({ slots, retryQueue, recoverable, pendingGoalResult, snapshot, activeWorkers, hasGoalReviewWorker }) {
+export function planTickAdmission({
+  slots,
+  retryQueue,
+  recoverable,
+  pendingGoalResult,
+  snapshot,
+  activeWorkers,
+  hasGoalReviewWorker,
+  checks = null,
+  ledger = null,
+  integrationHead = '',
+  reviewedHead = '',
+  cleanCheckout = true,
+  status = '',
+}) {
   if (shouldFinalizePendingGoal(retryQueue, pendingGoalResult)) {
     return [{ type: 'finalize_goal', result: pendingGoalResult }]
   }
   if (pendingGoalResult) {
     return [{ type: 'wait_pending_goal' }]
   }
-  if (goalReviewAdmissible({ snapshot, activeWorkers, slots, hasGoalReviewWorker })) {
+  if (goalReviewAdmissible({
+    snapshot,
+    activeWorkers,
+    slots,
+    hasGoalReviewWorker,
+    checks,
+    ledger,
+    integrationHead,
+    reviewedHead,
+    cleanCheckout,
+    status,
+  })) {
     return [{ type: 'start_goal_review' }]
   }
   const actions = (recoverable || []).map((item) => ({ type: 'resume', context: item.context }))

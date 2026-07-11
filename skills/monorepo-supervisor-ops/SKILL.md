@@ -19,7 +19,10 @@ Use this when several subprojects share one Git top-level (e.g. `core`, `web`,
 6. **CauseFlow 10-min ops model:** always recycle/retry with `--host agent` and **composer-2.5** (never `composer-2.5-fast`, never `pi`/deepseek for this monitoring loop).
 7. **Coding route ≠ ops host:** Work Item coding stays OSS-first via `.harness/roles.json`. Do not reorder coding to put Claude/Codex/Composer first. Ops recycles use composer-2.5; that is not the coding ladder.
 8. **Fail-closed:** empty fleet, finished tabs still open, or `workerHealth=stuck` → fix now and update this skill / harness code in the same turn. Do not only report.
-9. **Learning stays in workflow skills:** durable ops lessons update `skills/*` in
+9. **Always check final verification logs** (supervisor Hard rules): evidence
+   artifacts under `.git/harness-evidence/` are pass/fail truth. Do not rely only
+   on `status` / progress counters / pane tails.
+10. **Learning stays in workflow skills:** durable ops lessons update `skills/*` in
    harness-engineering (and sync to `~/.agents`), not `AGENTS.md` / `CLAUDE.md`.
 
 ## Sync harness changes to live skills
@@ -27,7 +30,7 @@ Use this when several subprojects share one Git top-level (e.g. `core`, `web`,
 After editing in the harness-engineering repo:
 
 ```bash
-cp skills/generator/lib/{agent-spawn,agent-stream,supervisor-auto-respond,worker-health,repair-router,observation-method,control-journal,resource-governor}.mjs ~/.agents/skills/generator/lib/
+cp skills/generator/lib/{agent-spawn,agent-stream,supervisor-auto-respond,worker-health,repair-router,observation-method,control-journal,resource-governor,worktree-teardown,worker-lifecycle,browser-cleanup,claim-lease}.mjs ~/.agents/skills/generator/lib/
 cp skills/generator/prompts/feature.mjs ~/.agents/skills/generator/prompts/
 cp skills/generator/orchestrator.mjs ~/.agents/skills/generator/
 cp skills/supervisor/scripts/harness-control.mjs ~/.agents/skills/supervisor/scripts/
@@ -103,11 +106,44 @@ When `status=running` but `workers={}`, herdr has only the default tab, or
    ```
 4. **Capacity 0 from load/RAM** — Docker `--no-cache` builds spike load above
    `maxLoadRatio`; wait for build to finish. Free RAM: kill orphan `tsx`/`node`
-   APIs left in finished worktrees (not the active AC worktree).
-5. **Paused supervisor** — `respond --action pause` flips status; `resume` and
+   APIs left in finished worktrees (not the active AC worktree). Prefer
+   `kill-worker --force true` / operator `stop` — both now run programmatic
+   worktree teardown (`.harness/app.pid`, worktree-scoped `next`/`tsx`,
+   `docker compose down --remove-orphans`) via `worktree-teardown.mjs`, not
+   browser cleanup alone.
+5. **Sibling holds host-wide Resource Governor slots** — `capacity.available=0`
+   while this project's `workers={}` but `capacity.state.reservations` shows other
+   subprojects (or a zombie idle-shell worker still reserved). Check
+   `.git/harness-governor/reservations.json`. Pause or `kill-worker --force true`
+   lower-priority / crash-looping siblings, then hard-restart or wait for this
+   supervisor to admit. Do not declare "nothing left to claim" until reservations
+   and `feature_list` remaining WIs are checked.
+6. **RAM below reserve (`memory.slots=0`, `MemAvailable` < `reserveMb`)** — even
+   with free governor reservation count, admission stays at 0. Treat as empty
+   fleet for the blocked root project: pause sibling supervisors, `kill-worker
+   --force true` on lower-priority contexts, free orphan docker/node leftovers,
+   then re-check `capacity` until `available>=1` and admit the blocker. Do not
+   leave the blocked project idle while siblings keep burning RAM.
+7. **"Preparing worktree … already exists"** — leftover checkout dirs that are
+   not in `git worktree list` block `worktree add`. `prepareWorktree` now
+   `rm -rf`s unregistered leftovers after `worktree remove`/`prune`. If a live
+   supervisor still fails, manually:
+   ```bash
+   git -C /path/to/monorepo worktree list
+   # only for paths with no live orchestrator:
+   rm -rf <orphan-checkout-dir>
+   git -C /path/to/monorepo worktree prune
+   ```
+8. **Paused supervisor** — `respond --action pause` flips status; `resume` and
    force `state.status=running` if needed.
-6. Confirm panes return; rename tabs if labels are null:
+9. Confirm panes return; rename tabs if labels are null:
    `herdr tab rename <tab_id> "{taskId} - {role} - {project} - r{retry}"`.
+
+**Idle after finish is not done:** when every live context exits but the project
+is not `complete` (remaining ACs, blocked WI, or unanswered `input_required`),
+treat that as empty fleet and recover above the same turn. Narrating
+"foundation idle / one worker healthy" without admitting the next context is a
+supervisor defect.
 
 ## Temporary capacity boost (more parallel contexts)
 
@@ -158,11 +194,12 @@ stop/pause the dependent project until a dependency-root finishes.
 | Dependent E2E fails on Core/API 5xx or contract break | Escalate to root project repair (Supervisor → Core Orchestrator); pause dependent coding retries until API is fixed |
 | Static AC but Mintlify/browser up | QA prompt must follow AC observation method — kill mint, restart with audit guidance |
 | `status` has workers, herdr empty | Zombie pane IDs — restart supervisors; confirm project-scoped cleanup |
-| `workers={}`, no panes, status running | Empty-fleet recovery above (locks / quota / load) |
+| `workers={}`, no panes, status running | Empty-fleet recovery above (locks / quota / load / **sibling governor reservations**) |
 | Goal review exits with code 1 | Often merge lock wait — not a product failure |
 | Memory pressure / `Session terminated` | Lower `--max-workers` / `--memory-per-worker-mb`; kill heavy mint/docker leftovers |
 | `capacity.limit=0` + high load | Docker build or CPU spike — wait; do not thrash recycles |
-| Many `docker ps` leftovers after WIs finish | Workers must `compose down` / `docker rm` what they started (generator RESOURCE_CLEANUP_RULE). Stop orphans not owned by a live worker; keep only stacks a running context still needs. Harden prompts/skills same turn. |
+| Many `docker ps` leftovers after WIs finish | Workers must `compose down` / `docker rm` what they started (generator RESOURCE_CLEANUP_RULE). Supervisor `kill-worker` / `workerClosed` / operator `stop` also run `cleanupWorktreeRuntime`. Stop orphans not owned by a live worker; keep only stacks a running context still needs. Harden prompts/skills same turn. |
+| RAM exhausted while `workers={}` | Leftover `next`/`tsx`/compose from prior contexts — run `kill-worker`/`stop` (teardown) or manual compose down; do not admit more workers until `capacity.available>=1`. |
 
 ## Herdr layout
 
@@ -208,6 +245,37 @@ Also check `harness-control status` → `workerHealth` / `mergeLock` (written ea
 
 **Never recycle** `waiting_expected` merge_lock when `mergeLock.holderAlive=true`,
 or MCP warmup still under budget. Act on `stuck` only. Close tabs for `done`.
+
+### Check final verification evidence logs (mandatory)
+
+Do **not** trust pane chatter, `exitCode: 0` on the Input Request alone, or a
+QA verdict with empty `defects` when INTEGRATION_QA later disagrees.
+
+On every QA / INTEGRATION_QA / Goal Review completion or failure:
+
+1. Open the matching create-only Evidence Artifact under
+   `.git/harness-evidence/<project>/<runId>/<context>/WI-*-<kind>-*.log`
+   (latest attempt for that WI).
+2. Read the **final JSON verdict** at the bottom (`qa` / `integration` /
+   `implementation` / `defects`). That is authoritative.
+3. If INTEGRATION_QA reports defects that contradict an earlier `qa: true`
+   (classic false green: SKIP_WEB_SERVER workaround, host-only smoke, compose
+   not rebuilt), treat the QA pass as invalid — retry with guidance that cites
+   the evidence-log defects verbatim and forbids the workaround pass path.
+4. When responding to `Integrated Verification failed after Attempt N`, paste
+   the concrete expected/observed pairs from that evidence log into
+   `--guidance` / `retryQueue[context].guidance`.
+
+Pane tails are for liveness; evidence logs are for pass/fail truth.
+
+### Known false orphan: verdict early-exit (owner still applying ledger)
+
+After `agent: harness verdict received`, hosts SIGTERM the nested agent.
+`childPid` dies while `ownerPid` (orchestrator) is still writing the ledger.
+Do **not** treat that as an orphan shell or recycle the worker.
+Code: `orphanShell` requires `!ownerAlive`; `detectPaneOrchestratorExited` returns
+false when the recent tail contains `harness verdict received`.
+If you recycle mid-apply, INTEGRATION_QA / Goal Review flags never stick.
 
 ### Known false stuck: stale `lastAgentOutputAt`
 

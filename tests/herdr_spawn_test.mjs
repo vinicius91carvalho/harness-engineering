@@ -121,6 +121,9 @@ assert(detectPaneWaiting('', 'blocked')?.kind === 'blocked', 'herdr blocked mean
 assert(detectPaneMergeLockWait('orchestrator: waiting for merge lock (another context is integrating)…') === true, 'merge lock wait is detectable')
 assert(detectPaneOrchestratorExited('Session terminated, killing shell... ...killed.') === true, 'killed shell is detectable')
 assert(detectPaneOrchestratorExited('Session terminated, killing shell... ...killed.\norchestrator: CODING → pi attempt 1') === false, 'restarted orchestrator after kill is not exited')
+assert(detectPaneOrchestratorExited(
+  '===HARNESS-VERDICT-END===\nagent: harness verdict received (id=WI-AC-046) — stopping agent\nSession terminated, killing shell...',
+) === false, 'agent early-exit after verdict is not orchestrator exit')
 assert(paneShowsIdleShell('…/relay  plan/opensource-docker  v24  ❯') === true, 'idle shell prompt is detectable')
 assert(paneShowsIdleShell('orchestrator: goal-review complete\n…/relay  v24  ❯') === true, 'idle prompt after orchestrator history is detectable')
 assert(paneShowsIdleShell('orchestrator: merge lock acquired\norchestrator: INTEGRATION_QA → pi attempt 3') === false, 'active orchestrator is not idle shell')

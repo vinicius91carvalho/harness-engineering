@@ -110,6 +110,26 @@ test -f "$CORRUPT_WT/feature_list.json"
 jq -e . "$CORRUPT_WT/feature_list.json" >/dev/null
 echo 'ok - a reused worktree with a corrupt feature_list.json is repaired before claim reuse'
 
+# Unregistered leftover checkout dirs must not block worktree add ("already exists").
+ORPHAN_REPO="$TMP/orphan-wt"
+mkdir -p "$ORPHAN_REPO"
+git -C "$ORPHAN_REPO" init -b main -q
+git -C "$ORPHAN_REPO" config user.name test
+git -C "$ORPHAN_REPO" config user.email test@example.invalid
+cat >"$ORPHAN_REPO/feature_list.json" <<'JSON'
+[{"id":"O1","context":"core","acceptance_checks":["AC-O"],"depends_on":[],"implementation":false,"qa":false,"integration":false}]
+JSON
+git -C "$ORPHAN_REPO" add feature_list.json
+git -C "$ORPHAN_REPO" commit -qm init
+mkdir -p "$ORPHAN_REPO-wt-root-core"
+printf 'stale\n' >"$ORPHAN_REPO-wt-root-core/leftover.txt"
+bash "$ROOT/skills/generator/claim.sh" select-claim "$ORPHAN_REPO" all '' 4100 >"$TMP/orphan-claim.json"
+ORPHAN_WT=$(jq -r .worktree "$TMP/orphan-claim.json")
+test -d "$ORPHAN_WT"
+test -f "$ORPHAN_WT/feature_list.json"
+test ! -f "$ORPHAN_WT/leftover.txt"
+echo 'ok - an unregistered leftover worktree directory is removed before worktree add'
+
 WEB_WT=$(jq -r .worktree "$TMP/web.json")
 echo branch >"$WEB_WT/collision"
 git -C "$WEB_WT" add collision

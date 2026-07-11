@@ -357,6 +357,9 @@ export function detectPaneWaiting(tail = '', paneStatus = 'unknown') {
 export function detectPaneOrchestratorExited(tail = '') {
   if (!tail) return false
   const recent = tail.trim().split('\n').filter(Boolean).slice(-6).join('\n')
+  // Host adapters SIGTERM the nested agent after a harness verdict; that prints
+  // "Session terminated" while the orchestrator is still alive and applying flags.
+  if (/agent:\s+harness verdict received/i.test(recent)) return false
   if (/\borchestrator:\s+\S+/i.test(recent) && !/\bSession terminated, killing shell\b/i.test(recent.split('\n').at(-1) || '')) {
     if (!/\bSession terminated, killing shell\b/i.test(recent)) return false
     const lines = recent.split('\n')

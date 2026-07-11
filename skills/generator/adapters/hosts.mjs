@@ -1,4 +1,4 @@
-import { parseObject } from '../lib/verdict.mjs'
+import { hasCompleteVerdict, parseObject } from '../lib/verdict.mjs'
 import { spawnHostAgent, hostSpawnVisible, terminateHostProcess } from '../lib/agent-spawn.mjs'
 import { createAgentStreamFormatter, withVisibleAgentMode } from '../lib/agent-stream.mjs'
 
@@ -75,6 +75,7 @@ export async function runHostAgentSession({
     let settled = false
     let lastPaneAt = Date.now()
     let verdictSeen = false
+    let parsedVerdict = null
     let sawAgentStream = false
     let paneHeartbeat = null
 
@@ -120,9 +121,11 @@ export async function runHostAgentSession({
     const maybeEarlyExitOnVerdict = () => {
       if (verdictSeen || settled) return
       const assistant = formatter?.assistantText() || ''
+      if (!hasCompleteVerdict(assistant)) return
       const parsed = parseObject(assistant)
       if (!parsed || typeof parsed !== 'object' || !parsed.id) return
       verdictSeen = true
+      parsedVerdict = parsed
       if (visible) {
         paneOut(`agent: harness verdict received (id=${parsed.id}) — stopping agent\n`)
         notePaneActivity(false)
@@ -165,7 +168,7 @@ export async function runHostAgentSession({
       const assistant = formatter?.assistantText()?.trim() || ''
       const detail = (stderr || assistant || stdout || '').trim()
       const parseSource = assistant || stdout || stderr
-      const parsed = parseObject(parseSource)
+      const parsed = parsedVerdict || parseObject(parseSource)
       const ok = (!timedOut && (code === 0 || (verdictSeen && parsed)))
       finish({
         ok,

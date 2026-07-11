@@ -39,21 +39,46 @@ export function completionSatisfied({ checks, catalog, ledger = null }) {
   return true
 }
 
+function queueComplete({ checks, catalog, ledger, counts }) {
+  if (!catalog?.length) return false
+  if (checks?.length) return completionSatisfied({ checks, catalog, ledger })
+  if (ledger) return catalogFullyIntegrated(catalog, ledger)
+  if (counts) return counts.total === catalog.length && counts.integrated === counts.total
+  return catalogFullyIntegrated(catalog, ledger)
+}
+
+/**
+ * Single Goal Review admission gate. Returns { ok, reason } where reason is one of:
+ * incomplete-queue | blocked-items | active-workers | no-slot | goal-review-running |
+ * dirty-checkout | already-reviewed-head | empty-queue | admissible
+ */
 export function goalReviewAdmissible({
-  checks,
-  catalog,
+  checks = null,
+  catalog = null,
   ledger = null,
   integrationHead = '',
   reviewedHead = '',
   cleanCheckout = true,
   activeWorkers = 0,
   status = '',
+  slots = undefined,
+  hasGoalReviewWorker = undefined,
+  counts = null,
 } = {}) {
   if (activeWorkers > 0) return { ok: false, reason: 'active-workers' }
+  if (slots !== undefined && slots < 1) return { ok: false, reason: 'no-slot' }
+  if (hasGoalReviewWorker === true) return { ok: false, reason: 'goal-review-running' }
   if (!cleanCheckout) return { ok: false, reason: 'dirty-checkout' }
-  if (!completionSatisfied({ checks, catalog, ledger })) return { ok: false, reason: 'incomplete-queue' }
+  if (!catalog?.length) return { ok: false, reason: 'empty-queue' }
+  if (anyBlocked(catalog, ledger)) return { ok: false, reason: 'blocked-items' }
+
+  if (!queueComplete({ checks, catalog, ledger, counts })) {
+    return { ok: false, reason: 'incomplete-queue' }
+  }
+
   if (status === 'complete' && reviewedHead && integrationHead && reviewedHead === integrationHead) {
     return { ok: false, reason: 'already-reviewed-head' }
   }
+
   return { ok: true, reason: 'admissible' }
 }

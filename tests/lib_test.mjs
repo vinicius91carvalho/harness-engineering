@@ -694,11 +694,72 @@ test('planTickAdmission always ends with claim_new when nothing else is recovera
   assert.deepEqual(plan, [{ type: 'claim_new' }])
 })
 
-test('goalReviewAdmissible requires an integrated queue, no active workers, a free slot, and no goal-review worker', () => {
+test('goalReviewGate returns structured reasons from completion-contract', () => {
+  const catalog = [{ id: 'WI-1', implementation: true, qa: true, integration: true }]
+  assert.deepEqual(
+    goalReviewContract({ catalog, activeWorkers: 0, slots: 1, hasGoalReviewWorker: false }),
+    { ok: true, reason: 'admissible' },
+  )
+  assert.deepEqual(goalReviewContract({ catalog: [], activeWorkers: 0 }), { ok: false, reason: 'empty-queue' })
+  assert.deepEqual(goalReviewContract({ catalog, activeWorkers: 1 }), { ok: false, reason: 'active-workers' })
+  assert.deepEqual(goalReviewContract({ catalog, activeWorkers: 0, slots: 0 }), { ok: false, reason: 'no-slot' })
+  assert.deepEqual(
+    goalReviewContract({ catalog, activeWorkers: 0, slots: 1, hasGoalReviewWorker: true }),
+    { ok: false, reason: 'goal-review-running' },
+  )
+  assert.deepEqual(goalReviewContract({ catalog, activeWorkers: 0, cleanCheckout: false }), { ok: false, reason: 'dirty-checkout' })
+  assert.deepEqual(
+    goalReviewContract({
+      catalog,
+      activeWorkers: 0,
+      integrationHead: 'abc',
+      reviewedHead: 'abc',
+      status: 'complete',
+    }),
+    { ok: false, reason: 'already-reviewed-head' },
+  )
+  assert.deepEqual(
+    goalReviewContract({
+      catalog: [{ id: 'WI-1', implementation: true, qa: true, integration: true, blocked: true }],
+      activeWorkers: 0,
+      counts: { total: 1, integrated: 1 },
+    }),
+    { ok: false, reason: 'blocked-items' },
+  )
+  assert.deepEqual(
+    goalReviewContract({
+      catalog: [{ id: 'WI-1', implementation: true, qa: false, integration: false }],
+      activeWorkers: 0,
+      counts: { total: 1, integrated: 0 },
+    }),
+    { ok: false, reason: 'incomplete-queue' },
+  )
+})
+
+test('goalReviewAdmissible boolean adapter covers fleet gates and already-reviewed-head short-circuit', () => {
   const integrated = baseSnapshot({ total: 1, integrated: 1 })
   assert.equal(goalReviewAdmissible({ snapshot: integrated, activeWorkers: 0, slots: 1, hasGoalReviewWorker: false }), true)
   assert.equal(goalReviewAdmissible({ snapshot: baseSnapshot({ total: 1, integrated: 0 }), activeWorkers: 0, slots: 1, hasGoalReviewWorker: false }), false)
   assert.equal(goalReviewAdmissible({ snapshot: { queue: [], counts: { total: 0, integrated: 0 } }, activeWorkers: 0, slots: 1, hasGoalReviewWorker: false }), false)
+  assert.equal(
+    goalReviewAdmissible({
+      snapshot: integrated,
+      activeWorkers: 0,
+      slots: 1,
+      hasGoalReviewWorker: false,
+      integrationHead: 'abc',
+      reviewedHead: 'abc',
+      status: 'complete',
+    }),
+    true,
+  )
+  assert.equal(goalReviewGate({
+    catalog: integrated.queue,
+    counts: integrated.counts,
+    integrationHead: 'abc',
+    reviewedHead: 'abc',
+    status: 'complete',
+  }).reason, 'already-reviewed-head')
 })
 
 test('route-plan mkey and strikeOf', () => {

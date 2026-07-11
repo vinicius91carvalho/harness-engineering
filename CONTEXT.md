@@ -208,6 +208,31 @@ _Avoid_: Global pause, failed task
 A spec mode (`<mode>existing-codebase</mode>`) where coding agents first exercise the Acceptance Checks against existing code at a real external boundary, set `implementation=true` with no code changes when they pass, and only repair the root cause with the smallest possible diff when a check fails. QA and Integrated Verification still independently re-run the checks. Turns `/generator` into a safe audit pass over a working codebase rather than a rewrite.
 _Avoid_: Audit mode, verify-only mode, read-only generator
 
+**Observation Method**:
+How an Acceptance Check (or its Work Item) must be exercised at a real external boundary: `grep`, `cli`, `http`, or `browser`, projected into the Work Item catalog.
+_Avoid_: test type, QA mode, verification strategy
+
+**Observation Hard Gate**:
+The spawn-time rule that validation (and Goal Review) host selection must match the Work Item's Observation Methods; if no eligible strong host remains, the Supervisor raises a durable Input Request instead of admitting a weak host or waiting silently.
+Coding soft-aligns its prompt to those methods but does not hard-exclude hosts.
+_Avoid_: soft reorder, pre-suite phase, host preference hint
+
+**Wake Triage**:
+A zero-token classifier over Control Journal deltas that absorbs or folds benign progress and wakes the Control Host LLM only for actionable events (Input Requests, stuck workers, fail-closed gaps).
+_Avoid_: peer agent bus, supervisor tick replacement, event-driven coding↔QA channel
+
+**Evidence Corpus**:
+A read-only index over create-only Evidence Artifacts used by the learning loop to cluster recurring defects and propose workflow-skill patches with operator approval.
+_Avoid_: pane stream mining, auto-applied skill edits, mutable evidence rewrite
+
+**Control-host Beacon**:
+The stop policy that blocks blind Control Host exit while workers are live or required journal consumers are behind, with a turn-end backstop that drains finalizers before lease release.
+_Avoid_: second supervisor, auto-ack to unblock stop, lease fence
+
+**Fleet Snapshot**:
+A structured cross-project bearings contract (journal tips, capacity, stuck, pending inputs) that fleet-ops recovery and monorepo ops consume instead of reparsing raw control files.
+_Avoid_: monorepo skill dump into harness-control, ad-hoc sibling state scrapes
+
 **User**:
 The human who sets up the harness, requests features or refactors, answers escalations, and reads relayed progress.
 _Avoid_: operator, client
