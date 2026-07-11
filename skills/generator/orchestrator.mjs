@@ -10,6 +10,7 @@ import { readJson, atomicJson } from './lib/fs-json.mjs'
 import { VERDICT_HINT, isProviderQuotaLimited, fallbackReason } from './lib/verdict.mjs'
 import { writeWorkerResult } from './lib/worker-result.mjs'
 import { cleanupBrowserOrphans } from './lib/browser-cleanup.mjs'
+import { cleanupWorktreeRuntime } from './lib/worktree-teardown.mjs'
 import { buildHostCommand, hostCommands, roleNames, runHostAgentSession, terminateHostProcess, hostSpawnVisible } from './adapters/hosts.mjs'
 import { integrateCheckpoint } from './lib/integrate-checkpoint.mjs'
 import { featurePrompt as buildFeaturePrompt, RESOURCE_CLEANUP_RULE } from './prompts/feature.mjs'
@@ -22,6 +23,9 @@ import { requestAdmission, releaseAdmission, defaultGovernorOptions } from './li
 import { workItemObservationMethods } from './lib/observation-method.mjs'
 import { runAttemptLoop } from './workflow/attempt-machine.mjs'
 import { putEvidenceArtifact, newRunId } from './lib/evidence-artifacts.mjs'
+import { meaningfulCheckoutDirt } from './lib/checkout-dirt.mjs'
+import { goalReviewAdmissible } from './lib/completion-contract.mjs'
+import { parseProjectSpecification } from './lib/project-specification.mjs'
 
 function fail(message) {
   process.stderr.write(`orchestrator: ${message}\n`)
@@ -284,7 +288,7 @@ async function runAgent(kind, prompt, id, attempt, cwd = options.workdir) {
         : workItemObservationMethods(feature)
     }
   } catch { /* best-effort */ }
-  const candidates = buildCandidates({
+  const { candidates, gateFailure } = buildCandidates({
     plan,
     kind,
     attempt,
@@ -294,6 +298,10 @@ async function runAgent(kind, prompt, id, attempt, cwd = options.workdir) {
     state,
     observationMethods,
   })
+  if (!gateFailure.ok) {
+    await writeState({ lastResult: gateFailure.reason, childPid: null })
+    return { ok: false, detail: gateFailure.reason, parsed: null, observationGateFailure: true }
+  }
   const failures = []
   for (const candidate of candidates) {
     const independence = direct ? 'direct-host' : ['QA', 'INTEGRATION_QA', 'GOAL_REVIEW'].includes(kind)
@@ -342,20 +350,20 @@ async function appPid(workdir) {
 }
 
 async function stopApp(workdir) {
-  const pidFile = join(workdir, '.harness', 'app.pid')
-  const pid = await appPid(workdir)
-  if (!pid) { if (getState().appPid) await writeState({ appPid: null }); return }
-  try { process.kill(pid, 'SIGTERM') } catch {}
-  try { await unlink(pidFile) } catch {}
+  const result = cleanupWorktreeRuntime({ workdir, port: options.port })
   cleanupBrowserOrphans({ port: options.port, workdir })
-  await writeState({ appPid: null })
+  if (getState().appPid || result.appPid?.stopped) await writeState({ appPid: null })
 }
 
 function featurePrompt(kind, feature, attempt, repairPlan = null, workdir = options.workdir) {
+  const observationMethods = Array.isArray(feature.observation_methods) && feature.observation_methods.length
+    ? feature.observation_methods
+    : (feature.observation_method ? [feature.observation_method] : workItemObservationMethods(feature))
   return buildFeaturePrompt(kind, feature, attempt, repairPlan, workdir, {
     port: options.port,
     getVerifyFirst: (wd) => verifyFirstCache.get(wd),
     integrationBranch: integrationBranchName(options.repo),
+    observationMethods,
   })
 }
 
@@ -517,15 +525,37 @@ async function runWorkItems() {
 async function runGoalReviewLocked() {
   command(process.execPath, [reconcileScript, options.workdir, '--check'], options.workdir)
   const { list } = await readFeatures()
-  const incomplete = list.filter((item) => item.integration !== true)
-  if (incomplete.length) fail(`Goal Review requires every Work Item integrated; incomplete: ${incomplete.map((item) => item.id).join(', ')}`)
   setState(await readJson(stateFile, {}))
-  const dirtyBefore = git(['status', '--porcelain', '--', '.'], options.workdir).stdout.trim()
-  if (dirtyBefore) fail(`Goal Review requires a clean integrated ${integrationBranchName(options.repo)} checkout`)
+  const dirtyBefore = meaningfulCheckoutDirt(git(['status', '--porcelain', '--', '.'], options.workdir).stdout)
   const headBefore = git(['rev-parse', 'HEAD'], options.workdir).stdout.trim()
   const state = getState()
-  if (state.status === 'complete' && state.phase === 'complete' && state.reviewedHead === headBefore) {
+  let checks = null
+  try {
+    const specXml = await readFile(join(options.workdir, 'project_specs.xml'), 'utf8')
+    checks = parseProjectSpecification(specXml).checks
+  } catch { /* counts/catalog fallback when spec unavailable */ }
+  const gate = goalReviewAdmissible({
+    checks,
+    catalog: list,
+    integrationHead: headBefore,
+    reviewedHead: state.reviewedHead || '',
+    cleanCheckout: !dirtyBefore,
+    status: state.status || '',
+  })
+  if (gate.reason === 'already-reviewed-head') {
     return { goal: true, reused: true, summary: state.lastResult, defects: [] }
+  }
+  if (!gate.ok) {
+    if (gate.reason === 'dirty-checkout') {
+      fail(`Goal Review requires a clean integrated ${integrationBranchName(options.repo)} checkout`)
+    }
+    if (gate.reason === 'empty-queue') fail('Goal Review requires at least one Work Item')
+    if (gate.reason === 'blocked-items') {
+      const blocked = list.filter((item) => item.blocked === true)
+      fail(`Goal Review blocked by Work Items: ${blocked.map((item) => item.id).join(', ')}`)
+    }
+    const incomplete = list.filter((item) => item.integration !== true)
+    fail(`Goal Review requires every Work Item integrated; incomplete: ${incomplete.map((item) => item.id).join(', ')}`)
   }
   await writeState({ status: 'running', phase: 'goal-review', nextAction: 'goal-review', attempt: 1 })
   heartbeatTimer = setInterval(() => writeState().catch(() => {}), 15_000)
@@ -534,8 +564,16 @@ async function runGoalReviewLocked() {
   const guidance = options.guidance ? `\nOperator guidance (follow this when deciding pass vs block):\n${options.guidance}\n` : ''
   const prompt = `You are the independent Goal Review agent. Read project_specs.xml, especially Project Goal and every stable Acceptance Check. On integrated ${integrationBranch} (never main/master for in-flight plans), exercise every check and cross-feature primary journeys through a real browser or real HTTP. Do not trust existing flags. Do not modify product code. Never commit to main/master.${guidance} ${RESOURCE_CLEANUP_RULE} Return only JSON: {"goal":true|false,"summary":"...","acceptanceCheckIds":["AC-..."],"defects":["expected ...; observed ...; evidence ..."]}. ${VERDICT_HINT}`
   const reviewed = await runAgent('GOAL_REVIEW', prompt, 'goal', 1)
+  if (reviewed?.observationGateFailure) {
+    clearInterval(heartbeatTimer)
+    await writeState({
+      status: 'blocked', phase: 'blocked', nextAction: 'user-guidance',
+      lastResult: reviewed.detail, childPid: null,
+    })
+    return { goal: false, blocked: true, defects: [reviewed.detail] }
+  }
   const verdict = reviewed.parsed
-  const dirtyAfter = git(['status', '--porcelain', '--', '.'], options.workdir).stdout.trim()
+  const dirtyAfter = meaningfulCheckoutDirt(git(['status', '--porcelain', '--', '.'], options.workdir).stdout)
   const headAfter = git(['rev-parse', 'HEAD'], options.workdir).stdout.trim()
   if (dirtyAfter || headAfter !== headBefore) {
     clearInterval(heartbeatTimer)

@@ -11,6 +11,26 @@ owns scheduling, worker admission, coding/QA retries, leases, integration, and
 completion. Never create raw coding subagents beside the supervisor: all workers
 must pass through its Resource Governor.
 
+## Hard rules (always)
+
+1. **Always check final verification logs.** After every coding / QA /
+   INTEGRATION_QA / Goal Review completion or failure, open the matching
+   Evidence Artifact under `.git/harness-evidence/<project>/<runId>/<context>/`
+   (`WI-*-coding-*.log`, `WI-*-qa-*.log`, `WI-*-integration_qa-*.log`,
+   `goal-*-goal_review-*.log`) and read the **bottom JSON verdict**
+   (`implementation` / `qa` / `integration` / `goal` / `defects`).
+   That log is the pass/fail source of truth.
+2. **Do not rely only on status checks.** `harness-control status`, progress
+   counters (`implemented/qa/integrated`), `workerHealth`, herdr `working`,
+   pane chatter, and bare process `exitCode` are liveness/scheduling signals
+   only. They can show green while the evidence log records defects (or a
+   false `qa: true` with empty defects that INTEGRATION_QA later contradicts).
+3. When reporting progress or answering Input Requests, cite defects from the
+   evidence log. Retry guidance must quote expected/observed pairs from that
+   final log — never invent from status alone.
+4. Never create raw coding subagents beside the supervisor: all workers must
+   pass through its Resource Governor.
+
 Let `REPO` be the selected harness project directory (which may be below the Git
 top-level), `CONTROL` this skill directory, and
 `WORKER_HOST` one authenticated CLI installed on the machine: `claude`, `codex`,
@@ -151,15 +171,31 @@ persisted `run_completed` event produced by mandatory Goal Review on the integra
 
 ## Worker health and fail-closed ops
 
-`harness-control status` → `workerHealth` is the primary stuck signal
+`harness-control status` → `workerHealth` is the primary **stuck** signal
 (`healthy` | `waiting_expected` | `stuck` | `done`).
+It is **not** the pass/fail signal for Work Items — see Hard rules above.
+
 Herdr `working` / run-state heartbeats alone are not proof of progress.
 Never recycle `waiting_expected` merge_lock when the holder is alive, or MCP warmup
 still under budget — only recycle `stuck`.
 Close the whole herdr tab when `workerHealth=done` / Run State is terminal.
 
-Every ~10 min read pane tails (`visible` when scroll=0); every ~20 min print fleet
-status including `workerHealth` and `mergeLock`.
+### Every supervisor tick / 10-min check (ordered)
+
+1. `harness-control status` for liveness, capacity, pending inputs, `workerHealth`,
+   `mergeLock`.
+2. Read herdr pane tails (`visible` when scroll=0) for stuck vs healthy activity.
+3. **Always** open the latest Evidence Artifact logs for any WI that finished or
+   failed QA / INTEGRATION_QA / Goal Review since the last tick. Read the bottom
+   JSON verdict + `defects`. Compare against status counters — if they disagree,
+   the evidence log wins.
+4. If INTEGRATION_QA defects contradict an earlier empty-defect `qa: true`
+   (false green: SKIP_WEB_SERVER, host-only smoke, unrebuilt compose image),
+   invalidate that QA mentally and `respond --action retry` with guidance that
+   cites the evidence-log defects verbatim (see `monorepo-supervisor-ops`).
+5. Every ~20 min print fleet progress to the user using evidence-backed facts,
+   not status alone.
+
 If the fleet is empty, finished tabs are still open, or health is `stuck`, act
 immediately and harden this skill / `monorepo-supervisor-ops` / harness code in the
 same turn — do not only narrate (fail-closed).
@@ -168,9 +204,15 @@ same turn — do not only narrate (fail-closed).
 same-host merge/state locks (`stale_lock_cleared`). When the fleet is empty after
 a clear, it resets crash-bound counts so auto-retry can run again. Ghost run-state
 PIDs outside `workers` are not treated as a successful retry (orphan SIGTERM +
-defer) — that used to drop `retryQueue` and leave free capacity unused. Use
+defer) - that used to drop `retryQueue` and leave free capacity unused. Use
 manual `clear-dead-lock --force` only for remote locks or when the tick cannot
 clear them. See `monorepo-supervisor-ops` for quota/RAM stalls.
+
+**Never treat "contexts finished / foundation idle" as healthy** when
+`workers={}`, remaining Work Items (or pending `input_required`) remain, and the
+run is not `complete`/`stopped`. That is empty-fleet failure: respond pending
+inputs, clear orphan worktree dirs / locks, free sibling governor/RAM capacity,
+and admit the next context the same turn. Do not only narrate idle.
 
 Custom `retryQueue[context].guidance` wins over auto-retry generics.
 Never auto-retry `coding agent failed three times` — needs operator or Repair Plan
@@ -187,6 +229,10 @@ When a dependent project's E2E fails on a **dependency API/contract** error
 **Orphan Docker / leftover resources:** finished Work Items must tear down the
 compose stacks, named containers, and worktree servers they started (see
 generator `RESOURCE_CLEANUP_RULE`).
+Supervisor teardown is no longer browser-only: `kill-worker`, `workerClosed`,
+and operator `harness-control stop` also run `cleanupWorktreeRuntime`
+(`.harness/app.pid` tree, worktree-scoped `next`/`tsx`/`esbuild`, and
+`docker compose down --remove-orphans`).
 If `docker ps` still shows WI/AC leftovers (`wi-ac-*`, `ac0*`, completed
 subproject stacks) while no live worker owns them, treat that as a workflow
 defect: stop the orphans, then harden generator prompts/skills the same turn
@@ -226,7 +272,8 @@ Finished workers close their **tab** immediately when Run State is terminal
 is idle after the job — finished agents must not linger.
 
 **Unattended Input Requests:** each tick auto-writes `retry` for pending context-scoped
-`input_required` events (worker exit, integration failure, claim-lease exhaustion, etc.)
+`input_required` events (worker exit, integration failure, claim-lease exhaustion,
+**Observation Hard Gate** — no strong validation host for http/browser Work Items, etc.)
 unless that context still has a live worker, is already in the retry queue, or hit the
 crash bound (5). Goal-scoped inputs still need a human.
 

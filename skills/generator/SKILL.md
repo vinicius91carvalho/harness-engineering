@@ -38,11 +38,12 @@ specifies (grep/file audit, CLI exit code, real HTTP, or real browser).
 Do not start a server or browser for a static audit.
 Emit the harness verdict as soon as the check passes or fails.
 
-**Resource cleanup (every Work Item, pass or fail):** before the harness
-verdict, tear down every resource this task started — `docker compose down
+**Resource cleanup (every Work Item, pass or fail):** emit the harness verdict
+FIRST, then tear down every resource this task started — `docker compose down
 --remove-orphans` (or project-scoped `-p`) for stacks you brought up, remove
-named WI/AC containers you created, stop this worktree's `init.sh` / `.harness/app.pid`,
-and kill browsers scoped to this PORT/WORKDIR.
+named WI/AC containers you created, stop this worktree's server via the exact PID
+in `.harness/app.pid` only (`kill "$(cat .harness/app.pid)"` — never `pkill -f`
+/ `killall` with WORKDIR or PORT substrings).
 Do not leave containers or servers running for a later task.
 Do not tear down stacks you did not start (other subprojects or live sibling contexts).
 Coding, isolated QA, and Integrated Verification prompts all carry this rule.
@@ -63,14 +64,24 @@ coding retries on the dependent project. Raise `input_required` with evidence an
 let the Supervisor route repair to the dependency project's Orchestrator; retry
 dependent E2E only after that fix lands.
 
+**Docker/compose proof (Goal Review, Integrated Verification, repair):** when an AC
+targets a compose-published service (image, `COPY` contents, published port), never
+accept host-only smoke (`init.sh`, worktree `node` on a harness PORT) as the pass
+path. Prove against the running compose/image endpoint (`docker exec`, curl on the
+documented published port such as Core `:3099`). Rebuild/recreate the container after
+Dockerfile or image content changes before re-verifying.
+
 **Integrate flag drift:** if Checkpoint / integrate loops while the plan branch
 already has `integration=true` for that WI (worktree `feature_list` lag), sync
 flags and skip re-merge thrash — do not keep coding. See
 `integrate-checkpoint.mjs` (skip when plan already integrated) and
 `monorepo-supervisor-ops` for the ops diagnosis table.
 
-Reconcile stores `observation_method` on Work Items; http/browser validation
-prefers agent/Codex/Claude over pi as first pick.
+Reconcile stores `observation_method` on Work Items. **Observation Hard Gate (ADR-0018):**
+for `http`/`browser` Work Items, QA / Integrated Verification / Goal Review admit
+only strong validation hosts (`agent`, `codex`, `claude`, …) — weak hosts like `pi`
+are hard-excluded; an empty pool raises a durable Input Request (fail closed).
+Coding keeps the full host pool and soft-aligns its prompt to the Work Item methods.
 
 **Defect class routing:** optional verdict `defectClass`
 (`product` | `observation_mismatch` | `infra` | `quota` | `merge_conflict`)
@@ -226,6 +237,10 @@ node "$GEN/orchestrator.mjs" --host "$HOST" --repo "$PROJECT" \
 First inspect this project's Goal Review Run State under `.git/harness-runs/`
 (nested projects use a path-prefixed filename). If it is `blocked`, show its result
 and require user guidance before running Goal Review again.
+
+Goal Review requires a clean integrated plan-branch checkout, except ephemeral
+runtime files matching `.harness/*.pid` (filtered by `lib/checkout-dirt.mjs`) —
+those must not fail the dirty check.
 
 Goal Review reads the Project Goal and every Acceptance Check, reruns them at real
 external boundaries, and tests cross-feature journeys without trusting flags. An

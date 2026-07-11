@@ -61,17 +61,41 @@ export function needsStrongValidationHost(methods = []) {
   return methods.includes('http') || methods.includes('browser')
 }
 
+const VALIDATION_KINDS = new Set(['QA', 'INTEGRATION_QA', 'GOAL_REVIEW'])
+
 /**
- * Filter / reorder role candidates for QA / INTEGRATION_QA / GOAL_REVIEW.
- * Excludes weak harnesses (pi) as first picks when http/browser is required.
+ * Filter role candidates for QA / INTEGRATION_QA / GOAL_REVIEW (Observation Hard Gate).
+ * When http/browser is required, return only strong hosts — never admit weak as fallback.
+ * CODING and other kinds pass candidates through unchanged (soft-align only).
  */
 export function filterCandidatesForObservation(candidates = [], methods = [], kind = '') {
-  const validationKinds = new Set(['QA', 'INTEGRATION_QA', 'GOAL_REVIEW'])
-  if (!validationKinds.has(kind) || !needsStrongValidationHost(methods)) {
+  if (!VALIDATION_KINDS.has(kind) || !needsStrongValidationHost(methods)) {
     return candidates
   }
-  const strong = candidates.filter((c) => !WEAK_VALIDATION_HARNESSES.has(c.harness))
-  const weak = candidates.filter((c) => WEAK_VALIDATION_HARNESSES.has(c.harness))
-  // Prefer strong hosts; keep weak only as last resort
-  return strong.length ? [...strong, ...weak] : candidates
+  return candidates.filter((c) => !WEAK_VALIDATION_HARNESSES.has(c.harness))
+}
+
+/**
+ * Fail-closed gate check after filtering validation hosts.
+ * Returns { ok, reason } when the pool is empty but the Work Item needs http/browser.
+ */
+export function observationGateFailure(methods = [], kind = '', candidates = [], filtered = []) {
+  if (!VALIDATION_KINDS.has(kind) || !needsStrongValidationHost(methods)) {
+    return { ok: true, reason: null }
+  }
+  if (filtered.length > 0) {
+    return { ok: true, reason: null }
+  }
+  const methodLabel = methods.filter((m) => m === 'http' || m === 'browser').join('/') || 'http/browser'
+  if (!candidates.length) {
+    return {
+      ok: false,
+      reason: `Observation Hard Gate: no validation hosts configured for ${kind} (${methodLabel} Work Item)`,
+    }
+  }
+  const weakOnly = candidates.map((c) => c.harness).filter((h) => WEAK_VALIDATION_HARNESSES.has(h))
+  return {
+    ok: false,
+    reason: `Observation Hard Gate: no eligible strong validation host for ${methodLabel} Work Item (configured: ${weakOnly.join(', ') || 'none'}; weak hosts excluded per ADR-0018)`,
+  }
 }

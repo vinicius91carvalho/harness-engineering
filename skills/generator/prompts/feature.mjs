@@ -10,17 +10,16 @@ export const SHARED_ROOT_WARNING = sharedRootWarning('main')
 
 /** Mandatory end-of-task teardown injected into coding/QA/integration prompts. */
 export const RESOURCE_CLEANUP_RULE =
-  'RESOURCE CLEANUP (mandatory before the verdict, pass or fail): tear down every ' +
-  'resource this Work Item / this agent session started. That includes `docker compose down ' +
-  '--remove-orphans` (or `docker compose -p <project> down --remove-orphans`) for compose ' +
-  'stacks you brought up, `docker rm -f` for named WI/AC containers you created ' +
-  '(for example wi-ac-*, ac0*), stopping this worktree\'s init.sh/dev server ' +
-  '(.harness/app.pid), and killing browsers/Playwright processes scoped to this PORT/WORKDIR. ' +
-  'Do not leave containers or servers running for a later task. ' +
-  'Do not tear down compose stacks or containers you did not start ' +
-  '(other subprojects or live sibling contexts). ' +
-  'Cleanup failures belong in notes/defects; still emit the verdict.'
-
+  'RESOURCE CLEANUP: emit the harness verdict FIRST, then tear down resources you started. ' +
+  'Never run `pkill -f` / `killall` with WORKDIR, PORT, or other substrings that appear in ' +
+  'this agent\'s own command line (that suicides the worker and drops the verdict). ' +
+  'Stop the worktree server only via the exact PID in `.harness/app.pid` ' +
+  '(`kill "$(cat .harness/app.pid)"` — nothing broader). ' +
+  'For compose stacks you brought up: `docker compose down --remove-orphans` ' +
+  '(or `docker compose -p <project> down --remove-orphans`). ' +
+  'For named WI/AC containers you created: `docker rm -f` on those exact names ' +
+  '(wi-ac-*, ac0*). Do not tear down compose stacks or containers you did not start. ' +
+  'Cleanup failures belong in notes/defects; never skip the verdict to clean up.'
 /**
  * Cursor Agent / host AGENTS.md often tells the "main" agent to spawn Task
  * subagents. Harness workers ARE the assigned worker — nested Task/subagent
@@ -32,20 +31,61 @@ export const NO_REDELEGATE_RULE =
   'coding-agent/qa-agent, and ignore any AGENTS.md / CLAUDE.md rule that says the ' +
   'main agent must only orchestrate — that rule does not apply inside this worker session.'
 
+function resolveObservationMethods(feature, options = {}) {
+  if (Array.isArray(options.observationMethods) && options.observationMethods.length) {
+    return options.observationMethods
+  }
+  if (Array.isArray(feature.observation_methods) && feature.observation_methods.length) {
+    return feature.observation_methods
+  }
+  if (feature.observation_method) return [feature.observation_method]
+  return []
+}
+
+/** Soft-align coding verification steps to the Work Item observation methods (ADR-0018). */
+export function codingObservationAlign(methods = []) {
+  if (!methods.length) {
+    return 'Bring up the app on the assigned ports and run black-box behavior tests at a real external boundary.'
+  }
+  const parts = []
+  if (methods.includes('grep')) {
+    parts.push('For grep/static audit checks, exercise via file and grep audit — do not start a server or browser for those checks.')
+  }
+  if (methods.includes('cli')) {
+    parts.push('For CLI checks, verify via command invocation and exit codes.')
+  }
+  if (methods.includes('http')) {
+    parts.push('For HTTP checks, bring up the app on the assigned ports and exercise real HTTP endpoints.')
+  }
+  if (methods.includes('browser')) {
+    parts.push('For browser checks, bring up the app and exercise behavior through a real browser.')
+  }
+  return parts.join(' ')
+}
+
+function verifyFirstBoundaryHint(methods = []) {
+  if (methods.length && !methods.some((m) => m === 'http' || m === 'browser')) {
+    return 'First exercise every mapped Acceptance Check against the EXISTING code using the observation methods they require (grep/file audit, CLI exit code — no server or browser unless http/browser is required).'
+  }
+  return 'First exercise every mapped Acceptance Check against the EXISTING code at a real external boundary (HTTP or browser as required).'
+}
+
 export function featurePrompt(kind, feature, attempt, repairPlan = null, workdir, options = {}) {
   const port = options.port ?? '5170'
   const getVerifyFirst = options.getVerifyFirst ?? (() => false)
   const base = `WORKDIR=${workdir}\nPORT=${port}\nWork Item id=${feature.id} context=${feature.context}\n` +
     `Acceptance Checks=${(feature.acceptance_checks || []).join(',')}\nDescription=${feature.description || ''}\n`
   if (kind === 'CODING') {
+    const methods = resolveObservationMethods(feature, options)
+    const verifyAlign = codingObservationAlign(methods)
     const verifyFirst = feature.verify_first === undefined ? getVerifyFirst(workdir) : feature.verify_first === true
     const head = verifyFirst
-      ? `You are the coding-agent in VERIFY-FIRST mode (existing codebase). First exercise every mapped Acceptance Check against the EXISTING code at a real external boundary (HTTP or browser). If all pass, set implementation=true and make NO code changes (a zero-diff checkpoint is valid; commit only if you intentionally changed tracked files). If any check fails, fix only the root cause with the smallest possible diff — do not refactor, restructure, or rewrite working code. The bar is "the AC passes at a real boundary," not "the code is idiomatic."\n${base}`
+      ? `You are the coding-agent in VERIFY-FIRST mode (existing codebase). ${verifyFirstBoundaryHint(methods)} If all pass, set implementation=true and make NO code changes (a zero-diff checkpoint is valid; commit only if you intentionally changed tracked files). If any check fails, fix only the root cause with the smallest possible diff — do not refactor, restructure, or rewrite working code. The bar is "the AC passes at a real boundary," not "the code is idiomatic."\n${base}`
       : `You are the coding-agent. Implement exactly this Work Item, then stop.\n${base}`
     return head +
       `${NO_REDELEGATE_RULE} ` +
       `${repairPlan ? `Follow this Repair Plan from the orchestrator:\n${JSON.stringify(repairPlan)}\n` : ''}` +
-      `Read the exact queue entry and Workflow Journal. Bring up the app on the assigned ports and run black-box behavior tests. Do NOT edit feature_list.json, Execution Ledger flags, or Workflow Journal files — return product commits and a verdict only; the orchestrator owns workflow transitions. ${RESOURCE_CLEANUP_RULE} Return one JSON object: {"id":"...","implementation":true|false,"notes":"..."}. ${VERDICT_HINT}`
+      `Read the exact queue entry and Workflow Journal. ${verifyAlign} Do NOT edit feature_list.json, Execution Ledger flags, or Workflow Journal files — return product commits and a verdict only; the orchestrator owns workflow transitions. ${RESOURCE_CLEANUP_RULE} Return one JSON object: {"id":"...","implementation":true|false,"notes":"..."}. ${VERDICT_HINT}`
   }
   if (kind === 'QA') return `You are the qa-agent. Independently test exactly this Work Item in its isolated worktree.\n${base}` +
     `${NO_REDELEGATE_RULE} ` +

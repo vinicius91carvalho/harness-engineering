@@ -16,7 +16,8 @@ import { pickClaimCandidate, mergeDo, restoreDirtyRuntimeLogs } from '../skills/
 import { MARKER_PATTERN, hasMergeMarkers, unionAppendOnly } from '../skills/generator/lib/integrate-checkpoint.mjs'
 import { interpretWorkerOutcome } from '../skills/generator/lib/worker-outcome.mjs'
 import { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } from '../skills/generator/lib/supervisor-tick.mjs'
-import { planTickAdmission, goalReviewAdmissible } from '../skills/generator/lib/supervisor-admission.mjs'
+import { planTickAdmission, goalReviewAdmissible, goalReviewGate } from '../skills/generator/lib/supervisor-admission.mjs'
+import { goalReviewAdmissible as goalReviewContract } from '../skills/generator/lib/completion-contract.mjs'
 import { mkey, strikeOf, buildPlan, buildCandidates, lastCoder, candidatePool, isNoCreditsCandidate } from '../skills/generator/lib/route-plan.mjs'
 import { planWorkerClosedActions, buildOrchestratorArgv, buildWorkerBase, planWorkerHerdrMeta, planWorkerStop, planWorkerCleanupTargets, terminateProcessTree } from '../skills/generator/lib/worker-lifecycle.mjs'
 import { pruneOrphanPendingInputs, isCrashBoundContext, liveClaimContexts } from '../skills/generator/lib/supervisor-claims.mjs'
@@ -628,8 +629,9 @@ test('shouldFinalizePendingGoal waits for empty retry queue', () => {
   assert.equal(shouldFinalizePendingGoal({}, null), false)
 })
 
-function baseSnapshot({ total = 1, integrated = 0 } = {}) {
-  return { queue: Array.from({ length: total }, (_, i) => ({ id: `WI-${i}` })), counts: { total, integrated } }
+function baseSnapshot({ total = 1, integrated = 0, items = null } = {}) {
+  const queue = items || Array.from({ length: total }, (_, i) => ({ id: `WI-${i}` }))
+  return { queue, counts: { total, integrated } }
 }
 
 test('planTickAdmission finalizes a pending goal once the retry queue is empty', () => {
@@ -1173,6 +1175,43 @@ test('observation-method filters pi away for http/browser validation', async () 
 
   const codingFiltered = filterCandidatesForObservation(candidates, ['http'], 'CODING')
   assert.deepEqual(codingFiltered, candidates)
+})
+
+test('route-plan buildCandidates fails closed when only weak validation hosts remain', () => {
+  const roles = {
+    coding: [{ harness: 'opencode' }],
+    validation: [{ harness: 'pi', model: 'glm' }],
+    repairPlanning: [{ harness: 'claude' }],
+    goalReview: [{ harness: 'claude' }],
+  }
+  const plan = { roles, sortedRoles: roles, strikes: {} }
+  const { candidates, gateFailure } = buildCandidates({
+    plan,
+    kind: 'QA',
+    attempt: 1,
+    options: {},
+    roleNames: { QA: 'validation' },
+    codedBy: 'opencode',
+    state: {},
+    observationMethods: ['http'],
+  })
+  assert.deepEqual(candidates, [])
+  assert.equal(gateFailure.ok, false)
+  assert.match(gateFailure.reason, /Observation Hard Gate/)
+})
+
+test('coding prompt soft-aligns to grep-only observation methods', async () => {
+  const { featurePrompt } = await import('../skills/generator/prompts/feature.mjs')
+  const feature = {
+    id: 'WI-1',
+    context: 'core',
+    description: 'grep LICENSE',
+    acceptance_checks: ['AC-1'],
+    observation_methods: ['grep'],
+  }
+  const prompt = featurePrompt('CODING', feature, 1, null, '/wt', { port: 5170 })
+  assert.match(prompt, /grep audit/i)
+  assert.doesNotMatch(prompt, /Bring up the app on the assigned ports and run black-box behavior tests\./)
 })
 
 test('control journal fails closed on corrupt JSONL', async () => {

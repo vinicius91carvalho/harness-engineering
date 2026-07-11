@@ -1,8 +1,36 @@
 /** Integrated Verification checkpoint: merge to the plan integration branch, resolve conflicts, run integration QA. */
 
-import { writeFileSync } from 'node:fs'
-import { join as pathJoin } from 'node:path'
+import { existsSync, writeFileSync } from 'node:fs'
+import { dirname, join as pathJoin, relative as pathRelative } from 'node:path'
 import { mergeDo, mergeRelease } from './claim-lease.mjs'
+
+/** Map a git conflict path (repo-root-relative) to an absolute filesystem path. */
+export function resolveGitRelPath(integrationDir, relPath, git) {
+  const topResult = git(['rev-parse', '--show-toplevel'], integrationDir, true)
+  const toplevel = (topResult.stdout || '').trim()
+  if (!toplevel || topResult.status !== 0) {
+    return pathJoin(integrationDir, relPath)
+  }
+  const integRel = pathRelative(toplevel, integrationDir).replace(/\\/g, '/')
+  if (integRel && integRel !== '.' && !relPath.startsWith(`${integRel}/`) && relPath !== integRel) {
+    return pathJoin(integrationDir, relPath)
+  }
+  return pathJoin(toplevel, relPath)
+}
+
+/** Cwd for git pathspec commands (e.g. add) when conflict paths are repo-root-relative. */
+export function gitPathspecCwd(integrationDir, relPath, git) {
+  const topResult = git(['rev-parse', '--show-toplevel'], integrationDir, true)
+  const toplevel = (topResult.stdout || '').trim()
+  if (!toplevel || topResult.status !== 0) {
+    return integrationDir
+  }
+  const integRel = pathRelative(toplevel, integrationDir).replace(/\\/g, '/')
+  if (integRel && integRel !== '.' && relPath.startsWith(`${integRel}/`)) {
+    return toplevel
+  }
+  return integrationDir
+}
 
 export const MARKER_PATTERN = /^(<{7} |={7}$|>{7} )/m
 
@@ -44,9 +72,19 @@ export function autoResolveHarnessProgressConflicts(git, integrationDir, conflic
       continue
     }
     const merged = unionAppendOnly(ours.stdout || '', theirs.stdout || '')
-    writeFileSync(pathJoin(integrationDir, relPath), merged.endsWith('\n') ? merged : `${merged}\n`)
-    git(['add', '--', relPath], integrationDir)
-    resolved.push(relPath)
+    const absPath = resolveGitRelPath(integrationDir, relPath, git)
+    const parentDir = dirname(absPath)
+    if (!existsSync(parentDir)) {
+      remaining.push(relPath)
+      continue
+    }
+    try {
+      writeFileSync(absPath, merged.endsWith('\n') ? merged : `${merged}\n`)
+      git(['add', '--', relPath], gitPathspecCwd(integrationDir, relPath, git))
+      resolved.push(relPath)
+    } catch {
+      remaining.push(relPath)
+    }
   }
   return { resolved, remaining }
 }
@@ -126,6 +164,9 @@ export async function integrateCheckpoint(ctx) {
 
     await writeState({ phase: 'integration-qa', nextAction: 'integration-qa' })
     const verified = await runAgent('INTEGRATION_QA', featurePrompt('INTEGRATION_QA', feature, attempt, null, integrationDir), feature.id, attempt, integrationDir)
+    if (verified?.observationGateFailure) {
+      return { passed: false, operational: true, observationGateFailure: true, defects: [verified.detail] }
+    }
     await stopApp(integrationDir)
     if (verified.ok && verified.parsed?.implementation === true && verified.parsed?.integration === true) {
       await updateFeature(integrationDir, feature.id, { implementation: true, qa: true, integration: true })

@@ -1,5 +1,5 @@
 import { readStrikes as readStrikesFromLease, strike } from './claim-lease.mjs'
-import { filterCandidatesForObservation } from './observation-method.mjs'
+import { filterCandidatesForObservation, observationGateFailure } from './observation-method.mjs'
 
 export function mkey(harness, model) {
   return `${harness}|${model || ''}`
@@ -77,19 +77,21 @@ export function buildCandidates({
   const role = roleNames[kind]
   const strikes = plan?.strikes || {}
 
-  if (direct) {
-    return filterCandidatesForObservation([{ harness: options.host }], observationMethods, kind)
-  }
+  const rawPool = direct
+    ? [{ harness: options.host }]
+    : (() => {
+      let roleList = [...plan.sortedRoles[role]]
+      if (['QA', 'INTEGRATION_QA', 'GOAL_REVIEW'].includes(kind)) {
+        const avoid = codedBy || roles.coding[0].harness
+        roleList.sort((a, b) => (Number(a.harness === avoid) - Number(b.harness === avoid))
+          || (strikeOf(role, a.harness, a.model, strikes) - strikeOf(role, b.harness, b.model, strikes)))
+      }
+      return candidatePool({ plan, kind, attempt, roleNames, roleList })
+    })()
 
-  let roleList = [...plan.sortedRoles[role]]
-  if (['QA', 'INTEGRATION_QA', 'GOAL_REVIEW'].includes(kind)) {
-    const avoid = codedBy || roles.coding[0].harness
-    roleList.sort((a, b) => (Number(a.harness === avoid) - Number(b.harness === avoid))
-      || (strikeOf(role, a.harness, a.model, strikes) - strikeOf(role, b.harness, b.model, strikes)))
-  }
-
-  const pool = candidatePool({ plan, kind, attempt, roleNames, roleList })
-  return filterCandidatesForObservation(pool, observationMethods, kind)
+  const candidates = filterCandidatesForObservation(rawPool, observationMethods, kind)
+  const gateFailure = observationGateFailure(observationMethods, kind, rawPool, candidates)
+  return { candidates, gateFailure }
 }
 
 /** True when a candidate comes from the noCredits free tier. */

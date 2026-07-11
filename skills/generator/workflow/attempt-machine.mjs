@@ -93,6 +93,10 @@ export async function runAttemptLoop({
       if (current.implementation !== true) {
         await writeState({ currentFeatureId: current.id, attempt, nextAction: 'coding', repairPlan })
         const coded = await runAgent('CODING', featurePrompt('CODING', current, attempt, repairPlan), current.id, attempt)
+        if (coded?.observationGateFailure) {
+          results.push(await block(current, attempt, coded.detail, [coded.detail]))
+          break
+        }
         if (coded.ok && coded.parsed?.implementation === true) {
           await updateFeature(options.workdir, current.id, { implementation: true })
         }
@@ -124,6 +128,10 @@ export async function runAttemptLoop({
       if (current.qa !== true) {
         await writeState({ nextAction: 'qa', phase: 'qa' })
         const checked = await runAgent('QA', featurePrompt('QA', current, attempt), current.id, attempt)
+        if (checked?.observationGateFailure) {
+          results.push(await block(current, attempt, checked.detail, [checked.detail]))
+          break
+        }
         if (checked.ok && checked.parsed?.implementation === true && checked.parsed?.qa === true) {
           await updateFeature(options.workdir, current.id, { implementation: true, qa: true })
           const coder = itemPlan && lastCoder()
@@ -158,6 +166,10 @@ export async function runAttemptLoop({
       }
 
       const integrated = await integrate(current, attempt)
+      if (integrated.observationGateFailure) {
+        results.push(await block(current, attempt, integrated.defects?.[0] || 'Observation Hard Gate', integrated.defects || []))
+        break
+      }
       if (integrated.passed) { results.push({ id: current.id, status: 'passed' }); break }
       if (integrated.operational) {
         results.push(await block(current, attempt, 'integration could not complete', integrated.defects)); break
