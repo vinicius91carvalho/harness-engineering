@@ -11,6 +11,18 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [2.9.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.8.1...v2.9.0) (2026-07-11)
+
+
+### Features
+
+* **generator:** detect jobs already done via Execution Ledger ([2828cfb](https://github.com/vinicius91carvalho/harness-engineering/commit/2828cfb6403694e7c4b33404afb205e05b62d240))
+
+
+### Bug Fixes
+
+* **generator:** reopen only ACs named in Goal Review defects ([f83010d](https://github.com/vinicius91carvalho/harness-engineering/commit/f83010d9d746dc58a2500e77058c84ab1872f540))
+
 ### [2.8.1](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.8.0...v2.8.1) (2026-07-11)
 
 
