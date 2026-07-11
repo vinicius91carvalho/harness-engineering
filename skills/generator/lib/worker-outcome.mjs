@@ -178,12 +178,30 @@ export async function clearWorkerResult(runStateFilePath) {
  * Infer a durable worker outcome when the orchestrator did not write worker-result.json.
  * Used by the supervisor after a worker process exits.
  */
-export function interpretClosed({ key, tail, persisted, runState, featureIds, queue }) {
+export function interpretClosed({
+  key,
+  tail,
+  persisted,
+  runState,
+  featureIds,
+  queue,
+  integrationHead = null,
+} = {}) {
   let result = persisted ? { ...persisted, durable: true } : null
   if (!result) result = parseVerdict(tail)
   if (!result) {
-    if (key === 'goal-review' && runState.status === 'complete' && runState.phase === 'complete') {
-      result = { goal: true, summary: runState.lastResult, durable: true }
+    // Never infer goal:true from a stale Run State alone — reviewedHead must
+    // match the current integration HEAD (jobs-done detection).
+    const reviewedHead = runState.reviewedHead || persisted?.reviewedHead || null
+    if (
+      key === 'goal-review'
+      && runState.status === 'complete'
+      && runState.phase === 'complete'
+      && reviewedHead
+      && integrationHead
+      && reviewedHead === integrationHead
+    ) {
+      result = { goal: true, summary: runState.lastResult, durable: true, reviewedHead }
     } else if (key === 'goal-review' && runState.status === 'complete' && runState.phase === 'defects-found') {
       result = {
         goal: false,

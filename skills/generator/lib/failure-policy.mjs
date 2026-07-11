@@ -431,6 +431,15 @@ export function planWorkerClosedActions({
     return { action: 'pending_goal', result }
   }
 
+  if (result?.retryGoalReview) {
+    return {
+      action: 'goal_review_retry',
+      guidance: result.summary || 'Retry Goal Review (ledger integrated; ignore feature_list flag drift)',
+      strippedFlagDrift: result.strippedFlagDrift === true,
+      clearGoalBlock: true,
+    }
+  }
+
   if (result?.reopened?.length) {
     return {
       action: 'goal_defects',

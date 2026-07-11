@@ -26,6 +26,11 @@ import { putEvidenceArtifact, newRunId } from './lib/evidence-artifacts.mjs'
 import { meaningfulCheckoutDirt } from './lib/checkout-dirt.mjs'
 import { goalReviewAdmissible } from './lib/completion-contract.mjs'
 import { parseProjectSpecification } from './lib/project-specification.mjs'
+import {
+  filterGoalReviewFlagDrift,
+  formatJobsDoneForPrompt,
+  incompleteIds,
+} from './lib/jobs-done.mjs'
 
 function fail(message) {
   process.stderr.write(`orchestrator: ${message}\n`)
@@ -524,7 +529,8 @@ async function runWorkItems() {
 
 async function runGoalReviewLocked() {
   command(process.execPath, [reconcileScript, options.workdir, '--check'], options.workdir)
-  const { list } = await readFeatures()
+  const { list, ledgerFile } = await readFeatures()
+  const ledger = await readJson(ledgerFile, { version: 1, items: {} })
   setState(await readJson(stateFile, {}))
   const dirtyBefore = meaningfulCheckoutDirt(git(['status', '--porcelain', '--', '.'], options.workdir).stdout)
   const headBefore = git(['rev-parse', 'HEAD'], options.workdir).stdout.trim()
@@ -537,6 +543,7 @@ async function runGoalReviewLocked() {
   const gate = goalReviewAdmissible({
     checks,
     catalog: list,
+    ledger,
     integrationHead: headBefore,
     reviewedHead: state.reviewedHead || '',
     cleanCheckout: !dirtyBefore,
@@ -554,15 +561,16 @@ async function runGoalReviewLocked() {
       const blocked = list.filter((item) => item.blocked === true)
       fail(`Goal Review blocked by Work Items: ${blocked.map((item) => item.id).join(', ')}`)
     }
-    const incomplete = list.filter((item) => item.integration !== true)
-    fail(`Goal Review requires every Work Item integrated; incomplete: ${incomplete.map((item) => item.id).join(', ')}`)
+    const incomplete = incompleteIds(list, ledger)
+    fail(`Goal Review requires every Work Item integrated; incomplete: ${incomplete.join(', ')}`)
   }
   await writeState({ status: 'running', phase: 'goal-review', nextAction: 'goal-review', attempt: 1 })
   heartbeatTimer = setInterval(() => writeState().catch(() => {}), 15_000)
   itemPlan = buildPlan(options.repo, await readRoles())
   const integrationBranch = integrationBranchName(options.repo)
   const guidance = options.guidance ? `\nOperator guidance (follow this when deciding pass vs block):\n${options.guidance}\n` : ''
-  const prompt = `You are the independent Goal Review agent. Read project_specs.xml, especially Project Goal and every stable Acceptance Check. On integrated ${integrationBranch} (never main/master for in-flight plans), exercise every check and cross-feature primary journeys through a real browser or real HTTP. Do not trust existing flags. Do not modify product code. Never commit to main/master.${guidance} ${RESOURCE_CLEANUP_RULE} Return only JSON: {"goal":true|false,"summary":"...","acceptanceCheckIds":["AC-..."],"defects":["expected ...; observed ...; evidence ..."]}. ${VERDICT_HINT}`
+  const jobsDone = formatJobsDoneForPrompt(list, ledger, { ledgerPath: ledgerFile })
+  const prompt = `You are the independent Goal Review agent. Read project_specs.xml, especially Project Goal and every stable Acceptance Check. On integrated ${integrationBranch} (never main/master for in-flight plans), exercise every check and cross-feature primary journeys through a real browser or real HTTP. Do not modify product code. Never commit to main/master.\n${jobsDone}\nDo not trust feature_list.json progress flags for "already done" — use the Execution Ledger (and harness-evidence INTEGRATION_QA verdicts) to detect jobs already completed. Still black-box verify the live compose/HTTP Project Goal; reopen only ACs with proven product/runtime defects, never for flag drift alone.${guidance} ${RESOURCE_CLEANUP_RULE} Return only JSON: {"goal":true|false,"summary":"...","acceptanceCheckIds":["AC-..."],"defects":["expected ...; observed ...; evidence ..."]}. ${VERDICT_HINT}`
   const reviewed = await runAgent('GOAL_REVIEW', prompt, 'goal', 1)
   if (reviewed?.observationGateFailure) {
     clearInterval(heartbeatTimer)
@@ -572,7 +580,42 @@ async function runGoalReviewLocked() {
     })
     return { goal: false, blocked: true, defects: [reviewed.detail] }
   }
-  const verdict = reviewed.parsed
+  let verdict = reviewed.parsed
+  if (verdict && verdict.goal !== true) {
+    const filtered = filterGoalReviewFlagDrift({
+      defects: verdict.defects || [],
+      acceptanceCheckIds: verdict.acceptanceCheckIds || [],
+      catalog: list,
+      ledger,
+    })
+    verdict = {
+      ...verdict,
+      defects: filtered.defects,
+      acceptanceCheckIds: filtered.acceptanceCheckIds,
+    }
+    // Flag-drift-only failure must not reopen integrated Work Items or auto-pass.
+    // Block and ask for a Goal Review retry that ignores feature_list lag.
+    if (filtered.strippedDrift && filtered.defects.length === 0) {
+      const summary = `${verdict.summary || 'Goal Review'} [harness: stripped feature_list flag-drift defects; ledger shows full integration — retry Goal Review for compose black-box only]`
+      commitPaths(options.workdir, [], 'chore(harness): ignore Goal Review flag-drift')
+      clearInterval(heartbeatTimer)
+      await writeState({
+        status: 'blocked',
+        phase: 'blocked',
+        nextAction: 'user-guidance',
+        lastResult: summary,
+        childPid: null,
+      })
+      return {
+        goal: false,
+        blocked: true,
+        retryGoalReview: true,
+        summary,
+        defects: [],
+        strippedFlagDrift: true,
+      }
+    }
+  }
   const dirtyAfter = meaningfulCheckoutDirt(git(['status', '--porcelain', '--', '.'], options.workdir).stdout)
   const headAfter = git(['rev-parse', 'HEAD'], options.workdir).stdout.trim()
   if (dirtyAfter || headAfter !== headBefore) {

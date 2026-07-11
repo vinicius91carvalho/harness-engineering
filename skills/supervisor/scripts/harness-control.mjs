@@ -112,6 +112,42 @@ async function queueWithLedger() {
   const ledger = await readLedger(ledgerPath(commonGit, projectId === 'root' ? '' : projectId))
   return applyLedgerToCatalog(catalog, ledger)
 }
+
+function goalReviewStateFile() {
+  const goalStateName = projectPrefix ? `${projectId}--goal-review.json` : 'goal-review.json'
+  return join(commonGit, 'harness-runs', goalStateName)
+}
+
+async function readGoalReviewLedger() {
+  return readLedger(ledgerPath(commonGit, projectId === 'root' ? '' : projectId))
+}
+
+async function goalReviewContext() {
+  const goalState = await readJson(goalReviewStateFile(), {})
+  const head = git(['rev-parse', integrationBranchName(repo)], true).stdout.trim()
+  const clean = isCheckoutCleanForGoalReview(git(['status', '--porcelain'], true).stdout)
+  const ledger = await readGoalReviewLedger()
+  return { goalState, head, clean, ledger }
+}
+
+async function fleetForWakeTriage(state) {
+  const { fleetSnapshotFromState } = await importLib('wake-triage.mjs')
+  const fleet = fleetSnapshotFromState(state)
+  try {
+    const queue = await queueWithLedger()
+    const { goalState, head } = await goalReviewContext()
+    return {
+      ...fleet,
+      queueComplete: queue.length > 0 && queue.every((item) => item.integration === true),
+      integrationHead: head,
+      reviewedHead: goalState.reviewedHead || '',
+      goalReviewStatus: goalState.status || '',
+      retryGoalReview: Boolean(state.retryQueue?.['goal-review']),
+    }
+  } catch {
+    return fleet
+  }
+}
 const stateFile = join(root, 'state.json')
 const eventFile = join(root, 'events.jsonl')
 const responseDir = join(root, 'responses')
@@ -975,6 +1011,9 @@ class Supervisor {
       expectedInvocationId: runState.invocationId || null,
     })
     const queue = await queueWithLedger()
+    const integrationHead = key === 'goal-review'
+      ? git(['rev-parse', integrationBranchName(repo)], true).stdout.trim()
+      : null
     const result = interpretClosed({
       key,
       exitCode: code,
@@ -983,6 +1022,7 @@ class Supervisor {
       runState,
       featureIds: worker.featureIds,
       queue,
+      integrationHead,
     })
     const plan = planWorkerClosedActions({
       key,
@@ -1028,6 +1068,25 @@ class Supervisor {
       case 'goal_defects':
         await this.emit('goal_defects', { reopened: plan.reopened, defects: plan.defects }, true)
         break
+      case 'goal_review_retry': {
+        this.state.retryQueue ||= {}
+        this.state.retryQueue['goal-review'] = {
+          guidance: plan.guidance,
+          attempts: this.state.retryQueue['goal-review']?.attempts || 0,
+          strippedFlagDrift: plan.strippedFlagDrift === true,
+        }
+        if (plan.clearGoalBlock) {
+          for (const request of Object.values(this.state.pendingInputs || {})) {
+            if (request.status === 'pending' && request.scope === 'goal') request.status = 'superseded'
+          }
+          if (this.state.status === 'needs_input') this.state.status = 'running'
+        }
+        await this.emit('goal_review_retry', {
+          reason: plan.guidance,
+          strippedFlagDrift: plan.strippedFlagDrift === true,
+        }, false)
+        break
+      }
       case 'blocked_input': {
         const runState = await readJson(runStateFile(key), {})
         const detail = {
@@ -1134,12 +1193,10 @@ class Supervisor {
   }
 
   async maybeGoalReview(snapshot, active, available, guidance = '') {
-    const goalStateName = projectPrefix ? `${projectId}--goal-review.json` : 'goal-review.json'
-    const goalState = await readJson(join(commonGit, 'harness-runs', goalStateName), {})
-    const head = git(['rev-parse', integrationBranchName(repo)], true).stdout.trim()
-    const clean = isCheckoutCleanForGoalReview(git(['status', '--porcelain'], true).stdout)
+    const { goalState, head, clean, ledger } = await goalReviewContext()
     const gate = goalReviewGate({
       catalog: snapshot.queue,
+      ledger,
       counts: snapshot.counts,
       activeWorkers: active,
       slots: available,
@@ -1286,6 +1343,7 @@ class Supervisor {
         await this.save()
       }
     }
+    const grCtx = await goalReviewContext()
     const plan = planTickAdmission({
       slots,
       retryQueue: this.state.retryQueue,
@@ -1294,6 +1352,11 @@ class Supervisor {
       snapshot,
       activeWorkers: active,
       hasGoalReviewWorker: this.workers.has('goal-review'),
+      ledger: grCtx.ledger,
+      integrationHead: grCtx.head,
+      reviewedHead: grCtx.goalState.reviewedHead || '',
+      cleanCheckout: grCtx.clean,
+      status: grCtx.goalState.status || '',
     })
     for (const action of plan) {
       switch (action.type) {
@@ -1690,9 +1753,9 @@ async function buildFleetSnapshotForRepo(state = null, { wakeTriage = null } = {
 
 async function fleetSnapshotCmd() {
   const state = await readJson(stateFile, { status: 'not_started' })
-  const { fleetSnapshotFromState, shouldWake } = await importLib('wake-triage.mjs')
+  const { shouldWake } = await importLib('wake-triage.mjs')
   const recent = (await readEvents()).slice(-20)
-  const fleet = fleetSnapshotFromState(state)
+  const fleet = await fleetForWakeTriage(state)
   const snapshot = await buildFleetSnapshotForRepo(state, {
     wakeTriage: { shouldWake: shouldWake(recent, fleet) },
   })
@@ -1703,8 +1766,8 @@ async function main() {
   if (commandName === 'start') return start()
   if (commandName === 'status') {
     const state = await readJson(stateFile, { status: 'not_started' })
-    const { classify, fleetSnapshotFromState, shouldWake, foldProgress } = await importLib('wake-triage.mjs')
-    const fleet = fleetSnapshotFromState(state)
+    const { classify, shouldWake, foldProgress } = await importLib('wake-triage.mjs')
+    const fleet = await fleetForWakeTriage(state)
     const recent = (await readEvents()).slice(-20)
     const wakeTriage = {
       shouldWake: shouldWake(recent, fleet),
@@ -1717,8 +1780,8 @@ async function main() {
   if (commandName === 'fleet-snapshot') return fleetSnapshotCmd()
   if (commandName === 'capacity') return process.stdout.write(`${JSON.stringify(await capacity(baseConfig(), Number(options.active || 0)), null, 2)}\n`)
   if (commandName === 'events') {
-    const { classify, fleetSnapshotFromState } = await importLib('wake-triage.mjs')
-    const fleet = fleetSnapshotFromState(await readJson(stateFile, {}))
+    const { classify } = await importLib('wake-triage.mjs')
+    const fleet = await fleetForWakeTriage(await readJson(stateFile, {}))
     const cursor = options.consumer ? await readJson(consumerFile(), {}) : {}
     const after = Math.max(Number(options.after || 0), Number(cursor.eventId || 0))
     const events = (await readEvents())

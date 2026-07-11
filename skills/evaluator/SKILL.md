@@ -19,6 +19,8 @@ combines independent project queues.
 1. Require the plan integration branch's `feature_list.json` and run
    `node "$GEN/reconcile.mjs" "$PROJECT" --check`. Refuse Goal Review while the
    Execution Ledger shows any Work Item not yet integrated.
+   The Execution Ledger is authoritative for jobs-done detection; do not fail or
+   reopen integrated Work Items solely because `feature_list.json` flags lag.
 2. If this project's Goal Review Run State under `.git/harness-runs/` is already
    `blocked` (nested projects use a path-prefixed filename), show it and require
    user guidance before replacing its verdict.

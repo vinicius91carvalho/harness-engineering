@@ -241,6 +241,13 @@ When no Work Items remain and the Execution Ledger shows every catalog entry
 integrated, run Goal Review on the integrated plan branch (`.harness/integration-branch`);
 the state machine holds the merge lock throughout:
 
+The Execution Ledger is the source of truth for "jobs done".
+`feature_list.json` progress flags may lag (flag drift) behind the ledger.
+Goal Review must not reopen integrated Work Items solely because
+`feature_list.json` still shows `integration:false` when the ledger (and
+harness-evidence INTEGRATION_QA verdicts) already record integration.
+Still black-box verify the live compose/HTTP Project Goal on every review.
+
 ```bash
 node "$GEN/orchestrator.mjs" --host "$HOST" --repo "$PROJECT" \
   --workdir "$INTEGRATION_CHECKOUT" --mode goal-review --context goal-review \
@@ -258,7 +265,9 @@ those must not fail the dirty check.
 Goal Review reads the Project Goal and every Acceptance Check, reruns them at real
 external boundaries, and tests cross-feature journeys without trusting flags. An
 in-scope defect reopens linked Work Items; ambiguity or exhausted Attempts blocks
-for the user. Only `goal:true` means the Project Goal is complete.
+for the user. Flag-drift-only failures (ledger integrated, feature_list lagging)
+trigger an automatic Goal Review retry rather than reopening Work Items.
+Only `goal:true` means the Project Goal is complete.
 
 ## 6. Report
 

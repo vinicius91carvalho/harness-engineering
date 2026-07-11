@@ -590,9 +590,15 @@ test('interpretWorkerOutcome goal-review complete', () => {
     key: 'goal-review',
     tail: '',
     persisted: null,
-    runState: { status: 'complete', phase: 'complete', lastResult: 'all checks passed' },
+    runState: {
+      status: 'complete',
+      phase: 'complete',
+      lastResult: 'all checks passed',
+      reviewedHead: 'abc123',
+    },
     featureIds: [],
     queue: [],
+    integrationHead: 'abc123',
   })
   assert.equal(result.goal, true)
   assert.equal(result.durable, true)
@@ -649,11 +655,22 @@ test('worker-outcome canonical API covers harness-control closed and live paths'
     key: 'goal-review',
     tail: '',
     persisted: null,
-    runState: { status: 'complete', phase: 'complete', lastResult: 'ok' },
+    runState: { status: 'complete', phase: 'complete', lastResult: 'ok', reviewedHead: 'abc' },
     featureIds: [],
     queue: [],
   })
-  assert.equal(closed.goal, true)
+  assert.equal(closed?.goal, undefined)
+
+  const matched = interpretClosed({
+    key: 'goal-review',
+    tail: '',
+    persisted: null,
+    runState: { status: 'complete', phase: 'complete', lastResult: 'ok', reviewedHead: 'abc' },
+    featureIds: [],
+    queue: [],
+    integrationHead: 'abc',
+  })
+  assert.equal(matched.goal, true)
 
   const health = assessLive({
     tailText: 'thinking: working\ntool → shell',
@@ -763,6 +780,96 @@ test('planTickAdmission resumes recoverable claims in order before claiming new 
     { type: 'resume', context: 'beta' },
     { type: 'claim_new' },
   ])
+})
+
+test('planTickAdmission starts Goal Review when integrated queue has stale reviewedHead', () => {
+  const plan = planTickAdmission({
+    slots: 1,
+    retryQueue: {},
+    recoverable: [],
+    pendingGoalResult: null,
+    snapshot: baseSnapshot({ total: 1, integrated: 1 }),
+    activeWorkers: 0,
+    hasGoalReviewWorker: false,
+    integrationHead: 'head-new',
+    reviewedHead: 'head-old',
+    status: 'blocked',
+    ledger: { version: 1, items: { 'WI-0': { implementation: true, qa: true, integration: true } } },
+  })
+  assert.deepEqual(plan, [{ type: 'start_goal_review' }])
+})
+
+test('jobs-done ledger helpers and flag-drift filtering', async () => {
+  const {
+    integratedIds,
+    incompleteIds,
+    isFeatureListFlagDriftDefect,
+    filterGoalReviewFlagDrift,
+    formatJobsDoneForPrompt,
+  } = await import('../skills/generator/lib/jobs-done.mjs')
+
+  const catalog = [
+    { id: 'WI-1', implementation: false, qa: false, integration: false },
+    { id: 'WI-2', implementation: true, qa: true, integration: false },
+  ]
+  const ledger = {
+    version: 1,
+    items: {
+      'WI-1': { implementation: true, qa: true, integration: true },
+      'WI-2': { implementation: true, qa: true, integration: true },
+    },
+  }
+  assert.deepEqual(integratedIds(catalog, ledger), ['WI-1', 'WI-2'])
+  assert.deepEqual(incompleteIds(catalog, ledger), [])
+  assert.equal(
+    isFeatureListFlagDriftDefect('WI-1 has integration=false in feature_list.json but Execution Ledger fully integrated'),
+    true,
+  )
+  assert.equal(
+    isFeatureListFlagDriftDefect('compose up failed: ECONNREFUSED on port 3000'),
+    false,
+  )
+  const filtered = filterGoalReviewFlagDrift({
+    defects: [
+      'WI-1 not integrated per feature_list.json integration=false',
+      'GET /health returned 500',
+    ],
+    acceptanceCheckIds: ['AC-1', 'AC-2'],
+    catalog: [
+      { id: 'WI-1', acceptance_checks: ['AC-1'] },
+      { id: 'WI-2', acceptance_checks: ['AC-2'] },
+    ],
+    ledger,
+  })
+  assert.equal(filtered.strippedDrift, true)
+  assert.equal(filtered.defects.length, 1)
+  assert.match(filtered.defects[0], /500/)
+  assert.ok(formatJobsDoneForPrompt(catalog, ledger).includes('Integrated Work Items (2/2)'))
+})
+
+test('planWorkerClosedActions queues Goal Review retry on stripped flag drift', () => {
+  const plan = planWorkerClosedActions({
+    key: 'goal-review',
+    exitCode: 0,
+    tail: '',
+    result: {
+      goal: false,
+      blocked: true,
+      retryGoalReview: true,
+      strippedFlagDrift: true,
+      summary: 'flag drift only',
+    },
+    rateLimited: false,
+    crashCount: 0,
+    harnessRepairs: {},
+    retryQueue: {},
+    autoRepair: false,
+    logFile: '/tmp/goal.log',
+    prevTailClass: 'unknown',
+  })
+  assert.equal(plan.action, 'goal_review_retry')
+  assert.equal(plan.clearGoalBlock, true)
+  assert.equal(plan.strippedFlagDrift, true)
 })
 
 test('planTickAdmission always ends with claim_new when nothing else is recoverable', () => {
@@ -1796,6 +1903,27 @@ test('wake triage keeps empty-fleet progress actionable', async () => {
   assert.deepEqual(classify(progress, fleet), {
     action: 'wake',
     reason: 'empty fleet with remaining work or pending inputs',
+  })
+  assert.equal(shouldWake([progress], fleet), true)
+})
+
+test('wake triage wakes on stale Goal Review with integrated queue', async () => {
+  const { classify, shouldWake, needsGoalReviewRetry } = await import('../skills/generator/lib/wake-triage.mjs')
+  const fleet = {
+    workers: 0,
+    counts: { total: 2, integrated: 2, blocked: 0 },
+    pendingInputs: 0,
+    retryQueueSize: 0,
+    status: 'running',
+    queueComplete: true,
+    integrationHead: 'head-new',
+    reviewedHead: 'head-old',
+  }
+  assert.equal(needsGoalReviewRetry(fleet), true)
+  const progress = { id: 9, kind: 'progress', workers: 0, total: 2, integrated: 2, blocked: 0 }
+  assert.deepEqual(classify(progress, fleet), {
+    action: 'wake',
+    reason: 'stale Goal Review with integrated queue',
   })
   assert.equal(shouldWake([progress], fleet), true)
 })
