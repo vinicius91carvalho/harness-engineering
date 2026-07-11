@@ -46,7 +46,16 @@ case "$prompt" in
       printf '%s\n' '{"goal":true,"summary":"goal observed","acceptanceCheckIds":["AC-001"],"defects":[]}'
     fi
     ;;
-  *"coding-agent"*)
+  *"You are the qa-agent"*)
+    count=0; [ ! -f "$HARNESS_TEST_QA_COUNT" ] || count=$(cat "$HARNESS_TEST_QA_COUNT")
+    count=$((count + 1)); printf '%s' "$count" >"$HARNESS_TEST_QA_COUNT"
+    if [ "${HARNESS_TEST_ALWAYS_FAIL:-}" = 1 ] || [ "$count" -eq 1 ]; then
+      printf '%s\n' '{"id":"WI-AC-001","qa":false,"implementation":false,"defects":["expected ready; observed down; evidence response"]}'
+    else
+      printf '%s\n' '{"id":"WI-AC-001","qa":true,"implementation":true,"defects":[]}'
+    fi
+    ;;
+  *"You are the coding-agent"*)
     code_count=0; [ ! -f "$HARNESS_TEST_CODE_COUNT" ] || code_count=$(cat "$HARNESS_TEST_CODE_COUNT")
     code_count=$((code_count + 1)); printf '%s' "$code_count" >"$HARNESS_TEST_CODE_COUNT"
     if [ "${HARNESS_TEST_CODE_DECLINE:-}" = 1 ]; then
@@ -57,15 +66,6 @@ case "$prompt" in
     fi
     if [ "$code_count" -eq 2 ]; then printf '%s' "$prompt" | grep -q 'fix the health response'; fi
     printf '%s\n' '{"id":"WI-AC-001","implementation":true,"notes":"implemented"}'
-    ;;
-  *"qa-agent"*)
-    count=0; [ ! -f "$HARNESS_TEST_QA_COUNT" ] || count=$(cat "$HARNESS_TEST_QA_COUNT")
-    count=$((count + 1)); printf '%s' "$count" >"$HARNESS_TEST_QA_COUNT"
-    if [ "${HARNESS_TEST_ALWAYS_FAIL:-}" = 1 ] || [ "$count" -eq 1 ]; then
-      printf '%s\n' '{"id":"WI-AC-001","qa":false,"implementation":false,"defects":["expected ready; observed down; evidence response"]}'
-    else
-      printf '%s\n' '{"id":"WI-AC-001","qa":true,"implementation":true,"defects":[]}'
-    fi
     ;;
 esac
 SH
@@ -498,11 +498,11 @@ case "$prompt" in
   *"Integrated Verification"*)
     noise; verdict '{"id":"WI-AC-001","integration":true,"implementation":true,"defects":[]}'
     ;;
-  *"coding-agent"*)
-    noise; verdict '{"id":"WI-AC-001","implementation":true,"notes":"implemented"}'
-    ;;
-  *"qa-agent"*)
+  *"You are the qa-agent"*)
     noise; verdict '{"id":"WI-AC-001","qa":true,"implementation":true,"defects":[]}'
+    ;;
+  *"You are the coding-agent"*)
+    noise; verdict '{"id":"WI-AC-001","implementation":true,"notes":"implemented"}'
     ;;
 esac
 SH
@@ -562,7 +562,7 @@ case "$prompt" in
     git commit -qm 'merge: resolve (broken)'
     printf '%s\n' '{"resolved":true,"notes":"resolved"}'
     ;;
-  *"coding-agent"*)
+  *"You are the coding-agent"*)
     # Touch the same field main diverged so integrate() hits a real conflict.
     # Progress flags live in the Execution Ledger now; this edit is only to force merge conflict.
     node -e 'const fs=require("fs"); const p="feature_list.json"; const q=JSON.parse(fs.readFileSync(p,"utf8")); q[0].note="changed in worktree"; fs.writeFileSync(p, JSON.stringify(q)+"\n");'
@@ -570,7 +570,7 @@ case "$prompt" in
     git commit -qm 'coding: diverge feature_list for conflict'
     printf '%s\n' '{"id":"WI-AC-001","implementation":true,"notes":"implemented"}'
     ;;
-  *"qa-agent"*)
+  *"You are the qa-agent"*)
     printf '%s\n' '{"id":"WI-AC-001","qa":true,"implementation":true,"integration":true,"defects":[]}'
     ;;
 esac

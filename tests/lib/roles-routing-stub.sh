@@ -33,8 +33,8 @@ kind=unknown
 case "$prompt" in
   *"orchestrator repair planner"*) kind=repair ;;
   *"Integrated Verification"*) kind=integration ;;
-  *"coding-agent"*) kind=coding ;;
-  *"qa-agent"*) kind=qa ;;
+  *"You are the qa-agent"*) kind=qa ;;
+  *"You are the coding-agent"*) kind=coding ;;
 esac
 printf '%s %s %s\n' "$kind" "$harness" "${model:-default}" >>"${HARNESS_TEST_ROLES_LOG:?HARNESS_TEST_ROLES_LOG required}"
 case "$kind" in

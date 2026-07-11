@@ -37,11 +37,11 @@ case "$prompt" in
     [ -z "${HARNESS_TEST_GOAL_SLEEP:-}" ] || sleep "$HARNESS_TEST_GOAL_SLEEP"
     printf '%s\n' '{"goal":true,"summary":"integrated goal observed","acceptanceCheckIds":["AC-001"],"defects":[]}'
     ;;
-  *"coding-agent"*)
-    printf '%s\n' '{"id":"WI-AC-001","implementation":true,"notes":"implemented"}'
-    ;;
-  *"qa-agent"*)
+  *"You are the qa-agent"*)
     printf '%s\n' '{"id":"WI-AC-001","implementation":true,"qa":true,"defects":[]}'
+    ;;
+  *"You are the coding-agent"*)
+    printf '%s\n' '{"id":"WI-AC-001","implementation":true,"notes":"implemented"}'
     ;;
 esac
 SH
