@@ -24,7 +24,7 @@ import { workItemObservationMethods } from './lib/observation-method.mjs'
 import { runAttemptLoop } from './workflow/attempt-machine.mjs'
 import { putEvidenceArtifact, newRunId } from './lib/evidence-artifacts.mjs'
 import { meaningfulCheckoutDirt } from './lib/checkout-dirt.mjs'
-import { goalReviewAdmissible } from './lib/completion-contract.mjs'
+import { goalReviewAdmissible, progressOf } from './lib/completion-contract.mjs'
 import { parseProjectSpecification } from './lib/project-specification.mjs'
 import {
   filterGoalReviewFlagDrift,
@@ -645,8 +645,12 @@ async function runGoalReviewLocked() {
     await writeState({ status: 'blocked', phase: 'blocked', nextAction: 'user-guidance', lastResult: verdict?.summary || reviewed.detail, childPid: null })
     return { goal: false, blocked: true, summary: verdict?.summary, defects: verdict?.defects || [reviewed.detail] }
   }
-  const exhausted = affected.filter((item) => Number(item.retries || 0) >= 2)
-  if (exhausted.length) {
+  // Use ledger-aware retries. Only block when every affected WI is exhausted —
+  // do not let an all-AC dump (or one burned WI) prevent reopening the rest.
+  const retryOf = (item) => Number(progressOf(item, ledger).retries || item.retries || 0)
+  const exhausted = affected.filter((item) => retryOf(item) >= 2)
+  const actionable = affected.filter((item) => retryOf(item) < 2)
+  if (!actionable.length) {
     commitPaths(options.workdir, [file], 'chore(harness): block exhausted Goal Review defects')
     clearInterval(heartbeatTimer)
     await writeState({
@@ -655,15 +659,21 @@ async function runGoalReviewLocked() {
     })
     return { goal: false, blocked: true, exhausted: exhausted.map((item) => item.id), summary: verdict?.summary, defects: verdict?.defects || [] }
   }
-  for (const item of affected) {
+  for (const item of actionable) {
     await updateFeature(options.workdir, item.id, {
-      implementation: false, qa: false, integration: false, retries: Number(item.retries || 0) + 1,
+      implementation: false, qa: false, integration: false, retries: retryOf(item) + 1,
     })
   }
   commitPaths(options.workdir, [file], 'fix(harness): reopen Goal Review defects')
   clearInterval(heartbeatTimer)
   await writeState({ status: 'complete', phase: 'defects-found', nextAction: 'claim-repair-work', lastResult: verdict?.summary, childPid: null })
-  return { goal: false, reopened: affected.map((item) => item.id), summary: verdict?.summary, defects: verdict?.defects || [] }
+  return {
+    goal: false,
+    reopened: actionable.map((item) => item.id),
+    exhausted: exhausted.length ? exhausted.map((item) => item.id) : undefined,
+    summary: verdict?.summary,
+    defects: verdict?.defects || [],
+  }
 }
 
 async function runGoalReview() {

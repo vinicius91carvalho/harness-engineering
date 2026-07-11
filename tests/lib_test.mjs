@@ -832,18 +832,27 @@ test('jobs-done ledger helpers and flag-drift filtering', async () => {
   const filtered = filterGoalReviewFlagDrift({
     defects: [
       'WI-1 not integrated per feature_list.json integration=false',
-      'GET /health returned 500',
+      'GET /health returned 500 for AC-054',
     ],
-    acceptanceCheckIds: ['AC-1', 'AC-2'],
+    acceptanceCheckIds: ['AC-001', 'AC-002', 'AC-054'],
     catalog: [
       { id: 'WI-1', acceptance_checks: ['AC-1'] },
       { id: 'WI-2', acceptance_checks: ['AC-2'] },
+      { id: 'WI-AC-054', acceptance_checks: ['AC-054'] },
     ],
-    ledger,
+    ledger: {
+      ...ledger,
+      items: {
+        ...ledger.items,
+        'WI-AC-054': { implementation: true, qa: true, integration: true },
+      },
+    },
   })
   assert.equal(filtered.strippedDrift, true)
   assert.equal(filtered.defects.length, 1)
   assert.match(filtered.defects[0], /500/)
+  // Real defects derive AC ids from prose — keep ledger-integrated ACs with product failures
+  assert.deepEqual(filtered.acceptanceCheckIds, ['AC-054'])
   assert.ok(formatJobsDoneForPrompt(catalog, ledger).includes('Integrated Work Items (2/2)'))
 })
 

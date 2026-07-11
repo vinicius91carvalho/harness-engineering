@@ -51,28 +51,34 @@ export function isFeatureListFlagDriftDefect(text) {
   return true
 }
 
+/** Pull AC-NNN ids mentioned in defect / summary text. */
+export function acceptanceIdsFromText(text) {
+  const ids = String(text || '').match(/\bAC-\d+\b/g) || []
+  return [...new Set(ids)]
+}
+
 /**
  * Drop flag-drift-only defects when the ledger already shows those WIs integrated.
  * Keeps real black-box / compose / test failures.
+ *
+ * When real defects remain, derive acceptanceCheckIds from those defect texts
+ * (not the agent all-AC dump). Ledger-integrated WIs with proven product/runtime
+ * defects stay reopenable — flag drift filtering must not drop them.
  */
 export function filterGoalReviewFlagDrift({ defects = [], acceptanceCheckIds = [], catalog, ledger } = {}) {
-  const integrated = new Set(integratedIds(catalog, ledger))
   const keptDefects = (defects || []).filter((d) => !isFeatureListFlagDriftDefect(d))
-  // If the only "incomplete queue" signal was flag drift, do not treat every AC as affected.
-  const driftOnly = (defects || []).length > 0 && keptDefects.length < (defects || []).length
+  const strippedDrift = (defects || []).length > 0 && keptDefects.length < (defects || []).length
   let keptIds = acceptanceCheckIds || []
-  if (driftOnly && keptDefects.length === 0) {
+  if (strippedDrift && keptDefects.length === 0) {
     keptIds = []
-  } else if (driftOnly) {
-    // Prefer ACs named in remaining defects; drop ones that are only in the all-AC dump
-    // when ledger already integrated the matching WI.
-    keptIds = keptIds.filter((ac) => {
-      const wi = (catalog || []).find((item) => (item.acceptance_checks || []).includes(ac))
-      if (!wi) return true
-      return !integrated.has(String(wi.id))
-    })
+  } else if (keptDefects.length > 0) {
+    const fromDefects = keptDefects.flatMap((d) => acceptanceIdsFromText(d))
+    if (fromDefects.length) {
+      keptIds = fromDefects
+    }
+    // else keep caller acceptanceCheckIds — real defects without AC tags still need reopen via operator guidance
   }
-  return { defects: keptDefects, acceptanceCheckIds: keptIds, strippedDrift: driftOnly }
+  return { defects: keptDefects, acceptanceCheckIds: keptIds, strippedDrift }
 }
 
 /**
