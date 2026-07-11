@@ -19,15 +19,21 @@ import { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } f
 import { planTickAdmission, goalReviewAdmissible, goalReviewGate } from '../skills/generator/lib/supervisor-admission.mjs'
 import { goalReviewAdmissible as goalReviewContract } from '../skills/generator/lib/completion-contract.mjs'
 import { mkey, strikeOf, buildPlan, buildCandidates, lastCoder, candidatePool, isNoCreditsCandidate } from '../skills/generator/lib/route-plan.mjs'
-import { planWorkerClosedActions, buildOrchestratorArgv, buildWorkerBase, planWorkerHerdrMeta, planWorkerStop, planWorkerCleanupTargets, terminateProcessTree } from '../skills/generator/lib/worker-lifecycle.mjs'
+import { buildOrchestratorArgv, buildWorkerBase, planWorkerHerdrMeta, planWorkerStop, planWorkerCleanupTargets, terminateProcessTree } from '../skills/generator/lib/worker-lifecycle.mjs'
 import { pruneOrphanPendingInputs, isCrashBoundContext, liveClaimContexts } from '../skills/generator/lib/supervisor-claims.mjs'
-import { isAutoRetryableInput, planAutoRetryResponses } from '../skills/generator/lib/supervisor-auto-respond.mjs'
 import {
   authorizeRecovery,
   classifyFailure,
+  inferDefectClass,
+  isAutoRetryableInput,
   isAutoRetryableReason,
+  planAutoRetryResponses,
+  planWorkerClosedActions,
   requiresDurableApproval,
   recoveryDecision,
+  routePendingInput,
+  routeRepair,
+  shouldEnqueueStuckWorkerRetry,
 } from '../skills/generator/lib/failure-policy.mjs'
 import {
   readWorkerResult,
@@ -918,6 +924,45 @@ test('classifyFailure unifies quota, infra, and observation_mismatch with repair
   })
   assert.equal(observation.class, 'observation_mismatch')
   assert.equal(observation.safeRecovery, 'repair_plan')
+
+  const routed = routeRepair({ defectClass: 'observation_mismatch' })
+  assert.equal(routed.action, 'repair_plan')
+  assert.equal(routed.autoRetry, true)
+})
+
+test('shouldEnqueueStuckWorkerRetry skips infra_error tail class', () => {
+  assert.equal(shouldEnqueueStuckWorkerRetry({ tailClass: 'verdict_hung' }), true)
+  assert.equal(shouldEnqueueStuckWorkerRetry({ tailClass: 'infra_error' }), false)
+  assert.equal(shouldEnqueueStuckWorkerRetry(null), true)
+})
+
+test('planWorkerClosedActions infra crash blocks without auto harness repair', () => {
+  const plan = planWorkerClosedActions({
+    key: 'core',
+    exitCode: 1,
+    tail: 'orchestrator: timed out waiting for merge lock',
+    result: null,
+    rateLimited: false,
+    crashCount: 0,
+    harnessRepairs: {},
+    retryQueue: {},
+    autoRepair: false,
+    logFile: '/tmp/log',
+    prevTailClass: 'infra_error',
+  })
+  assert.equal(plan.action, 'blocked_input')
+  assert.equal(plan.emitHarnessIssue?.reason?.includes('Worker exited with code 1'), true)
+})
+
+test('failure-policy facade modules re-export canonical symbols', async () => {
+  const repairRouter = await import('../skills/generator/lib/repair-router.mjs')
+  const autoRespond = await import('../skills/generator/lib/supervisor-auto-respond.mjs')
+  const lifecycle = await import('../skills/generator/lib/worker-lifecycle.mjs')
+  assert.equal(repairRouter.routeRepair, routeRepair)
+  assert.equal(repairRouter.inferDefectClass, inferDefectClass)
+  assert.equal(autoRespond.planAutoRetryResponses, planAutoRetryResponses)
+  assert.equal(lifecycle.planWorkerClosedActions, planWorkerClosedActions)
+  assert.equal(lifecycle.shouldEnqueueStuckWorkerRetry, shouldEnqueueStuckWorkerRetry)
 })
 
 test('worker-result fences stale invocation and validates verdicts', async () => {
@@ -1237,12 +1282,14 @@ test('worker-health classifies merge lock, verdict hang, and thinking', async ()
 })
 
 test('repair-router blocks coding exhaustion and routes quota/infra', async () => {
-  const { inferDefectClass, routeRepair, routePendingInput } = await import('../skills/generator/lib/repair-router.mjs')
+  const { inferDefectClass: inferFromFacade, routeRepair: routeFromFacade, routePendingInput: routePendingFromFacade } = await import('../skills/generator/lib/repair-router.mjs')
+  assert.equal(inferFromFacade, inferDefectClass)
+  assert.equal(routeFromFacade, routeRepair)
   assert.equal(inferDefectClass({}, 'Codex error: The usage limit has been reached'), 'quota')
   assert.equal(inferDefectClass({}, 'DynamoHypothesisRepository still wired in bootstrap'), 'infra')
   assert.equal(inferDefectClass({ defectClass: 'observation_mismatch' }, ''), 'observation_mismatch')
 
-  const exhausted = routePendingInput({ reason: 'coding agent failed three times' })
+  const exhausted = routePendingFromFacade({ reason: 'coding agent failed three times' })
   assert.equal(exhausted.action, 'pause')
   assert.equal(exhausted.autoRetry, false)
 
@@ -1253,6 +1300,12 @@ test('repair-router blocks coding exhaustion and routes quota/infra', async () =
   const infra = routeRepair({ defectClass: 'infra' })
   assert.equal(infra.action, 'block')
   assert.equal(infra.autoRetry, false)
+
+  const observation = routePendingInput({
+    reason: 'grep-only audit should not start a server',
+  })
+  assert.equal(observation.action, 'repair_plan')
+  assert.equal(observation.defectClass, 'observation_mismatch')
 })
 
 test('observation-method filters pi away for http/browser validation', async () => {
@@ -1573,6 +1626,96 @@ test('wake triage fleet snapshot from supervisor state', async () => {
   assert.equal(fleet.retryQueueSize, 1)
   const progress = { id: 8, kind: 'progress', workers: 0, total: 3, integrated: 1 }
   assert.deepEqual(classify(progress, fleet).action, 'wake')
+})
+
+test('fleet snapshot builds structured multi-project bearings', async () => {
+  const {
+    FLEET_SNAPSHOT_SCHEMA,
+    buildFleetSnapshot,
+    buildProjectSnapshot,
+    fleetSnapshotFromState,
+  } = await import('../skills/generator/lib/fleet-snapshot.mjs')
+  assert.equal(FLEET_SNAPSHOT_SCHEMA, 'harness-fleet-snapshot.v1')
+
+  const stateA = {
+    status: 'running',
+    workers: { core: { type: 'herdr', paneId: '1-2', pid: 42 } },
+    workerHealth: { core: { verdict: 'healthy' }, ghost: { verdict: 'stuck', reason: 'no output' } },
+    pendingInputs: { 3: { status: 'pending' } },
+    retryQueue: {},
+    capacity: { limit: 2, available: 1, slots: 1, active: 1 },
+    progress: { total: 4, integrated: 2 },
+  }
+  const project = buildProjectSnapshot({
+    id: 'appA',
+    root: '/repo/appA',
+    state: stateA,
+    eventsTip: 17,
+    wakeTriage: { shouldWake: true },
+  })
+  assert.equal(project.id, 'appA')
+  assert.equal(project.journalTip, 17)
+  assert.equal(project.workers, 1)
+  assert.equal(project.pendingInputs, 1)
+  assert.equal(project.stuck.length, 1)
+  assert.equal(project.stuck[0].context, 'ghost')
+  assert.deepEqual(project.wakeTriage, { shouldWake: true })
+
+  const fleet = buildFleetSnapshot({
+    projects: [
+      project,
+      buildProjectSnapshot({ id: 'appB', state: { status: 'complete' }, eventsTip: 9 }),
+    ],
+  })
+  assert.equal(fleet.schema, FLEET_SNAPSHOT_SCHEMA)
+  assert.equal(fleet.projects.length, 2)
+  assert.equal(fleet.projects[1].status, 'complete')
+  assert.equal(fleetSnapshotFromState(stateA).workers, 1)
+})
+
+test('finished tab reaper keeps live panes and rate-limits tick reaps', async () => {
+  const {
+    collectLiveWorkerPaneIds,
+    planFinishedTabReap,
+    DEFAULT_REAP_INTERVAL_MS,
+  } = await import('../skills/generator/lib/finished-tab-reaper.mjs')
+  const workers = new Map([
+    ['core', { type: 'herdr', paneId: '1-2-live' }],
+  ])
+  const keep = collectLiveWorkerPaneIds(workers)
+  assert.equal(keep.has('1-2-live'), true)
+
+  const limited = planFinishedTabReap({
+    workers,
+    workerHealth: { doneCtx: { verdict: 'done' } },
+    now: 120_000,
+    lastReapAt: 100_000,
+    minIntervalMs: DEFAULT_REAP_INTERVAL_MS,
+  })
+  assert.equal(limited.shouldReap, false)
+  assert.equal(limited.reason, 'rate_limited')
+  assert.equal(limited.keepPaneIds.has('1-2-live'), true)
+
+  const tick = planFinishedTabReap({
+    workers,
+    workerHealth: {},
+    now: 200_000,
+    lastReapAt: 100_000,
+    minIntervalMs: DEFAULT_REAP_INTERVAL_MS,
+  })
+  assert.equal(tick.shouldReap, true)
+  assert.equal(tick.reason, 'tick')
+
+  const forced = planFinishedTabReap({
+    workers,
+    workerHealth: { doneCtx: { verdict: 'done' } },
+    now: 105_000,
+    lastReapAt: 100_000,
+    force: true,
+  })
+  assert.equal(forced.shouldReap, true)
+  assert.equal(forced.reason, 'forced')
+  assert.deepEqual(forced.doneContexts, ['doneCtx'])
 })
 
 test('evidence-corpus scans verdicts and proposes skill routes', async () => {

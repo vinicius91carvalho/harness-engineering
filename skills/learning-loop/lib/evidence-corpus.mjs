@@ -2,7 +2,7 @@ import { readdir, readFile, stat } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { parseObject, VERDICT_BEGIN } from '../../generator/lib/verdict.mjs'
-import { inferDefectClass } from '../../generator/lib/repair-router.mjs'
+import { inferDefectClass } from '../../generator/lib/failure-policy.mjs'
 import { gitCommonDir } from '../../generator/lib/git-repo.mjs'
 
 const EVIDENCE_DIR = 'harness-evidence'

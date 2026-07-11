@@ -15,7 +15,7 @@ for (let i = 0; i < rawArgs.length; i += 2) {
   if (!key?.startsWith('--') || value === undefined) fatal(`invalid argument: ${key || ''}`)
   options[key.slice(2)] = value
 }
-if (!commandName) fatal('usage: harness-control.mjs {start|run|status|capacity|events|ack|respond|quota|pause|resume|stop|kill-supervisor|release-supervisor-lock|kill-worker|release-lease|clear-dead-lock} --repo <path> ...')
+if (!commandName) fatal('usage: harness-control.mjs {start|run|status|fleet-snapshot|capacity|events|ack|respond|quota|pause|resume|stop|kill-supervisor|release-supervisor-lock|kill-worker|release-lease|clear-dead-lock} --repo <path> ...')
 
 const scriptFile = fileURLToPath(import.meta.url)
 const supervisorLib = resolve(dirname(scriptFile), '..', 'lib')
@@ -42,11 +42,11 @@ const {
   isWorkerStuckByHealth,
   stuckThresholdMs,
 } = await importLib('worker-outcome.mjs')
-const { planWorkerClosedActions, buildOrchestratorArgv, buildWorkerBase, workerLogFileName, planWorkerHerdrMeta, planWorkerStop, planWorkerCleanupTargets, terminateProcessTree, persistWorkerPaneTail, shouldEnqueueStuckWorkerRetry } = await importLib('worker-lifecycle.mjs')
+const { planWorkerClosedActions, shouldEnqueueStuckWorkerRetry, planAutoRetryResponses } = await importLib('failure-policy.mjs')
+const { buildOrchestratorArgv, buildWorkerBase, workerLogFileName, planWorkerHerdrMeta, planWorkerStop, planWorkerCleanupTargets, terminateProcessTree, persistWorkerPaneTail } = await importLib('worker-lifecycle.mjs')
 const { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } = await importLib('supervisor-tick.mjs')
 const { planTickAdmission, goalReviewGate } = await importLib('supervisor-admission.mjs')
 const { pruneOrphanPendingInputs, isCrashBoundContext } = await importLib('supervisor-claims.mjs')
-const { planAutoRetryResponses } = await importLib('supervisor-auto-respond.mjs')
 const { selectClaim, resumeClaim, releaseClaim, mergeLockHolder, clearDeadLock, clearStaleGeneratorLocks } = await importLib('claim-lease.mjs')
 const { integrationBranchName, integrationBranchRef } = await importLib('integration-branch.mjs')
 const { ledgerPath, readLedger, applyLedgerToCatalog } = await importLib('execution-ledger.mjs')
@@ -244,6 +244,7 @@ class Supervisor {
     this.workers = new Map()
     this.stopping = false
     this.lastSummary = 0
+    this.lastFinishedTabReap = 0
     this.finalizing = new Set()
     this.pendingGoalResult = null
   }
@@ -661,17 +662,30 @@ class Supervisor {
     await this.save({ status: 'complete', completedAt: new Date().toISOString() })
   }
 
-  async inspectHerdrAgentPresence() {
-    const waitingReason = 'Harness worker needs human input'
+  async reapFinishedHarnessTabs({ force = false } = {}) {
+    const { planFinishedTabReap } = await importLib('finished-tab-reaper.mjs')
+    const plan = planFinishedTabReap({
+      workers: this.workers,
+      workerHealth: this.state?.workerHealth || {},
+      now: Date.now(),
+      lastReapAt: this.lastFinishedTabReap || 0,
+      force,
+    })
+    if (!plan.shouldReap) return plan
     try {
       const workspaceId = getFocusedWorkspaceId()
       closeAllDanglingHarnessShells(workspaceId)
-      const keep = new Set([...this.workers.values()].filter((worker) => worker.type === 'herdr' && worker.paneId).map((worker) => worker.paneId))
       for (const tab of listHarnessWorkerTabs(workspaceId)) {
-        closeDanglingShellPanes(tab.tab_id, keep)
-        closeStaleHarnessPanesForProject(tab.tab_id, projectId, keep)
+        closeDanglingShellPanes(tab.tab_id, plan.keepPaneIds)
+        closeStaleHarnessPanesForProject(tab.tab_id, projectId, plan.keepPaneIds)
       }
+      this.lastFinishedTabReap = Date.now()
     } catch {}
+    return plan
+  }
+
+  async inspectHerdrAgentPresence() {
+    const waitingReason = 'Harness worker needs human input'
     for (const [key, worker] of [...this.workers]) {
       if (worker.type !== 'herdr' || !worker.paneId || !worker.agentName) continue
       if (!paneExists(worker.paneId)) continue
@@ -786,6 +800,9 @@ class Supervisor {
       const prevHealth = this.state.workerHealth?.[key]
       if (!prevHealth || prevHealth.verdict !== health.verdict || prevHealth.tailClass !== health.tailClass) {
         await this.emit('worker_health', { context: key, ...health }, health.verdict === 'stuck')
+        if (health.verdict === 'done' && worker.type === 'herdr') {
+          await this.reapFinishedHarnessTabs({ force: true })
+        }
       }
 
       if (!isWorkerStuckByHealth(health)) continue
@@ -861,6 +878,14 @@ class Supervisor {
     }
   }
 
+  async finalizeWorkerRecord(key, worker) {
+    this.workers.delete(key)
+    this.cleanupWorkerResources(worker)
+    if (worker.type === 'herdr') {
+      await this.reapFinishedHarnessTabs({ force: true })
+    }
+  }
+
   async workerClosed(key, code, capturedTail) {
     const worker = this.workers.get(key)
     if (!worker) return
@@ -871,6 +896,7 @@ class Supervisor {
       }
       this.workers.delete(key)
       this.cleanupWorkerResources(worker)
+      if (worker.type === 'herdr') await this.reapFinishedHarnessTabs({ force: true })
       return
     }
     if (worker.log) {
@@ -925,8 +951,7 @@ class Supervisor {
         }
         if (plan.clearCrashCount) delete this.state.crashCounts?.[key]
         await this.save()
-        this.workers.delete(key)
-        this.cleanupWorkerResources(worker)
+        await this.finalizeWorkerRecord(key, worker)
         return
       }
       case 'goal_complete':
@@ -954,8 +979,7 @@ class Supervisor {
         this.state.retryQueue[key] = { guidance: plan.guidance }
         if (plan.clearCrashCount) delete this.state.crashCounts?.[key]
         await this.save()
-        this.workers.delete(key)
-        this.cleanupWorkerResources(worker)
+        await this.finalizeWorkerRecord(key, worker)
         return
       case 'crash_input':
         this.state.crashCounts = this.state.crashCounts || {}
@@ -967,8 +991,7 @@ class Supervisor {
       default:
         break
     }
-    this.workers.delete(key)
-    this.cleanupWorkerResources(worker)
+    await this.finalizeWorkerRecord(key, worker)
     await this.save()
   }
 
@@ -1119,6 +1142,7 @@ class Supervisor {
     await this.rehydrateHerdrWorkers()
     await this.inspectHerdrAgentPresence()
     await this.inspectHerdrWorkers()
+    await this.reapFinishedHarnessTabs()
     await this.inspectStuckWorkers()
     const { external, recoverable } = await this.inspectClaims()
     const active = this.workers.size + external
@@ -1561,6 +1585,33 @@ async function clearDeadLockCmd() {
   process.stdout.write(`${JSON.stringify(result)}\n`)
 }
 
+async function buildFleetSnapshotForRepo(state = null, { wakeTriage = null } = {}) {
+  const { buildFleetSnapshot } = await importLib('fleet-snapshot.mjs')
+  const current = state ?? await readJson(stateFile, { status: 'not_started' })
+  const events = await readEvents()
+  const eventsTip = events.length ? Number(events[events.length - 1].id) || 0 : 0
+  return buildFleetSnapshot({
+    projects: [{
+      id: projectId,
+      root: repo,
+      state: current,
+      eventsTip,
+      wakeTriage,
+    }],
+  })
+}
+
+async function fleetSnapshotCmd() {
+  const state = await readJson(stateFile, { status: 'not_started' })
+  const { fleetSnapshotFromState, shouldWake } = await importLib('wake-triage.mjs')
+  const recent = (await readEvents()).slice(-20)
+  const fleet = fleetSnapshotFromState(state)
+  const snapshot = await buildFleetSnapshotForRepo(state, {
+    wakeTriage: { shouldWake: shouldWake(recent, fleet) },
+  })
+  process.stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`)
+}
+
 async function main() {
   if (commandName === 'start') return start()
   if (commandName === 'status') {
@@ -1573,8 +1624,10 @@ async function main() {
       fold: foldProgress(recent, fleet),
       latest: recent.length ? { ...recent.at(-1), wakeTriage: classify(recent.at(-1), fleet) } : null,
     }
-    return process.stdout.write(`${JSON.stringify({ ...state, wakeTriage }, null, 2)}\n`)
+    const fleetSnapshot = await buildFleetSnapshotForRepo(state, { wakeTriage })
+    return process.stdout.write(`${JSON.stringify({ ...state, fleetSnapshot, wakeTriage }, null, 2)}\n`)
   }
+  if (commandName === 'fleet-snapshot') return fleetSnapshotCmd()
   if (commandName === 'capacity') return process.stdout.write(`${JSON.stringify(await capacity(baseConfig(), Number(options.active || 0)), null, 2)}\n`)
   if (commandName === 'events') {
     const { classify, fleetSnapshotFromState } = await importLib('wake-triage.mjs')
