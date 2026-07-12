@@ -14,6 +14,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync, spawn } from 'node:child_process'
 import { createServer } from 'node:http'
+import { randomBytes } from 'node:crypto'
 import { parseProjectSpecification } from '../generator/lib/project-specification.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -23,6 +24,41 @@ const FEEDBACK = 'spec-review-feedback.json'
 const HTML_OUT = 'spec-review.html'
 const STATE = 'spec-review-state.json'
 const DONE = 'spec-review-done.json'
+const E2E_AUTOMATION = `
+    const e2eMode = new URLSearchParams(location.search).get('harness_e2e');
+    if (e2eMode === 'submit-comment') {
+      (async () => {
+        const marker = document.createElement('pre');
+        marker.id = 'e2e-result';
+        document.body.appendChild(marker);
+        try {
+          document.querySelectorAll('.card-head')[0].click();
+          const textarea = document.querySelectorAll('.card')[0].querySelector('textarea');
+          const text = 'needs clearer URL matrix wording';
+          textarea.value = '';
+          for (const ch of text) {
+            textarea.value += ch;
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+          document.querySelectorAll('.card-head')[1].click();
+          const box = document.querySelectorAll('.card')[1].querySelector('input[type="checkbox"]');
+          box.checked = true;
+          box.dispatchEvent(new Event('change', { bubbles: true }));
+          const btn = document.getElementById('submit-btn');
+          if (!btn || btn.disabled) throw new Error('submit still disabled');
+          await submitFeedback();
+          const after = document.createElement('pre');
+          after.id = 'e2e-result';
+          after.textContent = 'E2E_OK submitted';
+          document.body.appendChild(after);
+        } catch (err) {
+          const fail = document.getElementById('e2e-result') || document.createElement('pre');
+          fail.id = 'e2e-result';
+          fail.textContent = 'E2E_FAIL ' + (err && err.message ? err.message : String(err));
+          document.body.appendChild(fail);
+        }
+      })();
+    }`
 
 function harnessDir(projectDir) {
   return join(resolve(projectDir), '.harness')
@@ -132,7 +168,7 @@ function statusExitCode(report) {
   return 1
 }
 
-function buildHtml(projectDir, { reviewOrigin = '' } = {}) {
+function buildHtml(projectDir, { reviewOrigin = '', reviewToken = '', e2e = false } = {}) {
   const p = paths(projectDir)
   const draft = loadDraft(projectDir)
   const feedback = loadFeedback(projectDir)
@@ -146,6 +182,8 @@ function buildHtml(projectDir, { reviewOrigin = '' } = {}) {
     .replaceAll('__FEEDBACK_PATH__', escapeHtml(p.feedback))
     .replaceAll('__HTML_PATH__', escapeHtml(p.html))
     .replaceAll('__REVIEW_ORIGIN__', JSON.stringify(reviewOrigin))
+    .replaceAll('__REVIEW_TOKEN__', JSON.stringify(reviewToken))
+    .replaceAll('__E2E_AUTOMATION__', e2e ? E2E_AUTOMATION : '')
 }
 
 function cmdRender(projectDir) {
@@ -275,14 +313,14 @@ function sendJson(res, status, body) {
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(payload),
-    'access-control-allow-origin': '*',
   })
   res.end(payload)
 }
 
-async function cmdOpen(projectDir, { timeoutMs = 0, noBrowser = false } = {}) {
+async function cmdOpen(projectDir, { timeoutMs = 0, noBrowser = false, e2e = false } = {}) {
   const p = paths(projectDir)
   const draft = loadDraft(projectDir)
+  const reviewToken = randomBytes(32).toString('base64url')
   mkdirSync(p.dir, { recursive: true })
 
   let settle
@@ -293,18 +331,13 @@ async function cmdOpen(projectDir, { timeoutMs = 0, noBrowser = false } = {}) {
   const server = createServer(async (req, res) => {
     const url = new URL(req.url || '/', 'http://127.0.0.1')
     if (req.method === 'OPTIONS') {
-      res.writeHead(204, {
-        'access-control-allow-origin': '*',
-        'access-control-allow-methods': 'GET,POST,OPTIONS',
-        'access-control-allow-headers': 'content-type',
-      })
-      res.end()
+      sendJson(res, 405, { ok: false, error: 'method not allowed' })
       return
     }
 
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
       const origin = `http://127.0.0.1:${server.address().port}`
-      const html = buildHtml(projectDir, { reviewOrigin: origin })
+      const html = buildHtml(projectDir, { reviewOrigin: origin, reviewToken, e2e })
       writeFileSync(p.html, html, 'utf8')
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
       res.end(html)
@@ -313,6 +346,10 @@ async function cmdOpen(projectDir, { timeoutMs = 0, noBrowser = false } = {}) {
 
     if (req.method === 'POST' && url.pathname === '/feedback') {
       try {
+        if (req.headers['x-harness-review-token'] !== reviewToken) {
+          sendJson(res, 403, { ok: false, error: 'invalid review session token' })
+          return
+        }
         const raw = await readRequestBody(req)
         const feedback = JSON.parse(raw)
         const shapeError = validateFeedbackShape(feedback, draft)
@@ -372,7 +409,7 @@ async function cmdOpen(projectDir, { timeoutMs = 0, noBrowser = false } = {}) {
 
   const { port } = server.address()
   const origin = `http://127.0.0.1:${port}`
-  writeFileSync(p.html, buildHtml(projectDir, { reviewOrigin: origin }), 'utf8')
+  writeFileSync(p.html, buildHtml(projectDir, { reviewOrigin: origin, reviewToken, e2e }), 'utf8')
   writeJson(p.state, {
     revision: draft.revision ?? 1,
     opened_at: new Date().toISOString(),
@@ -432,10 +469,12 @@ function parseArgs(argv) {
   let timeoutMs = 0
   let noBrowser = false
   let json = false
+  let e2e = false
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i]
     if (arg === '--no-browser') noBrowser = true
     else if (arg === '--json') json = true
+    else if (arg === '--e2e') e2e = true
     else if (arg === '--timeout-ms') {
       timeoutMs = Number(rest[++i] || 0)
       if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
@@ -449,11 +488,11 @@ function parseArgs(argv) {
       usage()
     }
   }
-  return { command, projectDir, timeoutMs, noBrowser, json }
+  return { command, projectDir, timeoutMs, noBrowser, json, e2e }
 }
 
 function main() {
-  const { command, projectDir, timeoutMs, noBrowser, json } = parseArgs(process.argv.slice(2))
+  const { command, projectDir, timeoutMs, noBrowser, json, e2e } = parseArgs(process.argv.slice(2))
   if (!command || !projectDir) usage()
 
   switch (command) {
@@ -461,7 +500,7 @@ function main() {
       cmdRender(projectDir)
       break
     case 'open':
-      cmdOpen(projectDir, { timeoutMs, noBrowser })
+      cmdOpen(projectDir, { timeoutMs, noBrowser, e2e })
       break
     case 'status':
       cmdStatus(projectDir, { json })

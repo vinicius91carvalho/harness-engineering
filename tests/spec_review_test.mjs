@@ -59,6 +59,7 @@ assert(html.includes('function updateComment'), 'html defines updateComment')
 assert(!/function updateComment\([^)]*\)\s*\{[^}]*\brender\(\)/s.test(html), 'updateComment does not full-render (keeps textarea open while typing)')
 assert(html.includes('paintCardChrome'), 'html updates card chrome in place while commenting')
 assert(html.includes('openIds'), 'html preserves open card state across full renders')
+assert(!html.includes('harness_e2e'), 'rendered review html does not ship e2e automation')
 
 let status = run(['status', tmp])
 assert(status.status === 1, 'status incomplete without feedback')
@@ -130,9 +131,25 @@ const origin = await new Promise((resolve, reject) => {
   child.stdout.on('data', check)
   check()
 })
+const servedHtml = readFileSync(join(openHarness, 'spec-review.html'), 'utf8')
+const token = servedHtml.match(/const REVIEW_TOKEN = "([^"]+)";/)?.[1]
+assert(token, 'open writes a review session token into served html')
+assert(!servedHtml.includes('harness_e2e'), 'open review html does not ship e2e automation by default')
+const rejectedPost = await fetch(`${origin}/feedback`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', origin: 'https://example.invalid' },
+  body: JSON.stringify({
+    revision: 1,
+    items: [
+      { id: 'project_goal', confirmed: true, comment: '' },
+      { id: 'AC-001', confirmed: true, comment: '' },
+    ],
+  }),
+})
+assert(rejectedPost.status === 403, 'POST /feedback rejects missing review token')
 const post = await fetch(`${origin}/feedback`, {
   method: 'POST',
-  headers: { 'content-type': 'application/json' },
+  headers: { 'content-type': 'application/json', 'x-harness-review-token': token },
   body: JSON.stringify({
     revision: 1,
     items: [

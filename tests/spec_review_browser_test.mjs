@@ -104,7 +104,7 @@ const typingMarker = dump.stdout.match(/id="e2e-result">(?:E2E_OK typing|E2E_FAI
 assert(typingMarker && typingMarker[0].includes('E2E_OK typing'), `typing e2e failed: ${typingMarker?.[0] || 'missing marker'}`)
 
 // --- Part B: same-origin submit via ?harness_e2e=submit-comment ---
-const child = spawn('node', [script, 'open', tmp, '--no-browser', '--timeout-ms', '45000'], {
+const child = spawn('node', [script, 'open', tmp, '--no-browser', '--timeout-ms', '45000', '--e2e'], {
   stdio: ['ignore', 'pipe', 'pipe'],
 })
 let stdout = ''

@@ -167,6 +167,7 @@
     const INITIAL_FEEDBACK = __INITIAL_FEEDBACK__;
     const FEEDBACK_PATH = '__FEEDBACK_PATH__';
     const REVIEW_ORIGIN = __REVIEW_ORIGIN__;
+    const REVIEW_TOKEN = __REVIEW_TOKEN__;
     const storageKey = `harness-spec-review:${FEEDBACK_PATH}:${REVISION}`;
 
     let feedbackById = {};
@@ -393,7 +394,7 @@
         const payload = persist();
         const res = await fetch(`${REVIEW_ORIGIN}/feedback`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: { 'content-type': 'application/json', 'x-harness-review-token': REVIEW_TOKEN },
           body: JSON.stringify(payload),
         });
         const body = await res.json().catch(() => ({}));
@@ -429,43 +430,7 @@
 
     render();
 
-    // Test-only same-origin automation (used by tests/spec_review_browser_test.mjs).
-    const e2eMode = new URLSearchParams(location.search).get('harness_e2e');
-    if (e2eMode === 'submit-comment') {
-      (async () => {
-        const marker = document.createElement('pre');
-        marker.id = 'e2e-result';
-        document.body.appendChild(marker);
-        try {
-          document.querySelectorAll('.card-head')[0].click();
-          const textarea = document.querySelectorAll('.card')[0].querySelector('textarea');
-          const text = 'needs clearer URL matrix wording';
-          textarea.value = '';
-          for (const ch of text) {
-            textarea.value += ch;
-            textarea.dispatchEvent(new Event('input', { bubbles: true }));
-          }
-          document.querySelectorAll('.card-head')[1].click();
-          const box = document.querySelectorAll('.card')[1].querySelector('input[type="checkbox"]');
-          box.checked = true;
-          box.dispatchEvent(new Event('change', { bubbles: true }));
-          const btn = document.getElementById('submit-btn');
-          if (!btn || btn.disabled) throw new Error('submit still disabled');
-          await submitFeedback();
-          // submitFeedback replaces the document body; re-stamp the marker.
-          const after = document.createElement('pre');
-          after.id = 'e2e-result';
-          after.textContent = 'E2E_OK submitted';
-          document.body.appendChild(after);
-        } catch (err) {
-          const fail = document.getElementById('e2e-result') || document.createElement('pre');
-          fail.id = 'e2e-result';
-          fail.textContent = 'E2E_FAIL ' + (err && err.message ? err.message : String(err));
-          document.body.appendChild(fail);
-        }
-      })();
-    }
+__E2E_AUTOMATION__
   </script>
 </body>
 </html>
-
