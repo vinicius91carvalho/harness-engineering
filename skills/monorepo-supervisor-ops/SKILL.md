@@ -151,6 +151,21 @@ When `status=running` but `workers={}`, herdr has only the default tab, or
    guidance, confirm core admits, leave web OSS worker if capacity allows, let
    dashboard re-admit after core progresses. Narrating "web healthy, core idle"
    without this step is a supervisor defect.
+
+   **Goal Review leftovers (2026-07-11 web):** after `goal:false` reopens WIs,
+   website/dashboard `next-server` / `next dev` on the **integration checkout**
+   (`…/causeflow-ai/web`, not `*-wt-*`) can keep ~3–4 GiB and leave
+   `memory.slots=0` while `retryQueue` holds OSS. Kill those main-checkout next
+   PIDs (cwd under `web/apps/{website,dashboard}`), keep core compose + active
+   worktree, re-check `capacity.available>=1`, then let auto-retry admit. Do not
+   wait on an empty fleet with free quota and a seeded retry.
+
+   **Do not kill integration-checkout next during live INTEGRATION_QA:** web IV
+   for OSS often runs Playwright against dashboard on `…/causeflow-ai/web` (not
+   a `*-wt-*` worktree). If `ac-061-capstone` / `next-server` under that cwd is
+   the active IV, leave it alone — freeing "orphans" mid-suite suicides the
+   dashboard. Only reap main-checkout next when `workers={}` or no Playwright IV
+   owns that port.
 7. **"Preparing worktree … already exists"** — leftover checkout dirs that are
    not in `git worktree list` block `worktree add`. `prepareWorktree` now
    `rm -rf`s unregistered leftovers after `worktree remove`/`prune`. If a live
@@ -171,6 +186,25 @@ is not `complete` (remaining ACs, blocked WI, or unanswered `input_required`),
 treat that as empty fleet and recover above the same turn. Narrating
 "foundation idle / one worker healthy" without admitting the next context is a
 supervisor defect.
+
+**Idle after full integrate ≠ Goal Review:** when `progress` is N/N/N, claims are
+empty, capacity `available>=1`, and the Goal Review gate is admissible, but
+`workers={}` and no `goal_review_started` event appears within ~1–2 minutes
+(heartbeat still advancing), treat that as empty fleet. Clear expired
+`quota.pauseUntil`, seed `retryQueue['goal-review']` if useful, then
+`kill-supervisor --force true` + `release-supervisor-lock --force true` and
+restart `run` (CauseFlow: `--host agent`). A long-lived supervisor can keep
+heartbeats while never admitting Goal Review after `context_completed`
+(observed 2026-07-11 on web after WI-AC-061; restart admitted `goal-review`
+immediately). Do not narrate “waiting for Goal Review” across ticks without
+this recovery.
+
+**Goal Review `harness-progress` dirty ≠ product block:** if Input Request is
+`Execution blocked` / `Goal Review must be read-only` solely for
+`harness-progress/*.md` while evidence already names real ACs (e.g. AC-014),
+do not only re-queue Goal Review. Ignore journal dirt in `checkout-dirt.mjs`,
+reopen the named WIs (ledger flags false), seed that context's repair guidance,
+and clear a stale `retryQueue['goal-review']` so repair admits before GR.
 
 ## Temporary capacity boost (more parallel contexts)
 
@@ -205,6 +239,23 @@ Never remove worktrees that still have a live `orchestrator.mjs` for that contex
 `coding agent failed three times` is **not** auto-retried (supervisor-auto-respond).
 Respond with verify-first guidance when the AC is already satisfied on main, or
 stop/pause the dependent project until a dependency-root finishes.
+
+**Provider usage limit ≠ product failure (2026-07-11 web WI-AC-061):** when stuck
+defects are only `ActionRequiredError` / "You're out of usage" (Cursor) after a
+prior attempt already recorded CODING+QA green (and INTEGRATION_QA died mid-run
+on the same quota error), respond `retry` with verify-first guidance: resume at
+INTEGRATION_QA, re-run the Playwright capstone, emit `integration:true` — do
+**not** treat it as a three-strike product rewrite. Prefer `--host agent` /
+composer-2.5 and avoid burning the exhausted Cursor lane.
+
+**Verify-first false green (2026-07-12 web WI-AC-014):** coding emitted
+`implementation:true` with zero product diff while still observing
+`Location: https://dashboard-staging…` on `/get-started`, and QA/IV rubber-stamped
+it. Goal Review correctly failed again. Ops response: kill-worker, force ledger
+`implementation/qa/integration=false`, seed guidance that forbids verify-first-pass,
+requires Dockerfile `ARG`/`ENV NEXT_PUBLIC_DASHBOARD_URL` before `next build` plus
+compose `build.args`, and gates on curl against the **compose image** (not
+`next dev`). Do not leave a QA-phase worker running on a false coding green.
 
 ## Inject guidance without losing it
 
@@ -351,3 +402,15 @@ status` (include `workerHealth` + `mergeLock`), open goal-scoped inputs only,
 `herdr agent list`, free memory. Act on dead supervisors, `stuck` health,
 finished tabs still open, or goal-scoped `input_required` that auto-retry cannot
 handle. Never treat `status=working` alone as proof of progress.
+
+**Stop narrating when idle (do not regress):** skip the fleet-status print for
+a subproject when `status.wakeTriage.shouldWake === false` (or the events batch
+is only fold/absorb) and progress counters / `workers` are unchanged since the
+last report, or when `status` is already `complete`/`stopped` with a persisted
+`run_completed`. Ack folded event IDs and move on instead of printing another
+"still idle" update. When **every** subproject in the monorepo is complete,
+stop the ops poll loop entirely - supervisors are already idle, so continue
+straight to closeout rather than scheduling another 10/20-minute check. A prior
+run kept firing idle 20-minute checks after all four subprojects reached
+`run_completed`, until the operator manually stopped the loop; treat that as a
+defect, not normal cadence.

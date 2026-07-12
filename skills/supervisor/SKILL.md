@@ -182,6 +182,8 @@ For each returned event:
   include its event ID, scope/context, reason, evidence, and permitted choices.
 - Deliver `progress` as the `--summary-minutes` status update (default 20). It
   already contains queue, worker, blocked, and capacity counts.
+  Skip this delivery when the run is idle or complete (see tick step 5 above) -
+  an unchanged idle/complete `progress` event does not need forced narration.
 - `run_completed` is the only completion notification.
 - Other events may be folded into the next progress message.
 
@@ -263,7 +265,14 @@ Close the whole herdr tab when `workerHealth=done` / Run State is terminal.
    invalidate that QA mentally and `respond --action retry` with guidance that
    cites the evidence-log defects verbatim (see `monorepo-supervisor-ops`).
 5. Every ~20 min print fleet progress to the user using evidence-backed facts,
-   not status alone.
+   not status alone - **unless** there is no new activity:
+   `status.wakeTriage.shouldWake === false` (or the events batch is only
+   fold/absorb) **and** progress counters / `workers` are unchanged since the
+   last fleet report, **or** `status` is already `complete`/`stopped` with a
+   persisted `run_completed`. In that idle/complete case: ack the folded/absorbed
+   event IDs, skip user narration, **cancel** the 20-min `/loop` /
+   `ScheduleWakeup`, and exit to closeout if complete. Do not keep waking just
+   to say "still idle."
 6. **RAM / sibling starvation check:** if this project has remaining work,
    `workers={}` (or a resumable Run State with dead PIDs), and
    `capacity.memory.slots=0` while `ps` shows sibling `next-server` / heavy

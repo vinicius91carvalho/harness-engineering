@@ -236,30 +236,49 @@ specification item in the interactive HTML review loop.
 Do not open the review page until the grilling Ready Gate passes.
 Review cards for `planning_decision` items are how the user confirms that
 ambiguities, trade-offs, and edge cases were actually resolved.
-3. Render and open the review page (skill directory = `PLANNER`):
+3. Open the review and **block until the user submits** (skill directory = `PLANNER`):
 
 ```bash
 node "$PLANNER/spec-review.mjs" open "$PROJECT"
 ```
 
-4. Tell the user to click each card, add comments on items that need changes,
-   check **Confirmed** on correct items, click **Export feedback**, and save the
-   download to `.harness/spec-review-feedback.json` (path shown in the page).
-5. Read feedback and check status:
+`open` serves the review on `http://127.0.0.1:<port>/`, opens a **Chromium app
+window** for that URL (so Submit can `window.close()`), and waits until the user
+clicks **Submit and continue**. That POST writes
+`.harness/spec-review-feedback.json` (+ `spec-review-done.json`) and unblocks
+this process. Do not ask the user to download or copy a feedback file.
 
-```bash
-node "$PLANNER/spec-review.mjs" status "$PROJECT"
-```
+**Agent requirement:** run `open` in the foreground and wait for it to exit.
+Do not background it and end the turn - the user will click Submit and see
+"nothing happened" in chat if you are not still waiting. As soon as `open`
+returns, handle the exit code in the same turn (finalize or revise). Ignore
+older `file://` review tabs; only the live localhost session notifies the planner.
 
-- **Exit 1** — some items are neither confirmed nor commented; ask the user to
-  finish the review page.
-- **Exit 2** — one or more items have comments; apply those revisions to
+Never call the review loop done after editing `assets/spec_review.html` until
+`node tests/spec_review_browser_test.mjs` passes (Chromium headless types into a
+comment textarea, submits over localhost, and asserts the planner receives
+feedback). Static HTML greps alone are not enough for this UI.
+
+4. Tell the user to click each card, add comments where needed, confirm correct
+   items (or **Confirm all**), then click **Submit and continue**. The page
+   closes and this command returns.
+5. Handle the `open` exit code immediately (same codes as `status`):
+
+- **Exit 1** - incomplete submit or timeout; reopen `open` and ask the user to
+  finish every pending item.
+- **Exit 2** - one or more items have comments; apply those revisions to
   `xml_draft` and the matching `items` entries, bump `revision`, write the
   draft again, delete stale feedback, re-run `open`, and repeat from step 4.
-- **Exit 0** — every item is confirmed; finalize:
+- **Exit 0** - every item is confirmed; finalize:
 
 ```bash
 node "$PLANNER/spec-review.mjs" finalize "$PROJECT"
+```
+
+Optional inspection after `open` returns:
+
+```bash
+node "$PLANNER/spec-review.mjs" status "$PROJECT"
 ```
 
 **Feature mode:** review only the new feature areas and acceptance checks being

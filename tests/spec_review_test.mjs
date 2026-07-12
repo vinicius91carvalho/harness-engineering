@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { reviewStatus } from '../skills/planner/spec-review.mjs'
 
 const root = dirname(fileURLToPath(import.meta.url))
@@ -48,8 +48,17 @@ const render = run(['render', tmp])
 assert(render.status === 0, 'render succeeds')
 const htmlPath = render.stdout.trim()
 assert(existsSync(htmlPath), 'html file exists')
-assert(readFileSync(htmlPath, 'utf8').includes('Specification review'), 'html contains title')
-assert(readFileSync(htmlPath, 'utf8').includes('AC-001'), 'html lists acceptance check')
+const html = readFileSync(htmlPath, 'utf8')
+assert(html.includes('Specification review'), 'html contains title')
+assert(html.includes('AC-001'), 'html lists acceptance check')
+assert(html.includes('Submit and continue'), 'html has submit CTA')
+assert(html.includes('function submitFeedback'), 'html defines submitFeedback')
+assert(html.includes('/feedback'), 'html posts feedback to review server')
+assert(!html.includes('Export feedback'), 'html no longer asks for manual export download')
+assert(html.includes('function updateComment'), 'html defines updateComment')
+assert(!/function updateComment\([^)]*\)\s*\{[^}]*\brender\(\)/s.test(html), 'updateComment does not full-render (keeps textarea open while typing)')
+assert(html.includes('paintCardChrome'), 'html updates card chrome in place while commenting')
+assert(html.includes('openIds'), 'html preserves open card state across full renders')
 
 let status = run(['status', tmp])
 assert(status.status === 1, 'status incomplete without feedback')
@@ -98,4 +107,44 @@ const invalidFinalize = run(['finalize', invalidHarness])
 assert(invalidFinalize.status !== 0, 'finalize rejects invalid specification')
 assert(invalidFinalize.stderr.includes('invalid project specification'), 'finalize reports validation error')
 
-console.log('ok - spec review render, status, and finalize')
+// Localhost submit: open blocks until POST /feedback, then exits with status code
+const openTmp = mkdtempSync(join(tmpdir(), 'spec-review-open-'))
+const openHarness = join(openTmp, '.harness')
+mkdirSync(openHarness, { recursive: true })
+writeFileSync(join(openHarness, 'project_specs.draft.json'), `${JSON.stringify(draft, null, 2)}\n`)
+const child = spawn('node', [script, 'open', openTmp, '--no-browser', '--timeout-ms', '20000'], {
+  stdio: ['ignore', 'pipe', 'pipe'],
+})
+let out = ''
+child.stdout.setEncoding('utf8')
+child.stdout.on('data', (c) => { out += c })
+const origin = await new Promise((resolve, reject) => {
+  const t = setTimeout(() => reject(new Error(`no origin from open\n${out}`)), 5000)
+  const check = () => {
+    const m = out.match(/http:\/\/127\.0\.0\.1:\d+/)
+    if (m) {
+      clearTimeout(t)
+      resolve(m[0])
+    }
+  }
+  child.stdout.on('data', check)
+  check()
+})
+const post = await fetch(`${origin}/feedback`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({
+    revision: 1,
+    items: [
+      { id: 'project_goal', confirmed: true, comment: '' },
+      { id: 'AC-001', confirmed: true, comment: '' },
+    ],
+  }),
+})
+assert(post.ok, 'POST /feedback succeeds')
+const code = await new Promise((resolve) => child.on('exit', resolve))
+assert(code === 0, `open exits 0 after confirmed submit, got ${code}`)
+assert(existsSync(join(openHarness, 'spec-review-feedback.json')), 'feedback file written by submit')
+try { unlinkSync(join(openHarness, 'spec-review-feedback.json')) } catch {}
+
+console.log('ok - spec review render, status, finalize, and localhost submit')

@@ -45,6 +45,13 @@ Workers stream live thinking, tool calls, and MCP warmup in the pane.
   <img src="assets/example-agent-herdr.png" alt="herdr workspace with supervisor overview and per-Work-Item agent tabs" width="960">
 </p>
 
+### Real project: CauseFlow AI
+
+[CauseFlow AI](https://github.com/vinicius91carvalho/causeflow-ai) is a real multi-app monorepo (`core`, `web`, `relay`, `public-docs`) that was migrated to a fully open-source, Docker-runnable stack through this harness end to end.
+The operator used **planner**, **setup**, **supervisor**, **generator**, and **monorepo-supervisor-ops** to remove AWS, Stripe, Clerk, and other SaaS dependencies, add `docker compose`, ship the marketing site to GitHub Pages, and drive real dashboard E2E against Core.
+The full operator brief - goal locks, sync playbook, cadence, closeout, and a day-by-day status log - is archived in [`examples/causeflow-ai-opensource-omnigent-prompt.md`](examples/causeflow-ai-opensource-omnigent-prompt.md) as a template you can adapt for your own monorepo goals.
+Delivery completed **2026-07-12** with all four subprojects at `run_completed`.
+
 ## Quickstart
 
 **1. Install once in a terminal** ([details](#install)):
