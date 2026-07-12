@@ -177,12 +177,12 @@ function buildHtml(projectDir, { reviewOrigin = '', reviewToken = '', e2e = fals
   return template
     .replaceAll('__PROJECT_NAME__', escapeHtml(draft.project_name ?? 'Project specification'))
     .replaceAll('__REVISION__', String(draft.revision ?? 1))
-    .replaceAll('__ITEMS_DATA__', JSON.stringify(draft.items))
-    .replaceAll('__INITIAL_FEEDBACK__', JSON.stringify(initialFeedback))
-    .replaceAll('__FEEDBACK_PATH__', escapeHtml(p.feedback))
+    .replaceAll('__ITEMS_DATA__', inlineScriptJson(draft.items))
+    .replaceAll('__INITIAL_FEEDBACK__', inlineScriptJson(initialFeedback))
+    .replaceAll('__FEEDBACK_PATH__', inlineScriptJson(p.feedback))
     .replaceAll('__HTML_PATH__', escapeHtml(p.html))
-    .replaceAll('__REVIEW_ORIGIN__', JSON.stringify(reviewOrigin))
-    .replaceAll('__REVIEW_TOKEN__', JSON.stringify(reviewToken))
+    .replaceAll('__REVIEW_ORIGIN__', inlineScriptJson(reviewOrigin))
+    .replaceAll('__REVIEW_TOKEN__', inlineScriptJson(reviewToken))
     .replaceAll('__E2E_AUTOMATION__', e2e ? E2E_AUTOMATION : '')
 }
 
@@ -206,6 +206,15 @@ function escapeHtml(text) {
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
+}
+
+function inlineScriptJson(value) {
+  return JSON.stringify(value)
+    .replaceAll('<', '\\u003c')
+    .replaceAll('>', '\\u003e')
+    .replaceAll('&', '\\u0026')
+    .replaceAll('\u2028', '\\u2028')
+    .replaceAll('\u2029', '\\u2029')
 }
 
 function printStatus(report, { json = false } = {}) {

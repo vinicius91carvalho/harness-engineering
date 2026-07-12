@@ -39,7 +39,7 @@ const draft = {
 </project_specification>`,
   items: [
     { id: 'project_goal', kind: 'section', title: 'Project Goal', summary: 'Ship notes', body: 'Users can publish notes.' },
-    { id: 'AC-001', kind: 'acceptance_check', title: 'AC-001', summary: 'Publish works', body: 'POST /notes returns 201.' },
+    { id: 'AC-001', kind: 'acceptance_check', title: 'AC-001', summary: 'Publish works', body: 'POST /notes returns 201. Include </script><script>globalThis.injected=true</script> safely.' },
   ],
 }
 writeFileSync(join(harness, 'project_specs.draft.json'), `${JSON.stringify(draft, null, 2)}\n`)
@@ -51,6 +51,8 @@ assert(existsSync(htmlPath), 'html file exists')
 const html = readFileSync(htmlPath, 'utf8')
 assert(html.includes('Specification review'), 'html contains title')
 assert(html.includes('AC-001'), 'html lists acceptance check')
+assert(!html.includes('</script><script>globalThis.injected=true'), 'inline script data escapes script terminators')
+assert(html.includes('\\u003c/script\\u003e'), 'rendered script data keeps escaped spec text')
 assert(html.includes('Submit and continue'), 'html has submit CTA')
 assert(html.includes('function submitFeedback'), 'html defines submitFeedback')
 assert(html.includes('/feedback'), 'html posts feedback to review server')
