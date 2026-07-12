@@ -384,7 +384,10 @@ sequenceDiagram
   participant C as coding-agent
   participant Q as qa-agent
   U->>P: /harness:planner goal
-  P->>P: write project_specs.xml
+  P->>P: draft specification
+  P-->>U: localhost spec review
+  U-->>P: Submit and continue
+  P->>P: finalize project_specs.xml
   U->>G: /harness:generator All
   G->>I: scaffold (once)
   I->>I: feature_list.json + init.sh
