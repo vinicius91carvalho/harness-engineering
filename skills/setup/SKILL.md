@@ -72,7 +72,7 @@ not create the registry.
    silently resolve one.
    The planner must run grilling (ambiguous requirements, architectural trade-offs,
    edge cases) and the **spec review HTML loop** (`.harness/project_specs.draft.json`
-   → interactive review → `spec-review.mjs finalize`) before
+   -> blocking localhost submit via `spec-review.mjs open` -> `spec-review.mjs finalize`) before
    `project_specs.xml` exists. Setup is not past this step until finalize succeeds.
 4. Before initialization, run
    `node <this-skill>/inventory.mjs "$PROJECT" .harness-technology-inventory.json project_specs.xml`.

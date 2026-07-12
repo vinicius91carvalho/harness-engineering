@@ -67,7 +67,7 @@ The installer then clones the **latest GitHub Release tag** (or a pin — see [I
 
 | Step | What you type | What happens |
 | --- | --- | --- |
-| **2. Plan** | `/harness:planner Build a notes app where a user can publish a note and find it after reloading.` | Grills you one question at a time (ambiguities, trade-offs, edge cases), then writes `project_specs.xml` with `<domain>`, Acceptance Checks, and `<planning_decisions>` |
+| **2. Plan** | `/harness:planner Build a notes app where a user can publish a note and find it after reloading.` | Grills you one question at a time (ambiguities, trade-offs, edge cases), opens a blocking spec review, then writes `project_specs.xml` with `<domain>`, Acceptance Checks, and `<planning_decisions>` |
 | **3. Build** | `/harness:generator` | Claims work, codes, QA's, integrates — answer **All** for a new project |
 | **4. Know you're done** | Goal Review passes; every Work Item shows `implementation`, `qa`, and `integration` | Not when the chat goes quiet |
 
@@ -135,7 +135,7 @@ See [CONTEXT.md](CONTEXT.md) for the full glossary and bounded contexts.
 
 ## How the workflow runs
 
-1. **Specify** — planner grills open product questions, then writes the Project Goal, product vocabulary and bounded contexts under `<domain>`, Acceptance Checks, and `<planning_decisions>` (setup maps an existing repo without grilling a new goal).
+1. **Specify** — planner grills open product questions, opens a localhost spec review until you submit, then writes the Project Goal, product vocabulary and bounded contexts under `<domain>`, Acceptance Checks, and `<planning_decisions>` (setup maps an existing repo without grilling a new goal).
 2. **Reconcile** — generator maps every check to a Work Item (missing mappings block execution).
 3. **Claim** — each ready context gets a lease, branch, worktree, and port.
 4. **Build & inspect** — coding-agent implements; qa-agent tests at a real boundary.

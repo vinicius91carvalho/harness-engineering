@@ -335,12 +335,12 @@ claude --version  # or: codex --version / opencode --version / pi --version</cod
             <li>
               <strong>Describe the product goal</strong>
               <p><span class="you">You</span> type <code>/harness:planner Build a notes app where…</code></p>
-              <p><span class="harness">Planner skill</span> grills you one question at a time, records answers in <code>&lt;planning_decisions&gt;</code>, then writes <code>project_specs.xml</code> - the append-only contract.</p>
+              <p><span class="harness">Planner skill</span> grills you one question at a time, records answers in <code>&lt;planning_decisions&gt;</code>, opens the spec review, then writes <code>project_specs.xml</code> - the append-only contract.</p>
             </li>
             <li>
               <strong>Review the specification</strong>
-              <p><span class="you">You</span> confirm grilled decisions and Acceptance Checks in the spec review page (opens only after the Ready Gate passes).</p>
-              <p>Each check must be observable in a browser or via real HTTP. Edits happen in chat (“change AC-002 to…”) until you are satisfied.</p>
+              <p><span class="you">You</span> confirm grilled decisions and Acceptance Checks in the localhost spec review page (opens only after the Ready Gate passes, then blocks until you submit).</p>
+              <p>Each check must be observable in a browser or via real HTTP. Comments return to the planner in chat until you are satisfied.</p>
             </li>
             <li>
               <strong>Start the build</strong>
@@ -413,7 +413,7 @@ sequenceDiagram
               <div>
                 <h3>You → Planner skill</h3>
                 <p>Natural-language goal becomes stable Acceptance Checks plus grilled <code>&lt;planning_decisions&gt;</code>. Planner asks one decision at a time until the Ready Gate passes.</p>
-                <p class="who"><em>You</em> decide product behavior · <strong>Planner</strong> writes <code>project_specs.xml</code></p>
+                <p class="who"><em>You</em> decide product behavior · <strong>Planner</strong> blocks on spec review before <code>project_specs.xml</code></p>
               </div>
             </div>
             <div class="phase">
@@ -457,7 +457,7 @@ sequenceDiagram
           <p class="step">How the workflow runs</p>
           <h2>Seven stages, idea to reviewed</h2>
           <ol>
-            <li><strong>Specify:</strong> planner grills ambiguities, trade-offs, and edge cases, then writes the Project Goal, Acceptance Checks, and <code>&lt;planning_decisions&gt;</code> (setup maps an existing repo without grilling a new goal).</li>
+            <li><strong>Specify:</strong> planner grills ambiguities, trade-offs, and edge cases, blocks on localhost spec review, then writes the Project Goal, Acceptance Checks, and <code>&lt;planning_decisions&gt;</code> (setup maps an existing repo without grilling a new goal).</li>
             <li><strong>Reconcile:</strong> generator maps every check into the immutable Work Item catalog, copies <code>planning_decision_ids</code> onto each item, and verifies dependency order.</li>
             <li><strong>Claim:</strong> a ready context receives a lease, its own Git branch and worktree, a port (so parallel dev servers don't clash), and Run State.</li>
             <li><strong>Build and inspect:</strong> coding implements; independent QA exercises a real boundary.</li>
