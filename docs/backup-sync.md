@@ -43,4 +43,5 @@ Skills installed by a package manager aren't vendored here — they're reinstall
 It reports a diff and commits nothing unless asked.
 
 CI checks JSON/assets, shell syntax, installer behavior, portable orchestration,
-concurrent locking, PowerShell parsing, and bundled script selftests.
+concurrent locking, spec-review browser E2E, PowerShell parsing, and bundled
+script selftests.

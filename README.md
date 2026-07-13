@@ -67,7 +67,7 @@ The installer then clones the **latest GitHub Release tag** (or a pin — see [I
 
 | Step | What you type | What happens |
 | --- | --- | --- |
-| **2. Plan** | `/harness:planner Build a notes app where a user can publish a note and find it after reloading.` | Grills you one question at a time (ambiguities, trade-offs, edge cases), opens a blocking spec review, then writes `project_specs.xml` with `<domain>`, Acceptance Checks, and `<planning_decisions>` |
+| **2. Plan** | `/harness:planner Build a notes app where a user can publish a note and find it after reloading.` | Grills you one question at a time (ambiguities, trade-offs, edge cases), opens a blocking spec review until you submit, then writes `project_specs.xml` with `<domain>`, Acceptance Checks, and `<planning_decisions>` |
 | **3. Build** | `/harness:generator` | Claims work, codes, QA's, integrates — answer **All** for a new project |
 | **4. Know you're done** | Goal Review passes; every Work Item shows `implementation`, `qa`, and `integration` | Not when the chat goes quiet |
 
