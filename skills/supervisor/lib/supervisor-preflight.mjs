@@ -18,22 +18,12 @@ import { dirname, join, basename } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { hostname } from 'node:os'
 
-import { isLiveRunOwner, abandonGhostRun, listGhostClaims } from '../../generator/lib/orphan-claims.mjs'
+import { isLiveRunOwner, abandonGhostRun, listGhostClaims, processAlive } from '../../generator/lib/orphan-claims.mjs'
 
 const GENERIC_RETRY = /^Auto-retry:/i
 
 function keyFromRunFile(name) {
   return String(name || '').replace(/\.json$/, '')
-}
-
-function processAlive(pid) {
-  if (!Number(pid)) return false
-  try {
-    process.kill(Number(pid), 0)
-    return true
-  } catch {
-    return false
-  }
 }
 
 function readJsonSafe(file, fallback = {}) {

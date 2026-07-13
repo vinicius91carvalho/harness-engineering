@@ -140,9 +140,6 @@ export function classifyFailure({
   if (/merge conflict|conflict marker/.test(lower)) {
     return { class: 'merge_conflict', safeRecovery: 'repair_plan', consumesAttempt: true }
   }
-  if (/\b(session terminated|killing shell|session limit|orphanshell|host (?:kill|death|terminated)|pane ended before)\b/.test(lower)) {
-    return { class: 'operational', safeRecovery: 'retry_same', consumesAttempt: false }
-  }
   if (exitCode && exitCode !== 0 && phase !== 'QA' && phase !== 'INTEGRATED-QA') {
     return { class: 'operational', safeRecovery: 'retry_same', consumesAttempt: false }
   }
@@ -482,9 +479,9 @@ export function planWorkerClosedActions({
       exitCode,
       phase: goal ? 'goal-review' : '',
     })
-    const hostDeath = /\b(Session terminated, killing shell|session limit|orphanShell|killing shell|pane ended before)\b/i.test(tail)
-    const operationalNoise = hostDeath || inferDefectClass({}, closeText) === 'operational'
-    if (operationalNoise) {
+    // Narrow host-death / session-limit noise only — do not use classified.class,
+    // because non-zero exits without a matching blob also classify as operational.
+    if (inferDefectClass({}, closeText) === 'operational') {
       if (goal) {
         return {
           action: 'goal_review_retry',

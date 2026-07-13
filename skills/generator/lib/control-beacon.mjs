@@ -1,6 +1,6 @@
 /** Control-host beacon: fail-closed soft stop policy (ADR-0019). */
 
-import { isLiveRunOwner } from './orphan-claims.mjs'
+import { isLiveRunOwner, processAlive as defaultProcessAlive } from './orphan-claims.mjs'
 
 export const DEFAULT_REQUIRED_CONSUMERS = ['herdr-notify']
 
@@ -50,14 +50,6 @@ export function resolveWorkerLive(worker = {}, {
   return false
 }
 
-function isLiveWorker(worker = {}, processAlive = defaultProcessAlive) {
-  return resolveWorkerLive(worker, {
-    processAlive,
-    runState: worker.runState ?? null,
-    paneExists: worker.paneExists ?? null,
-  })
-}
-
 function pendingInputRows(pendingInputs = {}) {
   return Object.values(pendingInputs).filter((row) => {
     if (!row || typeof row !== 'object') return false
@@ -96,7 +88,11 @@ export function beaconSnapshot({
   const workerList = Array.isArray(workers)
     ? workers
     : Object.entries(workers).map(([context, worker]) => ({ context, ...worker }))
-  const liveWorkers = workerList.filter((worker) => isLiveWorker(worker, processAlive))
+  const liveWorkers = workerList.filter((worker) => resolveWorkerLive(worker, {
+    processAlive,
+    runState: worker.runState ?? null,
+    paneExists: worker.paneExists ?? null,
+  }))
   const unackedInputs = pendingInputRows(pendingInputs)
   const behindConsumers = consumersBehindTip(journalTip, consumerCursors, requiredConsumers)
 
@@ -138,14 +134,4 @@ export function stopAllowed(intent, snapshot, { authorized = false } = {}) {
   }
 
   return { allowed: true, reason: null }
-}
-
-function defaultProcessAlive(pid) {
-  if (!Number(pid)) return false
-  try {
-    process.kill(Number(pid), 0)
-    return true
-  } catch {
-    return false
-  }
 }

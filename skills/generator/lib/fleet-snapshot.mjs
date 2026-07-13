@@ -3,6 +3,8 @@
  * Pure JSON builder — does not read sibling control dirs ad hoc.
  */
 
+import { processAlive as defaultProcessAlive } from './orphan-claims.mjs'
+
 export const FLEET_SNAPSHOT_SCHEMA = 'harness-fleet-snapshot.v1'
 
 function activeWorkerRows(state = {}) {
@@ -37,16 +39,6 @@ function capacityView(capacity) {
     available: capacity.available ?? null,
     slots: capacity.slots ?? null,
     active: capacity.active ?? null,
-  }
-}
-
-function defaultProcessAlive(pid) {
-  if (!Number(pid)) return false
-  try {
-    process.kill(Number(pid), 0)
-    return true
-  } catch {
-    return false
   }
 }
 
@@ -140,17 +132,10 @@ export function deriveSupervisorLive(state = {}, {
   return processAlive(pid)
 }
 
-function ghostClaimCount(ghostClaims) {
-  if (Array.isArray(ghostClaims)) return ghostClaims.length
-  if (typeof ghostClaims === 'number') return Math.max(0, ghostClaims)
-  return 0
-}
-
 /** True when tick repair cleared ghosts, spawned workers, or marked repaired on the event. */
 export function isEmptyFleetRepaired(fleetSnapshot = {}) {
   if (fleetSnapshot.repaired === true) return true
   if (Number(fleetSnapshot.workers ?? 0) > 0) return true
-  if (Array.isArray(fleetSnapshot.ghostClaims) && fleetSnapshot.ghostClaims.length === 0) return true
   return false
 }
 

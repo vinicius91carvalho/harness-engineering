@@ -4,7 +4,8 @@ const TERMINAL_STATUSES = new Set(['complete', 'blocked', 'failed', 'abandoned']
 const RUNNINGISH_STATUSES = new Set(['running', 'starting', 'resuming'])
 const DEFAULT_ACTIVE_CLAIM_STATUSES = ['building']
 
-function defaultProcessAlive(pid) {
+/** Shared kill(0) probe used as the default inject across health helpers. */
+export function processAlive(pid) {
   if (!Number(pid)) return false
   try {
     process.kill(Number(pid), 0)
@@ -15,22 +16,21 @@ function defaultProcessAlive(pid) {
 }
 
 /** True when ownerPid or childPid is alive. */
-export function isLiveRunOwner(runState, processAlive = defaultProcessAlive) {
+export function isLiveRunOwner(runState, alive = processAlive) {
   if (!runState || typeof runState !== 'object') return false
-  const alive = processAlive || defaultProcessAlive
-  return Boolean(alive(runState.ownerPid) || alive(runState.childPid))
+  const check = alive || processAlive
+  return Boolean(check(runState.ownerPid) || check(runState.childPid))
 }
 
 /**
  * Classify Run State health for supervisor recovery.
  * @returns {{ health: 'live'|'ghost'|'idle'|'terminal', status?: string, phase?: string, reason?: string, ownerPid?: *, childPid?: * }}
  */
-export function classifyRunStateHealth(runState, processAlive = defaultProcessAlive) {
+export function classifyRunStateHealth(runState, alive = processAlive) {
   if (!runState || typeof runState !== 'object') {
     return { health: 'idle', reason: 'no-run-state' }
   }
 
-  const alive = processAlive || defaultProcessAlive
   const status = String(runState.status || '')
   const phase = String(runState.phase || '')
 
@@ -38,7 +38,7 @@ export function classifyRunStateHealth(runState, processAlive = defaultProcessAl
     return { health: 'terminal', status, phase }
   }
 
-  if (isLiveRunOwner(runState, alive)) {
+  if (isLiveRunOwner(runState, alive || processAlive)) {
     return {
       health: 'live',
       status,
@@ -80,7 +80,7 @@ export function classifyRunStateHealth(runState, processAlive = defaultProcessAl
 export function listGhostClaims({
   claims = {},
   runStatesByContext = {},
-  processAlive = defaultProcessAlive,
+  processAlive: alive = processAlive,
   activeClaimStatuses = DEFAULT_ACTIVE_CLAIM_STATUSES,
 } = {}) {
   const ghosts = []
@@ -91,7 +91,7 @@ export function listGhostClaims({
     const context = claim?.context || key
     const runState = runStatesByContext[context] || runStatesByContext[key] || null
     const claimActive = activeStatuses.has(claim?.status)
-    const health = classifyRunStateHealth(runState || {}, processAlive)
+    const health = classifyRunStateHealth(runState || {}, alive)
     if (health.health !== 'ghost') continue
     if (!claimActive && !RUNNINGISH_STATUSES.has(String(runState?.status || ''))) continue
     seen.add(context)
@@ -100,7 +100,7 @@ export function listGhostClaims({
 
   for (const [context, runState] of Object.entries(runStatesByContext)) {
     if (seen.has(context)) continue
-    const health = classifyRunStateHealth(runState, processAlive)
+    const health = classifyRunStateHealth(runState, alive)
     if (health.health !== 'ghost') continue
     ghosts.push({ context, key: context, claim: null, runState, health })
   }

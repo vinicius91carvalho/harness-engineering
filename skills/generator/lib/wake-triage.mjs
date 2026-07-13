@@ -5,17 +5,10 @@
  */
 
 import {
-  fleetSnapshotFromState,
   isEmptyFleetActionable,
   isEmptyFleetRepaired,
   needsGoalReviewRetry,
 } from './fleet-snapshot.mjs'
-
-export {
-  fleetSnapshotFromState,
-  isEmptyFleetActionable,
-  needsGoalReviewRetry,
-}
 
 const WAKE_KINDS = new Set([
   'worker_stuck',
@@ -63,9 +56,6 @@ export function classify(event, fleetSnapshot = null) {
       ...fleetSnapshot,
       repaired: event.repaired,
       workers: event.workers ?? fleetSnapshot?.workers,
-      ghostClaims: event.ghostCount != null
-        ? Array.from({ length: Math.max(0, Number(event.ghostCount) || 0) })
-        : fleetSnapshot?.ghostClaims,
     })
     if (repaired) {
       return { action: 'absorb', reason: 'empty fleet repaired by tick' }

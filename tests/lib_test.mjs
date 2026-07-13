@@ -2052,7 +2052,8 @@ test('wake triage folds healthy progress and absorbs heartbeats', async () => {
 })
 
 test('wake triage keeps empty-fleet progress actionable', async () => {
-  const { classify, shouldWake, isEmptyFleetActionable } = await import('../skills/generator/lib/wake-triage.mjs')
+  const { classify, shouldWake } = await import('../skills/generator/lib/wake-triage.mjs')
+  const { isEmptyFleetActionable, fleetSnapshotFromState } = await import('../skills/generator/lib/fleet-snapshot.mjs')
   const fleet = {
     workers: 0,
     counts: { total: 5, integrated: 2, blocked: 1 },
@@ -2066,10 +2067,25 @@ test('wake triage keeps empty-fleet progress actionable', async () => {
     reason: 'empty fleet with remaining work or pending inputs',
   })
   assert.equal(shouldWake([progress], fleet), true)
+  // fleetSnapshotFromState always materializes ghostClaims: []; empty ghosts must not
+  // look "repaired" or remaining work would fold instead of wake.
+  const fromState = fleetSnapshotFromState({
+    status: 'running',
+    workers: {},
+    progress: { total: 5, integrated: 2, blocked: 1 },
+    pendingInputs: {},
+    retryQueue: {},
+  })
+  assert.deepEqual(fromState.ghostClaims, [])
+  assert.deepEqual(classify(progress, fromState), {
+    action: 'wake',
+    reason: 'empty fleet with remaining work or pending inputs',
+  })
 })
 
 test('wake triage wakes on stale Goal Review with integrated queue', async () => {
-  const { classify, shouldWake, needsGoalReviewRetry } = await import('../skills/generator/lib/wake-triage.mjs')
+  const { classify, shouldWake } = await import('../skills/generator/lib/wake-triage.mjs')
+  const { needsGoalReviewRetry } = await import('../skills/generator/lib/fleet-snapshot.mjs')
   const fleet = {
     workers: 0,
     counts: { total: 2, integrated: 2, blocked: 0 },
@@ -2099,7 +2115,8 @@ test('wake triage wakes on stuck workers and immediate failures', async () => {
 })
 
 test('wake triage fleet snapshot from supervisor state', async () => {
-  const { fleetSnapshotFromState, classify } = await import('../skills/generator/lib/wake-triage.mjs')
+  const { classify } = await import('../skills/generator/lib/wake-triage.mjs')
+  const { fleetSnapshotFromState } = await import('../skills/generator/lib/fleet-snapshot.mjs')
   const fleet = fleetSnapshotFromState({
     status: 'running',
     workers: { core: { context: 'core' } },

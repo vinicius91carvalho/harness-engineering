@@ -36,6 +36,7 @@ const {
   classifyRunStateHealth,
   abandonGhostRun,
   listGhostClaims,
+  processAlive,
 } = await importLib('orphan-claims.mjs')
 const { scopeClaims, runStateFile: runStatePath } = await importLib('project-keys.mjs')
 const { resolveProjectTopology } = await importLib('project-topology.mjs')
@@ -60,8 +61,14 @@ const { pruneOrphanPendingInputs, isCrashBoundContext } = await importLib('super
 const { selectClaim, resumeClaim, releaseClaim, mergeLockHolder, clearDeadLock, clearStaleGeneratorLocks } = await importLib('claim-lease.mjs')
 const { integrationBranchName, integrationBranchRef } = await importLib('integration-branch.mjs')
 const { ledgerPath, readLedger, applyLedgerToCatalog } = await importLib('execution-ledger.mjs')
+const { catalogFullyIntegrated } = await importLib('completion-contract.mjs')
 const { observeCapacity, pruneDeadReservations } = await importLib('resource-governor.mjs')
 const { evidenceGuidanceExcerpt } = await importLib('evidence-guidance.mjs')
+const {
+  fleetSnapshotFromState,
+  isEmptyFleetActionable,
+  buildFleetSnapshot,
+} = await importLib('fleet-snapshot.mjs')
 const {
   resolveDisplayMode, spawnAgent, closeWorkerDisplay, renameWorkerTab,
   buildWorkerTabLabel, roleFromPhase, readPaneTail, getPaneAgentStatus, paneExists,
@@ -140,7 +147,6 @@ async function goalReviewContext() {
 }
 
 async function fleetForWakeTriage(state, { ghostClaims = null, events = null } = {}) {
-  const { fleetSnapshotFromState } = await importLib('wake-triage.mjs')
   let ghosts = ghostClaims
   if (!ghosts) ghosts = await listProjectGhostClaims()
   const journalEvents = events ?? await readEvents()
@@ -148,7 +154,7 @@ async function fleetForWakeTriage(state, { ghostClaims = null, events = null } =
     const queue = await queueWithLedger()
     const { goalState, head } = await goalReviewContext()
     return fleetSnapshotFromState(state, {
-      queueComplete: queue.length > 0 && queue.every((item) => item.integration === true),
+      queueComplete: catalogFullyIntegrated(queue),
       integrationHead: head,
       reviewedHead: goalState.reviewedHead || '',
       goalReviewStatus: goalState.status || '',
@@ -250,11 +256,6 @@ function consumerFile() {
   const consumer = options.consumer || ''
   if (!/^[a-zA-Z0-9_-]{1,64}$/.test(consumer)) fatal('--consumer must contain 1-64 letters, digits, underscores, or hyphens')
   return join(cursorDir, `${consumer}.json`)
-}
-
-function processAlive(pid) {
-  if (!Number(pid)) return false
-  try { process.kill(Number(pid), 0); return true } catch { return false }
 }
 
 function governorOptions(config) {
@@ -1356,19 +1357,12 @@ class Supervisor {
     const active = this.workers.size + external
     if (active > 0) return { repaired: false, ghosts: [], recoverable: null, external }
 
-    const { isEmptyFleetActionable } = await importLib('wake-triage.mjs')
     const fleet = await fleetForWakeTriage(this.state)
     if (!isEmptyFleetActionable(null, fleet)) {
       return { repaired: false, ghosts: fleet.ghostClaims || [], recoverable: null, external }
     }
 
-    const claims = await ownClaims()
-    const runStatesByContext = {}
-    for (const [key, claim] of Object.entries(claims)) {
-      const context = claim.context || key
-      runStatesByContext[context] = await readJson(runStateFile(context), {})
-    }
-    const ghosts = listGhostClaims({ claims, runStatesByContext, processAlive })
+    const ghosts = fleet.ghostClaims || []
     const staleLocks = clearStaleGeneratorLocks(repo)
     let repaired = false
 
@@ -1992,7 +1986,7 @@ async function loadProjectFleetInputs(target) {
       const goalState = await readJson(join(topo.commonGit, 'harness-runs', goalStateName), {})
       const head = gitIn(target.repo, ['rev-parse', integrationBranchName(target.repo)], true).stdout.trim()
       return {
-        queueComplete: queue.length > 0 && queue.every((item) => item.integration === true),
+        queueComplete: catalogFullyIntegrated(queue),
         integrationHead: head,
         reviewedHead: goalState.reviewedHead || '',
         goalReviewStatus: goalState.status || '',
@@ -2017,7 +2011,6 @@ async function loadProjectFleetInputs(target) {
 }
 
 async function buildFleetSnapshotForRepo(state = null, { wakeTriage = null, targets = null } = {}) {
-  const { buildFleetSnapshot } = await importLib('fleet-snapshot.mjs')
   const projectTargets = targets || await resolveFleetSnapshotTargets()
   const projects = []
   for (const target of projectTargets) {
