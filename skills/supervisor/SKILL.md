@@ -48,7 +48,7 @@ must pass through its Resource Governor.
    lower-priority sibling context, re-check capacity, admit the blocker, seed
    evidence-backed `retryQueue` guidance. Prefer root-before-dependent order
    (e.g. core QA/INTEGRATION before web dashboard E2E). See
-   `monorepo-supervisor-ops` empty-fleet §6.
+   `monorepo-supervisor-ops` empty-fleet recovery (RAM / sibling cases).
 
 Let `REPO` be the selected harness project directory (which may be below the Git
 top-level), `CONTROL` this skill directory, and
@@ -176,8 +176,9 @@ For each returned event:
 - **Wake Triage** (`skills/generator/lib/wake-triage.mjs`): each `events` row
   includes `wakeTriage: { action, reason }` (`absorb` | `fold` | `wake`).
   `input_required` and goal-scoped inputs always wake; healthy progress folds;
-  empty-fleet progress with remaining work stays actionable. Use `status.wakeTriage`
-  for a batch hint without parsing the full journal.
+  unrepaired `empty_fleet_actionable` / `dead_runtime` wake; empty-fleet progress
+  already repaired by Hybrid Empty-Fleet Recovery folds. Use `status.wakeTriage`
+  and `status.fleetSnapshot` for batch hints without parsing the full journal.
 - Deliver `immediate:true` events immediately. An `input_required` message must
   include its event ID, scope/context, reason, evidence, and permitted choices.
 - Deliver `progress` as the `--summary-minutes` status update (default 20). It
@@ -230,15 +231,18 @@ node "$CONTROL/scripts/harness-control.mjs" stop   --repo "$REPO"
 
 **Control-host beacon (ADR-0019):** `harness-control stop` and in-process shutdown
 consult `skills/generator/lib/control-beacon.mjs` before soft stop.
-Soft stop is denied while workers are live, required journal consumers (default
-`herdr-notify`) are behind the journal tip, or an `input_required` is unacked.
+Soft stop is denied while workers are live (live pid and/or live Run State
+owner/child; pane when applicable - never default-live without evidence),
+required journal consumers (default `herdr-notify`) are behind the journal tip,
+or an `input_required` is unacked.
 After a bounded wait (~60s) surface an Input Request instead of forcing exit.
 `kill-supervisor` and `--force` fleet recovery remain authorized force paths
 (ADR-0016). Turn-end shutdown always plans `{ waitForFinalizers: true }` before
 lease release.
 
-Never infer completion from an empty queue or agent prose. Completion requires a
-persisted `run_completed` event produced by mandatory Goal Review on the integrated plan branch.
+Never infer completion from an empty queue or agent prose.
+Completion requires a persisted `run_completed` event produced by mandatory Goal Review on the integrated plan branch.
+Cite `fleetSnapshot.lastRunCompletedSummary` and Goal Review evidence when reporting plan success.
 
 ## Worker health and fail-closed ops
 
@@ -246,20 +250,30 @@ persisted `run_completed` event produced by mandatory Goal Review on the integra
 (`healthy` | `waiting_expected` | `stuck` | `done`).
 It is **not** the pass/fail signal for Work Items — see Hard rules above.
 
+Prefer `status.fleetSnapshot` ops fields (`supervisorLive`, `ghostClaims`,
+`emptyFleetActionable`, `needsGoalReviewRetry`, `lastRunCompletedSummary`) and
+recent Control Events over re-scraping raw state files.
+The supervisor tick owns Hybrid Empty-Fleet Recovery (ghost claims, dead locks,
+orphan PIDs, re-admit when capacity allows).
+The Control Host LLM acts only on Wake Triage judgment, quota pauses, cross-project
+RAM contention, and operator playbooks in `monorepo-supervisor-ops`.
+
 Herdr `working` / run-state heartbeats alone are not proof of progress.
 Never recycle `waiting_expected` merge_lock when the holder is alive, or MCP warmup
 still under budget — only recycle `stuck`.
 Close the whole herdr tab when `workerHealth=done` / Run State is terminal.
 
-### Every supervisor tick / 10-min check (ordered)
+### Every supervisor tick (ordered)
 
-1. `harness-control status` for liveness, capacity, pending inputs, `workerHealth`,
-   `mergeLock`.
-2. Read herdr pane tails (`visible` when scroll=0) for stuck vs healthy activity.
+1. `harness-control status` — read `fleetSnapshot`, `workerHealth`, `mergeLock`,
+   capacity, pending inputs, and `wakeTriage`.
+2. Scan recent Control Events for unrepaired `empty_fleet_actionable`,
+   `dead_runtime`, and other wake kinds; fold/absorb progress the tick already
+   repaired.
 3. **Always** open the latest Evidence Artifact logs for any WI that finished or
-   failed QA / INTEGRATION_QA / Goal Review since the last tick. Read the bottom
-   JSON verdict + `defects`. Compare against status counters — if they disagree,
-   the evidence log wins.
+   failed QA / INTEGRATION_QA / Goal Review since the last tick.
+   Read the bottom JSON verdict + `defects`.
+   Compare against status counters — if they disagree, the evidence log wins.
 4. If INTEGRATION_QA defects contradict an earlier empty-defect `qa: true`
    (false green: SKIP_WEB_SERVER, host-only smoke, unrebuilt compose image),
    invalidate that QA mentally and `respond --action retry` with guidance that
@@ -269,34 +283,24 @@ Close the whole herdr tab when `workerHealth=done` / Run State is terminal.
    `status.wakeTriage.shouldWake === false` (or the events batch is only
    fold/absorb) **and** progress counters / `workers` are unchanged since the
    last fleet report, **or** `status` is already `complete`/`stopped` with a
-   persisted `run_completed`. In that idle/complete case: ack the folded/absorbed
-   event IDs, skip user narration, **cancel** the 20-min `/loop` /
-   `ScheduleWakeup`, and exit to closeout if complete. Do not keep waking just
-   to say "still idle."
-6. **RAM / sibling starvation check:** if this project has remaining work,
-   `workers={}` (or a resumable Run State with dead PIDs), and
-   `capacity.memory.slots=0` while `ps` shows sibling `next-server` / heavy
-   worktree runtimes, free sibling capacity before the next progress narration
-   (Hard rule 6). Re-admit the blocker, then let dependents resume.
+   persisted `run_completed` / `fleetSnapshot.lastRunCompletedSummary`.
+   In that idle/complete case: ack the folded/absorbed event IDs, skip user
+   narration, **cancel** the 20-min `/loop` / `ScheduleWakeup`, and exit to
+   closeout if complete. Do not keep waking just to say "still idle."
+6. **RAM / sibling starvation check:** when `fleetSnapshot.emptyFleetActionable`
+   and `capacity.memory.slots=0` while siblings hold heavy runtimes, free sibling
+   capacity before the next progress narration (Hard rule 6).
+   Re-admit the blocker, then let dependents resume.
 
-If the fleet is empty, finished tabs are still open, or health is `stuck`, act
-immediately and harden this skill / `monorepo-supervisor-ops` / harness code in the
-same turn — do not only narrate (fail-closed). **Acting without updating the
-workflow is also incomplete** (Hard rule 5: self-improvement).
+If `fleetSnapshot.emptyFleetActionable`, finished tabs are still open, or health
+is `stuck`, act immediately on judgment cases and harden this skill /
+`monorepo-supervisor-ops` / harness code in the same turn — do not only narrate
+(fail-closed). **Acting without updating the workflow is also incomplete**
+(Hard rule 5: self-improvement).
 
-**Empty-fleet auto-recovery (tick-owned):** each supervisor tick clears dead
-same-host merge/state locks (`stale_lock_cleared`). When the fleet is empty after
-a clear, it resets crash-bound counts so auto-retry can run again. Ghost run-state
-PIDs outside `workers` are not treated as a successful retry (orphan SIGTERM +
-defer) - that used to drop `retryQueue` and leave free capacity unused. Use
-manual `clear-dead-lock --force` only for remote locks or when the tick cannot
-clear them. See `monorepo-supervisor-ops` for quota/RAM stalls.
-
-**Never treat "contexts finished / foundation idle" as healthy** when
-`workers={}`, remaining Work Items (or pending `input_required`) remain, and the
-run is not `complete`/`stopped`. That is empty-fleet failure: respond pending
-inputs, clear orphan worktree dirs / locks, free sibling governor/RAM capacity,
-and admit the next context the same turn. Do not only narrate idle.
+Use manual `clear-dead-lock --force` only for remote locks or when the tick
+cannot clear them. See `monorepo-supervisor-ops` for quota/RAM stalls and
+multi-project `fleet-snapshot`.
 
 Custom `retryQueue[context].guidance` wins over auto-retry generics.
 Never auto-retry `coding agent failed three times` — needs operator or Repair Plan

@@ -2111,7 +2111,16 @@ test('wake triage fleet snapshot from supervisor state', async () => {
   assert.equal(fleet.pendingInputs, 1)
   assert.equal(fleet.retryQueueSize, 1)
   const progress = { id: 8, kind: 'progress', workers: 0, total: 3, integrated: 1 }
-  assert.deepEqual(classify(progress, fleet).action, 'wake')
+  assert.deepEqual(classify(progress, fleet).action, 'fold')
+  const staleProgress = { id: 9, kind: 'progress', workers: 0, total: 3, integrated: 1, blocked: 1 }
+  const emptyFleet = fleetSnapshotFromState({
+    status: 'running',
+    workers: {},
+    progress: { total: 3, integrated: 1, blocked: 1 },
+    pendingInputs: {},
+    retryQueue: {},
+  }, { ghostClaims: [{ context: 'ghost' }] })
+  assert.deepEqual(classify(staleProgress, emptyFleet).action, 'wake')
 })
 
 test('fleet snapshot builds structured multi-project bearings', async () => {
@@ -2157,6 +2166,156 @@ test('fleet snapshot builds structured multi-project bearings', async () => {
   assert.equal(fleet.projects.length, 2)
   assert.equal(fleet.projects[1].status, 'complete')
   assert.equal(fleetSnapshotFromState(stateA).workers, 1)
+})
+
+test('fleet snapshot ops fields derive supervisor, ghosts, and run_completed summary', async () => {
+  const {
+    buildProjectSnapshot,
+    fleetSnapshotFromState,
+    lastRunCompletedSummaryFromEvents,
+    deriveSupervisorLive,
+    isEmptyFleetRepaired,
+  } = await import('../skills/generator/lib/fleet-snapshot.mjs')
+
+  const events = [
+    { id: 1, kind: 'progress' },
+    { id: 2, kind: 'run_completed', summary: 'Goal Review passed' },
+  ]
+  assert.equal(lastRunCompletedSummaryFromEvents(events), 'Goal Review passed')
+  assert.equal(deriveSupervisorLive({ supervisorPid: process.pid }, {
+    processAlive: (pid) => pid === process.pid,
+    localHost: 'local',
+  }), true)
+
+  const project = buildProjectSnapshot({
+    id: 'appA',
+    state: {
+      status: 'running',
+      supervisorPid: null,
+      workers: {},
+      progress: { total: 3, integrated: 1, blocked: 1 },
+      pendingInputs: {},
+      retryQueue: {},
+    },
+    events,
+    ghostClaims: [{ context: 'ghost' }],
+    wakeExtended: {
+      queueComplete: false,
+      integrationHead: '',
+      reviewedHead: '',
+      retryGoalReview: false,
+    },
+  })
+  assert.equal(project.supervisorLive, false)
+  assert.equal(project.ghostClaims.length, 1)
+  assert.equal(project.emptyFleetActionable, true)
+  assert.equal(project.needsGoalReviewRetry, false)
+  assert.equal(project.lastRunCompletedSummary, 'Goal Review passed')
+
+  const repairedFleet = fleetSnapshotFromState(
+    { status: 'running', workers: {}, progress: { total: 3, integrated: 1, blocked: 1 } },
+    { ghostClaims: [], repaired: true },
+  )
+  assert.equal(isEmptyFleetRepaired(repairedFleet), true)
+})
+
+test('wake triage hybrid empty-fleet rules absorb repaired actionable events', async () => {
+  const { classify, shouldWake } = await import('../skills/generator/lib/wake-triage.mjs')
+  const fleet = {
+    workers: 0,
+    counts: { total: 5, integrated: 2, blocked: 1 },
+    pendingInputs: 0,
+    status: 'running',
+    ghostClaims: [],
+    repaired: true,
+    emptyFleetActionable: true,
+  }
+  const progress = { id: 4, kind: 'progress', workers: 0, total: 5, integrated: 2, blocked: 1 }
+  assert.deepEqual(classify(progress, fleet), {
+    action: 'fold',
+    reason: 'routine progress snapshot',
+  })
+  assert.deepEqual(classify({
+    id: 5,
+    kind: 'empty_fleet_actionable',
+    workers: 0,
+    ghostCount: 0,
+    repaired: true,
+  }, fleet), {
+    action: 'absorb',
+    reason: 'empty fleet repaired by tick',
+  })
+  assert.deepEqual(classify({
+    id: 6,
+    kind: 'dead_runtime',
+    repaired: true,
+    ghostContexts: [],
+  }, fleet), {
+    action: 'fold',
+    reason: 'dead runtime repaired by tick',
+  })
+  assert.deepEqual(classify({
+    id: 7,
+    kind: 'dead_runtime',
+    repaired: false,
+    ghostContexts: ['ghost'],
+  }, fleet), {
+    action: 'wake',
+    reason: 'dead runtime needs operator attention',
+  })
+  assert.equal(shouldWake([progress], fleet), false)
+})
+
+test('observation admission gate maps phase and blocks weak-only validation hosts', async () => {
+  const {
+    validationKindFromAdmission,
+    observationAdmissionCheck,
+    observationMethodsForQueue,
+  } = await import('../skills/generator/lib/observation-method.mjs')
+  assert.equal(validationKindFromAdmission({ mode: 'goal-review' }), 'GOAL_REVIEW')
+  assert.equal(validationKindFromAdmission({ phase: 'qa' }), 'QA')
+  assert.equal(validationKindFromAdmission({ phase: 'coding' }), null)
+
+  const gate = observationAdmissionCheck({
+    kind: 'QA',
+    roles: { validation: [{ harness: 'pi', model: 'x' }] },
+    observationMethods: ['http'],
+    host: 'claude',
+  })
+  assert.equal(gate.ok, false)
+  assert.match(gate.reason, /Observation Hard Gate/)
+
+  const methods = observationMethodsForQueue([
+    { id: 'WI-1', category: 'functional', description: 'GET /health returns 200', acceptance_checks: [] },
+    { id: 'WI-2', category: 'static', description: 'grep LICENSE', acceptance_checks: [] },
+  ])
+  assert.ok(methods.includes('http'))
+})
+
+test('buildFleetSnapshot supports multi-project inputs', async () => {
+  const { buildFleetSnapshot } = await import('../skills/generator/lib/fleet-snapshot.mjs')
+  const fleet = buildFleetSnapshot({
+    projects: [
+      {
+        id: 'appA',
+        root: '/repo/appA',
+        state: { status: 'running', workers: { core: {} }, progress: { total: 2, integrated: 1 } },
+        eventsTip: 3,
+        ghostClaims: [],
+      },
+      {
+        id: 'appB',
+        root: '/repo/appB',
+        state: { status: 'running', workers: {}, progress: { total: 4, integrated: 0, blocked: 2 } },
+        eventsTip: 8,
+        ghostClaims: [{ context: 'ghost' }],
+      },
+    ],
+  })
+  assert.equal(fleet.projects.length, 2)
+  assert.equal(fleet.projects[0].workers, 1)
+  assert.equal(fleet.projects[1].emptyFleetActionable, true)
+  assert.equal(fleet.projects[1].ghostClaims.length, 1)
 })
 
 test('finished tab reaper keeps live panes and rate-limits tick reaps', async () => {
@@ -2279,10 +2438,11 @@ test('control-beacon blocks soft stop and allows force when authorized', async (
   } = await import('../skills/generator/lib/control-beacon.mjs')
 
   const live = beaconSnapshot({
-    workers: [{ context: 'core', live: true }],
+    workers: [{ context: 'core', pid: process.pid, live: true }],
     journalTip: 5,
     consumerCursors: { 'herdr-notify': { eventId: 5 } },
     pendingInputs: {},
+    processAlive: (pid) => pid === process.pid,
   })
   assert.equal(stopAllowed('soft', live).allowed, false)
   assert.match(stopAllowed('soft', live).reason, /live workers/)

@@ -153,6 +153,7 @@ cp "$CONTROL" "$TMP/installed/skills/harness-supervisor/scripts/harness-control.
 cp "$ROOT/skills/supervisor/lib/herdr-spawn.mjs" "$TMP/installed/skills/harness-supervisor/lib/herdr-spawn.mjs"
 cp "$ROOT/skills/supervisor/lib/supervisor-preflight.mjs" "$TMP/installed/skills/harness-supervisor/lib/supervisor-preflight.mjs"
 cp -R "$ROOT/skills/generator" "$TMP/installed/skills/harness-generator"
+ln -sf harness-generator "$TMP/installed/skills/generator"
 git clone -q "$TMP/repo" "$TMP/namespaced"
 git -C "$TMP/namespaced" config user.name test
 git -C "$TMP/namespaced" config user.email test@example.invalid
@@ -268,7 +269,26 @@ supervisor_common_run_timeout 20 env PATH="$SUPERVISOR_PATH" "$NODE" "$CONTROL" 
 test ! -f "$TMP/emptyfleet/.git/harness-locks/generator-merge/owner"
 jq -e '(.crashCounts.stuckctx // 0) != 5 or (.crashCounts|length==0) or (.retryQueue.stuckctx != null) or (.pendingInputs["42"].status == "responded")' \
   "$TMP/emptyfleet/.git/harness-control/state.json" >/dev/null
+if ! jq -s -e 'any(.[]; .kind == "empty_fleet_actionable" or .kind == "dead_runtime")' \
+  "$TMP/emptyfleet/.git/harness-control/events.jsonl" >/dev/null 2>&1; then
+  echo 'not ok - empty fleet tick did not emit empty_fleet_actionable or dead_runtime' >&2
+  cat "$TMP/emptyfleet/.git/harness-control/events.jsonl" >&2 || true
+  exit 1
+fi
 echo 'ok - empty fleet tick clears dead merge lock and recovers past crash-bound'
+
+# --- already-reviewed-head short-circuit emits run_completed (Phase C) ---
+mkdir -p "$TMP/reviewed-head"
+supervisor_common_init_git_repo "$TMP/reviewed-head" true
+HEAD="$(git -C "$TMP/reviewed-head" rev-parse HEAD)"
+mkdir -p "$TMP/reviewed-head/.git/harness-control" "$TMP/reviewed-head/.git/harness-runs"
+printf '%s\n' '{"status":"complete","reviewedHead":"'"$HEAD"'"}' >"$TMP/reviewed-head/.git/harness-runs/goal-review.json"
+printf '%s\n' '{"status":"running","workers":{},"retryQueue":{}}' >"$TMP/reviewed-head/.git/harness-control/state.json"
+supervisor_common_run_once --repo "$TMP/reviewed-head" --host claude --once true --poll-ms 50 \
+  --max-workers 1 --quota-workers 1 --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100
+jq -e '.status == "complete"' "$TMP/reviewed-head/.git/harness-control/state.json" >/dev/null
+jq -s -e 'any(.[]; .kind == "run_completed")' "$TMP/reviewed-head/.git/harness-control/events.jsonl" >/dev/null
+echo 'ok - already-reviewed-head completes without spawning Goal Review worker'
 
 # --- preflight: ghost run + dead claim + stale capacity ---
 git clone -q "$TMP/repo" "$TMP/preflight"

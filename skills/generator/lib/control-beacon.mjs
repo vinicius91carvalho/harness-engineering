@@ -1,5 +1,7 @@
 /** Control-host beacon: fail-closed soft stop policy (ADR-0019). */
 
+import { isLiveRunOwner } from './orphan-claims.mjs'
+
 export const DEFAULT_REQUIRED_CONSUMERS = ['herdr-notify']
 
 /** Bounded soft-stop wait before surfacing Input Request (policy note only). */
@@ -12,13 +14,48 @@ export function turnEndDrain() {
   return { waitForFinalizers: true }
 }
 
-function isLiveWorker(worker = {}, processAlive = defaultProcessAlive) {
-  if (worker.live === true) return true
-  if (worker.live === false) return false
+/**
+ * Pure live check for a persisted worker row plus optional cross-check inputs.
+ * Herdr rows without a live pid or Run State owner/child are not live.
+ *
+ * @param {object} worker
+ * @param {object} [options]
+ * @param {(pid: number) => boolean} [options.processAlive]
+ * @param {object|null} [options.runState]
+ * @param {boolean|null} [options.paneExists] - false when herdr pane is gone
+ */
+export function resolveWorkerLive(worker = {}, {
+  processAlive = defaultProcessAlive,
+  runState = null,
+  paneExists = null,
+} = {}) {
+  // Never trust a persisted live flag alone - recompute from pid / Run State / pane.
   if (worker.status === 'done' || worker.health === 'done' || worker.terminal === true) return false
+  if (worker.live === false) return false
+
+  const isHerdr = worker.type === 'herdr' || worker.display === 'herdr'
   const pid = worker.childPid || worker.pid
-  if (pid) return processAlive(pid)
-  return worker.type === 'herdr' || worker.display === 'herdr'
+
+  if (pid && processAlive(pid)) {
+    if (isHerdr && worker.paneId && paneExists === false) return false
+    return true
+  }
+
+  const runStateInput = runState ?? worker.runState ?? null
+  if (runStateInput && isLiveRunOwner(runStateInput, processAlive)) {
+    if (isHerdr && worker.paneId && paneExists === false) return false
+    return true
+  }
+
+  return false
+}
+
+function isLiveWorker(worker = {}, processAlive = defaultProcessAlive) {
+  return resolveWorkerLive(worker, {
+    processAlive,
+    runState: worker.runState ?? null,
+    paneExists: worker.paneExists ?? null,
+  })
 }
 
 function pendingInputRows(pendingInputs = {}) {

@@ -35,6 +35,7 @@ const {
   isLiveRunOwner,
   classifyRunStateHealth,
   abandonGhostRun,
+  listGhostClaims,
 } = await importLib('orphan-claims.mjs')
 const { scopeClaims, runStateFile: runStatePath } = await importLib('project-keys.mjs')
 const { resolveProjectTopology } = await importLib('project-topology.mjs')
@@ -106,6 +107,8 @@ function exec(program, args, cwd = repo, allowFailure = false) {
 
 function git(args, allowFailure = false) { return exec('git', args, repo, allowFailure) }
 
+function gitIn(cwd, args, allowFailure = false) { return exec('git', args, cwd, allowFailure) }
+
 const topology = resolveProjectTopology(repo)
 const commonGit = topology.commonGit
 const herdrLayoutLock = join(commonGit, 'harness-control', 'herdr-layout.lock')
@@ -136,23 +139,76 @@ async function goalReviewContext() {
   return { goalState, head, clean, ledger }
 }
 
-async function fleetForWakeTriage(state) {
+async function fleetForWakeTriage(state, { ghostClaims = null, events = null } = {}) {
   const { fleetSnapshotFromState } = await importLib('wake-triage.mjs')
-  const fleet = fleetSnapshotFromState(state)
+  let ghosts = ghostClaims
+  if (!ghosts) ghosts = await listProjectGhostClaims()
+  const journalEvents = events ?? await readEvents()
   try {
     const queue = await queueWithLedger()
     const { goalState, head } = await goalReviewContext()
-    return {
-      ...fleet,
+    return fleetSnapshotFromState(state, {
       queueComplete: queue.length > 0 && queue.every((item) => item.integration === true),
       integrationHead: head,
       reviewedHead: goalState.reviewedHead || '',
       goalReviewStatus: goalState.status || '',
       retryGoalReview: Boolean(state.retryQueue?.['goal-review']),
-    }
+      ghostClaims: ghosts,
+      events: journalEvents,
+      supervisorLive: deriveSupervisorLiveForState(state),
+      localHost: hostname(),
+      leaseSeconds: Math.max(10, number('supervisor-lease-seconds', 30)),
+    })
   } catch {
-    return fleet
+    return fleetSnapshotFromState(state, {
+      ghostClaims: ghosts,
+      events: journalEvents,
+      supervisorLive: deriveSupervisorLiveForState(state),
+      localHost: hostname(),
+      leaseSeconds: Math.max(10, number('supervisor-lease-seconds', 30)),
+    })
   }
+}
+
+function deriveSupervisorLiveForState(state = {}) {
+  const heartbeatAge = Math.floor(Date.now() / 1000) - Number(state.heartbeatEpoch || 0)
+  const leaseSeconds = Math.max(10, number('supervisor-lease-seconds', 30))
+  const localLive = state.supervisorHost === hostname() && processAlive(state.supervisorPid)
+  const remoteLive = state.supervisorHost && state.supervisorHost !== hostname()
+    && (state.supervisorPid || state.status === 'starting') && heartbeatAge < leaseSeconds
+  return Boolean(localLive || remoteLive)
+}
+
+async function listProjectGhostClaims() {
+  const claims = await ownClaims()
+  const runStatesByContext = {}
+  for (const [key, claim] of Object.entries(claims)) {
+    const context = claim.context || key
+    runStatesByContext[context] = await readJson(runStateFile(context), {})
+  }
+  return listGhostClaims({ claims, runStatesByContext, processAlive })
+}
+
+async function readProjectRoles() {
+  try {
+    return await readJson(join(repo, '.harness', 'roles.json'), null)
+  } catch {
+    return null
+  }
+}
+
+async function observationMethodsForWorker({ mode, phase, featureIds = [] }) {
+  const { workItemObservationMethods, observationMethodsForQueue } = await importLib('observation-method.mjs')
+  const queue = await queueWithLedger()
+  if (mode === 'goal-review') return observationMethodsForQueue(queue)
+  const id = featureIds?.[0]
+  if (!id) return ['grep']
+  const item = queue.find((row) => String(row.id) === String(id))
+  if (!item) return ['grep']
+  if (Array.isArray(item.observation_methods) && item.observation_methods.length) {
+    return item.observation_methods
+  }
+  return workItemObservationMethods(item)
 }
 const stateFile = join(root, 'state.json')
 const eventFile = join(root, 'events.jsonl')
@@ -425,9 +481,39 @@ class Supervisor {
     herdrRetry,
     startedEvent,
     quotaTestTail = null,
+    phase = 'coding',
   }) {
     const key = claim.context
     if (this.workers.has(key)) return false
+    const {
+      validationKindFromAdmission,
+      observationAdmissionCheck,
+    } = await importLib('observation-method.mjs')
+    const validationKind = validationKindFromAdmission({ mode, phase })
+    if (validationKind) {
+      const roles = await readProjectRoles()
+      const observationMethods = await observationMethodsForWorker({
+        mode,
+        phase,
+        featureIds: claim.featureIds || [],
+      })
+      const gate = observationAdmissionCheck({
+        kind: validationKind,
+        roles,
+        observationMethods,
+        host: this.config.host,
+      })
+      if (!gate.ok) {
+        const scope = mode === 'goal-review' ? 'goal' : 'context'
+        await this.input(scope, gate.reason, {
+          kind: validationKind,
+          observationMethods,
+          phase,
+          mode,
+        }, scope === 'context' ? key : null)
+        return false
+      }
+    }
     const admission = await this.requestWorkerAdmission(key)
     if (!admission.granted) return false
     // Propagate the supervisor reservation id AND the same capacity knobs so the
@@ -760,9 +846,17 @@ class Supervisor {
         herdrTaskId,
         herdrRetry,
         quotaTestTail: quotaTail,
+        phase: runState.phase || 'coding',
       })
     }
-    return this.startWorkerRuntime({ claim, guidance, herdrRole, herdrTaskId, herdrRetry })
+    return this.startWorkerRuntime({
+      claim,
+      guidance,
+      herdrRole,
+      herdrTaskId,
+      herdrRetry,
+      phase: runState.phase || 'coding',
+    })
   }
 
   async completeGoal(result) {
@@ -1238,6 +1332,7 @@ class Supervisor {
       herdrTaskId: 'goal-review',
       herdrRetry: Math.max(1, Number(queued?.attempts) || 1),
       startedEvent: 'goal_review_started',
+      phase: 'goal-review',
     })
   }
 
@@ -1251,6 +1346,77 @@ class Supervisor {
       contexts.push({ context, status: runState.status, phase: runState.phase, attempt: runState.attempt, nextAction: runState.nextAction })
     }
     await this.emit('progress', { ...snapshot.counts, workers: this.workers.size, capacity: cap, contexts })
+  }
+
+  /**
+   * Hybrid empty-fleet recovery: clear mechanical blockers (ghost runs, dead locks)
+   * when the fleet is empty but work remains. Admission below re-admits when slots allow.
+   */
+  async repairEmptyFleetActionable({ external, snapshot }) {
+    const active = this.workers.size + external
+    if (active > 0) return { repaired: false, ghosts: [], recoverable: null, external }
+
+    const { isEmptyFleetActionable } = await importLib('wake-triage.mjs')
+    const fleet = await fleetForWakeTriage(this.state)
+    if (!isEmptyFleetActionable(null, fleet)) {
+      return { repaired: false, ghosts: fleet.ghostClaims || [], recoverable: null, external }
+    }
+
+    const claims = await ownClaims()
+    const runStatesByContext = {}
+    for (const [key, claim] of Object.entries(claims)) {
+      const context = claim.context || key
+      runStatesByContext[context] = await readJson(runStateFile(context), {})
+    }
+    const ghosts = listGhostClaims({ claims, runStatesByContext, processAlive })
+    const staleLocks = clearStaleGeneratorLocks(repo)
+    let repaired = false
+
+    for (const cleared of staleLocks) {
+      await this.emit('stale_lock_cleared', { lock: cleared.lock, reason: cleared.reason }, false)
+      repaired = true
+    }
+    if (staleLocks.length > 0 && Object.keys(this.state.crashCounts || {}).length > 0) {
+      this.state.crashCounts = {}
+      repaired = true
+    }
+
+    const ghostContexts = []
+    for (const ghost of ghosts) {
+      ghostContexts.push(ghost.context)
+      if (ghost.runState) {
+        await atomicJson(runStateFile(ghost.context), abandonGhostRun(ghost.runState, {
+          reason: 'empty-fleet: ghost run abandoned before re-admission',
+        }))
+        repaired = true
+      }
+    }
+
+    const deadRuntime = ghostContexts.length > 0 || staleLocks.length > 0
+    if (deadRuntime) {
+      await this.emit('dead_runtime', {
+        ghostContexts,
+        staleLocks: staleLocks.map((row) => row.lock),
+        repaired,
+      }, !repaired)
+    }
+
+    await this.emit('empty_fleet_actionable', {
+      workers: active,
+      ghostCount: ghostContexts.length,
+      repaired,
+      remaining: snapshot?.counts || this.state.progress || {},
+      staleLocks: staleLocks.map((row) => row.lock),
+    }, !repaired)
+
+    if (repaired) await this.save()
+    const reinspect = repaired ? await this.inspectClaims() : null
+    return {
+      repaired,
+      ghosts,
+      recoverable: reinspect?.recoverable ?? null,
+      external: reinspect?.external ?? external,
+    }
   }
 
   async tick() {
@@ -1284,7 +1450,13 @@ class Supervisor {
     await this.inspectHerdrWorkers()
     await this.reapFinishedHarnessTabs()
     await this.inspectStuckWorkers()
-    const { external, recoverable } = await this.inspectClaims()
+    let { external, recoverable } = await this.inspectClaims()
+    const preSnapshot = await this.snapshot()
+    const emptyRepair = await this.repairEmptyFleetActionable({ external, snapshot: preSnapshot })
+    if (emptyRepair.recoverable) {
+      external = emptyRepair.external
+      recoverable = emptyRepair.recoverable
+    }
     const active = this.workers.size + external
     const cap = await capacity(this.config, active)
     const snapshot = await this.snapshot()
@@ -1761,20 +1933,100 @@ async function clearDeadLockCmd() {
   process.stdout.write(`${JSON.stringify(result)}\n`)
 }
 
-async function buildFleetSnapshotForRepo(state = null, { wakeTriage = null } = {}) {
-  const { buildFleetSnapshot } = await importLib('fleet-snapshot.mjs')
-  const current = state ?? await readJson(stateFile, { status: 'not_started' })
-  const events = await readEvents()
+async function resolveFleetSnapshotTargets() {
+  const extraRoots = String(options.projects || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+  if (extraRoots.length) {
+    return extraRoots.map((rootPath) => {
+      const topo = resolveProjectTopology(resolve(rootPath))
+      return { id: topo.projectId, repo: resolve(rootPath), topology: topo }
+    })
+  }
+  const registry = topology.registry
+  if (registry?.projects?.length) {
+    return registry.projects.map((entry) => {
+      const projectRepo = resolve(topology.gitRoot, entry.path || entry.root || '.')
+      const topo = resolveProjectTopology(projectRepo)
+      return { id: entry.id || topo.projectId, repo: projectRepo, topology: topo }
+    })
+  }
+  return [{ id: projectId, repo, topology }]
+}
+
+async function loadProjectFleetInputs(target) {
+  const topo = target.topology
+  const projectStateFile = join(topo.controlRoot, 'state.json')
+  const projectEventFile = join(topo.controlRoot, 'events.jsonl')
+  const current = await readJson(projectStateFile, { status: 'not_started' })
+  let events = []
+  try {
+    const { readControlEvents } = await importLib('control-journal.mjs')
+    events = await readControlEvents(topo.controlRoot, projectEventFile)
+  } catch (error) {
+    if (error?.code !== 'ENOENT' && error?.code !== 'CONTROL_JOURNAL_CORRUPT') throw error
+  }
   const eventsTip = events.length ? Number(events[events.length - 1].id) || 0 : 0
-  return buildFleetSnapshot({
-    projects: [{
-      id: projectId,
-      root: repo,
-      state: current,
-      eventsTip,
-      wakeTriage,
-    }],
-  })
+  const claims = scopeClaims(
+    await readJson(join(topo.commonGit, 'generator-claims.json'), {}),
+    topo.projectPrefix.replace(/\/$/, ''),
+  )
+  const runStatesByContext = {}
+  for (const [key, claim] of Object.entries(claims)) {
+    const context = claim.context || key
+    runStatesByContext[context] = await readJson(
+      runStatePath(topo.commonGit, topo.projectPrefix, context),
+      {},
+    )
+  }
+  const ghostClaims = listGhostClaims({ claims, runStatesByContext, processAlive })
+  const wakeExtended = await (async () => {
+    try {
+      const catalog = readFeatureListFromIntegration(target.repo) ?? []
+      const ledger = await readLedger(ledgerPath(topo.commonGit, topo.projectId === 'root' ? '' : topo.projectId))
+      const queue = applyLedgerToCatalog(catalog, ledger)
+      const goalStateName = topo.projectPrefix
+        ? `${topo.projectId}--goal-review.json`
+        : 'goal-review.json'
+      const goalState = await readJson(join(topo.commonGit, 'harness-runs', goalStateName), {})
+      const head = gitIn(target.repo, ['rev-parse', integrationBranchName(target.repo)], true).stdout.trim()
+      return {
+        queueComplete: queue.length > 0 && queue.every((item) => item.integration === true),
+        integrationHead: head,
+        reviewedHead: goalState.reviewedHead || '',
+        goalReviewStatus: goalState.status || '',
+        retryGoalReview: Boolean(current.retryQueue?.['goal-review']),
+      }
+    } catch {
+      return {}
+    }
+  })()
+  return {
+    id: target.id,
+    root: target.repo,
+    state: current,
+    eventsTip,
+    events,
+    ghostClaims,
+    wakeExtended,
+    supervisorLive: deriveSupervisorLiveForState(current),
+    localHost: hostname(),
+    leaseSeconds: Math.max(10, number('supervisor-lease-seconds', 30)),
+  }
+}
+
+async function buildFleetSnapshotForRepo(state = null, { wakeTriage = null, targets = null } = {}) {
+  const { buildFleetSnapshot } = await importLib('fleet-snapshot.mjs')
+  const projectTargets = targets || await resolveFleetSnapshotTargets()
+  const projects = []
+  for (const target of projectTargets) {
+    const input = await loadProjectFleetInputs(target)
+    if (target.id === projectId && state) input.state = state
+    if (wakeTriage && target.id === projectId) input.wakeTriage = wakeTriage
+    projects.push(input)
+  }
+  return buildFleetSnapshot({ projects })
 }
 
 async function fleetSnapshotCmd() {
