@@ -43,7 +43,7 @@ Use this when several subprojects share one Git top-level (e.g. `core`, `web`,
 After editing in the harness-engineering repo:
 
 ```bash
-cp skills/generator/lib/{agent-spawn,agent-stream,supervisor-auto-respond,worker-health,repair-router,observation-method,control-journal,resource-governor,worktree-teardown,worker-lifecycle,browser-cleanup,claim-lease,evidence-guidance}.mjs ~/.agents/skills/generator/lib/
+cp skills/generator/lib/{agent-spawn,agent-stream,supervisor-auto-respond,orphan-claims,repair-router,observation-method,control-journal,resource-governor,worktree-teardown,worker-lifecycle,browser-cleanup,claim-lease,evidence-guidance}.mjs ~/.agents/skills/generator/lib/
 cp skills/generator/prompts/feature.mjs ~/.agents/skills/generator/prompts/
 cp skills/generator/orchestrator.mjs ~/.agents/skills/generator/
 cp skills/supervisor/scripts/harness-control.mjs ~/.agents/skills/supervisor/scripts/

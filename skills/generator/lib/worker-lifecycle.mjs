@@ -2,8 +2,6 @@ import { spawnSync } from 'node:child_process'
 import { appendFile, mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-export { planWorkerClosedActions, shouldEnqueueStuckWorkerRetry } from './failure-policy.mjs'
-
 /**
  * Shared supervisor worker runtime plans.
  * harness-control applies side effects from these pure builders.

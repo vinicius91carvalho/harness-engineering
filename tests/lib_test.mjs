@@ -6,12 +6,11 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
-import { parseObject, isProviderQuotaLimited, VERDICT_BEGIN, VERDICT_END } from '../skills/generator/lib/verdict.mjs'
+import { parseObject, isProviderQuotaLimited, VERDICT_BEGIN, VERDICT_END, isInfraNoise, isHarnessInfrastructureError, stuckThresholdMs } from '../skills/generator/lib/worker-outcome.mjs'
 import { readyWorkItems, isWorkItemReady, validateDependencyGraph } from '../skills/generator/lib/ready-work-items.mjs'
 import { parseProjectSpecification } from '../skills/generator/lib/project-specification.mjs'
 import { resolveProjectTopology } from '../skills/generator/lib/project-topology.mjs'
 import { claimKey, projectIdFromPrefix, resultFileFromRunState } from '../skills/generator/lib/project-keys.mjs'
-import { isHarnessInfrastructureError, stuckThresholdMs } from '../skills/generator/lib/stuck-worker.mjs'
 import { pickClaimCandidate, mergeDo, restoreDirtyRuntimeLogs } from '../skills/generator/lib/claim-lease.mjs'
 import { MARKER_PATTERN, hasMergeMarkers, unionAppendOnly } from '../skills/generator/lib/integrate-checkpoint.mjs'
 import { interpretWorkerOutcome } from '../skills/generator/lib/worker-outcome.mjs'
@@ -48,6 +47,12 @@ import { createWorkflowState } from '../skills/generator/lib/workflow-state.mjs'
 import { applyLedgerToCatalog, readLedger, ledgerPath } from '../skills/generator/lib/execution-ledger.mjs'
 import { readJson, atomicJson } from '../skills/generator/lib/fs-json.mjs'
 import { integrationBranchName, DEFAULT_INTEGRATION_BRANCH } from '../skills/generator/lib/integration-branch.mjs'
+import {
+  isLiveRunOwner,
+  classifyRunStateHealth,
+  listGhostClaims,
+  abandonGhostRun,
+} from '../skills/generator/lib/orphan-claims.mjs'
 import { cleanupBrowserOrphans } from '../skills/generator/lib/browser-cleanup.mjs'
 import { mergeAcquire, mergeRelease, clearDeadLock } from '../skills/generator/lib/claim-lease.mjs'
 import { hostSpawnVisible } from '../skills/generator/lib/agent-spawn.mjs'
@@ -469,7 +474,7 @@ test('pi herdr stream uses --mode json and formats thinking/tools', async () => 
 })
 
 test('parseObject reports complete vs open verdict', async () => {
-  const { parseObject, hasCompleteVerdict } = await import('../skills/generator/lib/verdict.mjs')
+  const { parseObject, hasCompleteVerdict } = await import('../skills/generator/lib/worker-outcome.mjs')
   const open = '===HARNESS-VERDICT-BEGIN===\n{"id":"x","ok":true}\n'
   const closed = `${open}===HARNESS-VERDICT-END===\n`
   assert.equal(hasCompleteVerdict(open), false)
@@ -516,6 +521,48 @@ test('integration branch resolves from file and env', () => {
     assert.equal(integrationBranchName(root, { env: { HARNESS_INTEGRATION_BRANCH: 'plan/override' } }), 'plan/override')
     assert.equal(DEFAULT_INTEGRATION_BRANCH, 'main')
   })
+})
+
+test('orphan-claims detects live, ghost, idle, and terminal run states', () => {
+  const alive = (pid) => pid === 42 || pid === 99
+  assert.equal(isLiveRunOwner({ ownerPid: 42 }, alive), true)
+  assert.equal(isLiveRunOwner({ childPid: 99 }, alive), true)
+  assert.equal(isLiveRunOwner({ ownerPid: 1 }, alive), false)
+
+  assert.equal(classifyRunStateHealth({ status: 'complete' }, alive).health, 'terminal')
+  assert.equal(classifyRunStateHealth({ status: 'running', ownerPid: 42 }, alive).health, 'live')
+  assert.equal(
+    classifyRunStateHealth({ status: 'running', ownerPid: 1, childPid: 2 }, alive).health,
+    'ghost',
+  )
+  assert.equal(
+    classifyRunStateHealth({ status: 'claimed', phase: 'claimed', heartbeatEpoch: 999 }, alive).health,
+    'idle',
+  )
+})
+
+test('listGhostClaims finds building contexts with dead PIDs', () => {
+  const alive = () => false
+  const ghosts = listGhostClaims({
+    claims: { 'core--alpha': { context: 'alpha', status: 'building' } },
+    runStatesByContext: {
+      alpha: { context: 'alpha', status: 'running', ownerPid: 100, childPid: null },
+    },
+    processAlive: alive,
+  })
+  assert.equal(ghosts.length, 1)
+  assert.equal(ghosts[0].context, 'alpha')
+})
+
+test('abandonGhostRun clears PIDs and marks abandoned', () => {
+  const next = abandonGhostRun(
+    { context: 'alpha', status: 'running', ownerPid: 1, childPid: 2, phase: 'coding' },
+    { reason: 'test abandon' },
+  )
+  assert.equal(next.status, 'abandoned')
+  assert.equal(next.ownerPid, null)
+  assert.equal(next.childPid, null)
+  assert.equal(next.abandonReason, 'test abandon')
 })
 
 
@@ -1142,12 +1189,9 @@ test('planWorkerClosedActions infra crash blocks without auto harness repair', (
 test('failure-policy facade modules re-export canonical symbols', async () => {
   const repairRouter = await import('../skills/generator/lib/repair-router.mjs')
   const autoRespond = await import('../skills/generator/lib/supervisor-auto-respond.mjs')
-  const lifecycle = await import('../skills/generator/lib/worker-lifecycle.mjs')
   assert.equal(repairRouter.routeRepair, routeRepair)
   assert.equal(repairRouter.inferDefectClass, inferDefectClass)
   assert.equal(autoRespond.planAutoRetryResponses, planAutoRetryResponses)
-  assert.equal(lifecycle.planWorkerClosedActions, planWorkerClosedActions)
-  assert.equal(lifecycle.shouldEnqueueStuckWorkerRetry, shouldEnqueueStuckWorkerRetry)
 })
 
 test('worker-result fences stale invocation and validates verdicts', async () => {
@@ -1421,10 +1465,10 @@ test('buildHostCommand passes model to pi and agent', async () => {
   )
 })
 
-test('worker-health classifies merge lock, verdict hang, and thinking', async () => {
+test('worker-outcome classifies merge lock, verdict hang, and thinking', async () => {
   const {
     classifyPaneTail, assessWorkerHealth, paneReadSource,
-  } = await import('../skills/generator/lib/worker-health.mjs')
+  } = await import('../skills/generator/lib/worker-outcome.mjs')
   assert.equal(classifyPaneTail('orchestrator: waiting for merge lock (holder pid=1)'), 'merge_lock')
   assert.equal(classifyPaneTail('thinking: next step\ntool → read'), 'tooling')
   assert.equal(classifyPaneTail('===HARNESS-VERDICT-END===\nagent: still working (20s since last log)'), 'verdict_hung')
@@ -2078,7 +2122,7 @@ test('evidence-corpus scans verdicts and proposes skill routes', async () => {
     recurrenceReport,
     proposeRoutes,
   } = await import('../skills/learning-loop/lib/evidence-corpus.mjs')
-  const { VERDICT_BEGIN, VERDICT_END } = await import('../skills/generator/lib/verdict.mjs')
+  const { VERDICT_BEGIN, VERDICT_END } = await import('../skills/generator/lib/worker-outcome.mjs')
   const tmp = mkdtempSync(join(tmpdir(), 'evidence-corpus-'))
   const evidenceDir = join(tmp, '.git', 'harness-evidence', 'root', 'run-a', 'core')
   mkdirSync(evidenceDir, { recursive: true })

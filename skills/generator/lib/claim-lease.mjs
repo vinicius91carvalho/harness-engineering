@@ -16,6 +16,7 @@ import { claimKey, sanitizeKey } from './project-keys.mjs'
 import { resolveProjectTopology } from './project-topology.mjs'
 import { readyWorkItems } from './ready-work-items.mjs'
 import { ledgerPath, readLedgerSync } from './execution-ledger.mjs'
+import { isLiveRunOwner, classifyRunStateHealth } from './orphan-claims.mjs'
 
 export const DEFAULT_BASE_PORT = Number(process.env.GEN_BASE_PORT || 5170)
 export const LEASE_TIMEOUT_SECONDS = Number(process.env.HARNESS_LEASE_TIMEOUT_SECONDS || 60)
@@ -613,14 +614,17 @@ export function resumeClaim(repo, selector, session, force = 'auto') {
       const now = Math.floor(Date.now() / 1000)
 
       if (ownerHost === host) {
-        let live = false
-        if (ownerPid && processAlive(ownerPid)) live = true
-        if (childPid && processAlive(childPid)) live = true
-        if (live) {
+        if (isLiveRunOwner(state, processAlive)) {
           process.stderr.write(`LIVE ${context} owner=${ownerPid} child=${childPid}\n`)
           return null
         }
-        if (phase === 'claimed' && now - heartbeat < LEASE_TIMEOUT_SECONDS && force !== 'force') {
+        const health = classifyRunStateHealth(state, processAlive)
+        if (
+          health.health === 'idle'
+          && phase === 'claimed'
+          && now - heartbeat < LEASE_TIMEOUT_SECONDS
+          && force !== 'force'
+        ) {
           process.stderr.write(`LIVE ${context} is waiting for its orchestrator to start\n`)
           return null
         }

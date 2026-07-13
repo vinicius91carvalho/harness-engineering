@@ -1,6 +1,6 @@
 /** Failure classification, routing, authorization, and recovery decisions (single policy module). */
 
-import { isHarnessInfrastructureError } from './stuck-worker.mjs'
+import { isHarnessInfrastructureError } from './worker-outcome.mjs'
 import { enrichGuidanceWithEvidence } from './evidence-guidance.mjs'
 
 export const FAILURE_CLASSES = [

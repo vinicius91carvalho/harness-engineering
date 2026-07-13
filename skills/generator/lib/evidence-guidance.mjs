@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { parseObject, VERDICT_BEGIN } from './verdict.mjs'
+import { parseObject, VERDICT_BEGIN } from './worker-outcome.mjs'
 
 const MAX_GUIDANCE_CHARS = 800
 const MAX_DEFECT_LINES = 3

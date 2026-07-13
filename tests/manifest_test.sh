@@ -48,12 +48,10 @@ echo 'ok - Claude, Codex, Cursor Agent, and OpenCode manifests all key off the s
 # ---- (ii) verdict parsing: shared lib + worker-outcome canonical module ----
 GEN=skills/generator/orchestrator.mjs
 SUP=skills/supervisor/scripts/harness-control.mjs
-LIB=skills/generator/lib/verdict.mjs
 OUTCOME=skills/generator/lib/worker-outcome.mjs
-grep -q "from './lib/verdict.mjs'" "$GEN" || { echo "not ok - $GEN must import ./lib/verdict.mjs" >&2; exit 1; }
+grep -q "from './lib/worker-outcome.mjs'" "$GEN" || { echo "not ok - $GEN must import ./lib/worker-outcome.mjs" >&2; exit 1; }
 grep -q "importLib('worker-outcome.mjs')" "$SUP" || { echo "not ok - $SUP must load skills/generator/lib/worker-outcome.mjs" >&2; exit 1; }
 grep -q 'export function parseVerdict' "$OUTCOME" || { echo "not ok - $OUTCOME must export parseVerdict" >&2; exit 1; }
-grep -q 'parseObject' "$LIB" || { echo "not ok - $LIB must re-export parseObject" >&2; exit 1; }
 echo 'ok - verdict parsing is centralized in skills/generator/lib/worker-outcome.mjs'
 
 echo 'ok - manifest and worker-outcome parity guards passed'

@@ -29,7 +29,13 @@ async function importLib(name) {
   return import(pathToFileURL(join(libDir, name)).href)
 }
 const { readJson, atomicJson } = await importLib('fs-json.mjs')
-const { isProviderQuotaLimited } = await importLib('verdict.mjs')
+const { isProviderQuotaLimited } = await importLib('worker-outcome.mjs')
+const { readFeatureListFromIntegration } = await importLib('git-repo.mjs')
+const {
+  isLiveRunOwner,
+  classifyRunStateHealth,
+  abandonGhostRun,
+} = await importLib('orphan-claims.mjs')
 const { scopeClaims, runStateFile: runStatePath } = await importLib('project-keys.mjs')
 const { resolveProjectTopology } = await importLib('project-topology.mjs')
 const { cleanupBrowserOrphans } = await importLib('browser-cleanup.mjs')
@@ -108,7 +114,7 @@ const projectId = topology.projectId
 const root = topology.controlRoot
 
 async function queueWithLedger() {
-  const catalog = await readJson(join(repo, 'feature_list.json'), [])
+  const catalog = readFeatureListFromIntegration(repo) ?? []
   const ledger = await readLedger(ledgerPath(commonGit, projectId === 'root' ? '' : projectId))
   return applyLedgerToCatalog(catalog, ledger)
 }
@@ -715,7 +721,7 @@ class Supervisor {
           ownerHost: runState.ownerHost, heartbeat: runState.heartbeat, ageSeconds: age,
           nextAction: 'Confirm retry to take over the stale Claim Lease',
         }, context)
-      } else if (processAlive(runState.ownerPid) || processAlive(runState.childPid)) {
+      } else if (isLiveRunOwner(runState, processAlive)) {
         external++
       } else {
         recoverable.push({ context, claim, runState })
@@ -1307,11 +1313,12 @@ class Supervisor {
         continue
       }
       const runState = await readJson(runStateFile(context), {})
+      const health = classifyRunStateHealth(runState, processAlive)
       // Ghost PID: run-state still names a live process, but this supervisor does
-      // not own a worker for the context. Do not pretend the retry succeeded —
+      // not own a worker for the context. Do not pretend the retry succeeded -
       // that cleared retryQueue and left an empty fleet. Terminate the orphan so
       // a later tick can force-resume; rehydrate already ran above.
-      if (processAlive(runState.ownerPid) || processAlive(runState.childPid)) {
+      if (health.health === 'live' && !this.workers.has(context)) {
         for (const pid of [runState.ownerPid, runState.childPid]) {
           if (!processAlive(pid)) continue
           try { process.kill(Number(pid), 'SIGTERM') } catch { /* ignore */ }
@@ -1323,6 +1330,11 @@ class Supervisor {
         }, false)
         await this.save()
         continue
+      }
+      if (health.health === 'ghost') {
+        await atomicJson(runStateFile(context), abandonGhostRun(runState, {
+          reason: 'retry: ghost run abandoned before resume',
+        }))
       }
       // Without a free slot, defer without burning retry attempts (ADR-0012).
       if (slots < 1) {

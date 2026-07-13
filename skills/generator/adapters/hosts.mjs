@@ -1,4 +1,4 @@
-import { hasCompleteVerdict, parseObject } from '../lib/verdict.mjs'
+import { hasCompleteVerdict, parseObject } from '../lib/worker-outcome.mjs'
 import { spawnHostAgent, hostSpawnVisible, terminateHostProcess } from '../lib/agent-spawn.mjs'
 import { createAgentStreamFormatter, withVisibleAgentMode } from '../lib/agent-stream.mjs'
 

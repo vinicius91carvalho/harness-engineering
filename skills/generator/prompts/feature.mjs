@@ -1,4 +1,4 @@
-import { VERDICT_HINT } from '../lib/verdict.mjs'
+import { VERDICT_HINT } from '../lib/worker-outcome.mjs'
 
 export { VERDICT_HINT }
 
