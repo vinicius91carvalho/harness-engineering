@@ -38,8 +38,9 @@ flowchart LR
     Q[qa-agent]
     I[initializer]
   end
-  P -->|writes spec| SPEC[(project_specs.xml)]
-  S -->|maps repo| SPEC
+  P -->|drafts| DRAFT[(spec draft)]
+  DRAFT -->|review submit| SPEC[(project_specs.xml)]
+  S -->|maps repo + review submit| SPEC
   G --> OR
   SV --> HC --> OR
   OR --> C

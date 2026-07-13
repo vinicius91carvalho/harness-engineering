@@ -143,6 +143,8 @@ flowchart TB
     INS[install.sh / manifests]
   end
   subgraph PIPE["Workflow pipeline"]
+    DRAFT[spec draft]
+    REVIEW[localhost spec review]
     SPEC[project_specs.xml]
     QUEUE[feature_list.json]
     ORCH[orchestrator.mjs]
@@ -159,6 +161,8 @@ flowchart TB
     HERDR[herdr panes]
   end
   INS --> PIPE
+  DRAFT --> REVIEW
+  REVIEW --> SPEC
   HC --> ORCH
   ORCH --> ATT
   ORCH --> CLAIM
@@ -184,7 +188,8 @@ flowchart LR
     Q[qa-agent]
     I[initializer]
   end
-  SK -->|writes spec| SPEC[(project_specs.xml)]
+  SK -->|drafts| DRAFT[(spec draft)]
+  DRAFT -->|localhost review submit| SPEC[(project_specs.xml)]
   SK --> HC
   SK --> OR
   HC --> OR
@@ -274,9 +279,9 @@ claude --version  # or: codex --version / opencode --version / pi --version</cod
             It covers three topics: <em>ambiguous requirements</em> (two readers could disagree, for example soft-delete vs hard-delete),
             <em>architectural trade-offs</em> (two viable approaches, for example SQLite vs Postgres),
             and <em>edge cases</em> (empty input, expired session, not-found).
-            Answers land in <code>&lt;planning_decisions&gt;</code> inside <code>project_specs.xml</code> and are proved by Acceptance Checks.
+            Answers land in <code>&lt;planning_decisions&gt;</code> inside the spec draft and are proved by Acceptance Checks.
             After reconcile, Work Items list <code>planning_decision_ids</code>.
-            Spec review does not open until the grilling <strong>Ready Gate</strong> passes.
+            Spec review does not open until the grilling <strong>Ready Gate</strong> passes; <code>project_specs.xml</code> is written only after you submit.
             You can also activate grilling directly by asking “grill me.”</p>
         </section>
 
@@ -477,8 +482,8 @@ sequenceDiagram
           <h2>Each phase explained</h2>
 
           <h3>1. Specify (planner / setup)</h3>
-          <p><strong>Planner</strong> turns your goal into <code>project_specs.xml</code>: Project Goal, technology stack, core features, stable Acceptance Check IDs (<code>AC-001</code>, …), and <code>&lt;planning_decisions&gt;</code> that record grilled answers.</p>
-          <p class="note"><strong>Grilling:</strong> before generator runs, the planner asks one question at a time about (1) ambiguous requirements - two readers could disagree; (2) architectural trade-offs - two viable approaches; (3) edge cases - empty input, auth expiry, not-found, and similar. Each resolution is written under <code>&lt;planning_decisions&gt;</code> and proved by Acceptance Checks. Spec review does not open until the <strong>Ready Gate</strong> passes.</p>
+          <p><strong>Planner</strong> turns your goal into a reviewed <code>project_specs.xml</code>: Project Goal, technology stack, core features, stable Acceptance Check IDs (<code>AC-001</code>, …), and <code>&lt;planning_decisions&gt;</code> that record grilled answers.</p>
+          <p class="note"><strong>Grilling:</strong> before generator runs, the planner asks one question at a time about (1) ambiguous requirements - two readers could disagree; (2) architectural trade-offs - two viable approaches; (3) edge cases - empty input, auth expiry, not-found, and similar. Each resolution is written under <code>&lt;planning_decisions&gt;</code> and proved by Acceptance Checks. Spec review does not open until the <strong>Ready Gate</strong> passes; <code>project_specs.xml</code> is written only after submit.</p>
           <p>The file is append-only after first build - new work adds checks and decisions; old IDs never change.</p>
           <p><strong>Setup</strong> does the same for an existing codebase: inventories tech, records contradictions, sets <code>&lt;mode&gt;existing-codebase&lt;/mode&gt;</code> for verify-first audits. Setup does not require a generator run and does not validate every feature.</p>
 

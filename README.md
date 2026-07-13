@@ -91,9 +91,9 @@ The installer then clones the **latest GitHub Release tag** (or a pin — see [I
 | Back up configuration | `/harness:update-project` | `/harness-update-project` | `/harness-update-project` |
 
 **Grilling** (built into planner): before `/harness:generator` runs, the planner asks one product question at a time about ambiguous requirements (two readers could disagree), architectural trade-offs (two viable approaches), and edge cases (empty input, expired session, not-found, and similar).
-Each answer is recorded in `project_specs.xml` under `<planning_decisions>` and proved by Acceptance Checks.
+Each answer is recorded in the spec draft under `<planning_decisions>` and proved by Acceptance Checks.
 After reconcile, Work Items in `feature_list.json` carry `planning_decision_ids`.
-Spec review does not open until the grilling **Ready Gate** passes.
+Spec review does not open until the grilling **Ready Gate** passes; `project_specs.xml` is written only after you submit.
 You can also activate grilling directly by asking “grill me.”
 Generator bundles `worktree-git-recovery` for narrow git-only fixes in a worktree.
 
@@ -120,7 +120,9 @@ The orchestrator picks them per phase from `agents/` and optional `.harness/role
 
 ```mermaid
 flowchart TD
-  U[You: Skill in chat] --> SPEC[project_specs.xml]
+  U[You: Skill in chat] --> DRAFT[spec draft]
+  DRAFT --> REVIEW[localhost spec review]
+  REVIEW -->|Submit and continue| SPEC[project_specs.xml]
   SPEC --> Q[feature_list.json]
   Q --> CL[Claim Lease + worktree]
   CL --> C[coding-agent]
