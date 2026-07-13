@@ -38,8 +38,9 @@ flowchart LR
     Q[qa-agent]
     I[initializer]
   end
-  P -->|writes spec| SPEC[(project_specs.xml)]
-  S -->|maps repo| SPEC
+  P -->|drafts| DRAFT[(spec draft)]
+  DRAFT -->|review submit| SPEC[(project_specs.xml)]
+  S -->|maps repo + review submit| SPEC
   G --> OR
   SV --> HC --> OR
   OR --> C
@@ -94,7 +95,7 @@ The planner's one-question-at-a-time interview about ambiguous requirements, arc
 _Avoid_: Optional brainstorm, free-form chat
 
 **Ready Gate**:
-The checklist grilling must pass before spec review opens or `project_specs.xml` is finalized: no open ambiguities, recorded trade-offs, and in-scope edge cases mapped to Acceptance Check IDs.
+The checklist grilling must pass before the blocking localhost spec review opens or `project_specs.xml` is finalized: no open ambiguities, recorded trade-offs, and in-scope edge cases mapped to Acceptance Check IDs, then the user must submit the review.
 _Avoid_: User said "looks good", planner gut feel
 
 **Planning Decision**:

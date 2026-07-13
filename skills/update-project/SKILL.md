@@ -50,6 +50,7 @@ jq empty .claude-plugin/*.json .codex-plugin/*.json .cursor-plugin/*.json .agent
 sh -n install.sh && bash -n skills/generator/claim.sh scripts/*.sh
 node --check skills/generator/orchestrator.mjs && node --check skills/generator/reconcile.mjs && node --check skills/supervisor/scripts/harness-control.mjs
 bash tests/install_test.sh && bash tests/reconcile_test.sh && bash tests/orchestrator_test.sh && bash tests/supervisor_test.sh && bash tests/site_test.sh && bash tests/claim_test.sh
+node tests/spec_review_test.mjs && node tests/spec_review_browser_test.mjs  # browser E2E requires chromium/chrome
 bash scripts/statusline.sh --selftest && bash scripts/sync-config.sh --selftest
 ```
 

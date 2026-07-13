@@ -6,6 +6,8 @@
 bash tests/install_test.sh
 bash tests/orchestrator_test.sh
 bash tests/claim_test.sh
+node tests/spec_review_test.mjs
+node tests/spec_review_browser_test.mjs  # requires chromium/chrome
 sh -n install.sh
 bash -n skills/generator/claim.sh scripts/*.sh
 jq empty .claude-plugin/*.json .codex-plugin/*.json \
@@ -14,9 +16,10 @@ jq empty .claude-plugin/*.json .codex-plugin/*.json \
 
 The fake-CLI tests cover non-TTY host selection, OpenCode detection before its
 user install directory reaches `PATH`, Claude-only scope, selected-host command
-isolation, zero-write dry runs, catalog policy, retry behavior, and
-`feature_list.json` verification. CI runs shell tests on Ubuntu and macOS and
-PowerShell parsing/tests on Windows.
+isolation, zero-write dry runs, catalog policy, retry behavior,
+`feature_list.json` verification, and the blocking localhost spec-review submit
+flow. CI installs Chromium for the browser E2E on Ubuntu, runs shell tests on
+Ubuntu and macOS, and runs PowerShell parsing/tests on Windows.
 
 ## Authenticated smoke tests
 

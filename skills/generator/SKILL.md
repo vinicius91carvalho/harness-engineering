@@ -259,7 +259,8 @@ First inspect this project's Goal Review Run State under `.git/harness-runs/`
 and require user guidance before running Goal Review again.
 
 Goal Review requires a clean integrated plan-branch checkout, except ephemeral
-runtime files matching `.harness/*.pid` (filtered by `lib/checkout-dirt.mjs`) —
+runtime files matching `.harness/*.pid`, build caches, and tracked
+`harness-progress/` Workflow Journals (filtered by `lib/checkout-dirt.mjs`) -
 those must not fail the dirty check.
 
 Goal Review reads the Project Goal and every Acceptance Check, reruns them at real

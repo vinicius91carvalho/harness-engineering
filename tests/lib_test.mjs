@@ -960,6 +960,24 @@ test('meaningfulCheckoutDirt ignores turbo/next build caches', () => {
   )
 })
 
+test('meaningfulCheckoutDirt ignores harness-progress Workflow Journals', () => {
+  const porcelain = [
+    ' M harness-progress/goal-review.md',
+    ' M web/harness-progress/session.md',
+    'AM harness-progress/notes.md',
+    ' M src/app.ts',
+  ].join('\n')
+  assert.equal(meaningfulCheckoutDirt(porcelain), ' M src/app.ts')
+  assert.equal(
+    isCheckoutCleanForGoalReview(' M harness-progress/goal-review.md\n'),
+    true,
+  )
+  assert.equal(
+    isCheckoutCleanForGoalReview(' M harness-progress/goal-review.md\n M src/app.ts\n'),
+    false,
+  )
+})
+
 test('goalReviewAdmissible boolean adapter covers fleet gates and already-reviewed-head short-circuit', () => {
   const integrated = baseSnapshot({ total: 1, integrated: 1 })
   assert.equal(goalReviewAdmissible({ snapshot: integrated, activeWorkers: 0, slots: 1, hasGoalReviewWorker: false }), true)

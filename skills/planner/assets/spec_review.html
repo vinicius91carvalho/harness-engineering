@@ -57,6 +57,7 @@
     }
     .btn.secondary { background: var(--panel); color: var(--text); }
     .btn:hover { filter: brightness(1.08); }
+    .btn:disabled { opacity: .55; cursor: not-allowed; filter: none; }
     .summary { color: var(--muted); font-size: .9rem; }
     .cards { display: grid; gap: .85rem; }
     .card {
@@ -144,17 +145,17 @@
     <p class="meta"><strong>__PROJECT_NAME__</strong> · revision __REVISION__</p>
     <div class="instructions">
       <strong>Review every item before <code>project_specs.xml</code> is written.</strong>
+      <p class="path-box" id="session-url">Active review session: use this window only. Older review tabs will not notify the planner.</p>
       <ol>
         <li>Click a card to read the full specification detail (sections, Acceptance Checks, and planning decisions).</li>
         <li>Confirm grilled decisions: ambiguities, architectural trade-offs, and edge cases must look resolved and linked to checks.</li>
         <li>Add a comment on any item that needs changes, or check <em>Confirmed</em> when it is correct.</li>
-        <li>Click <strong>Export feedback</strong>, then save the file to:</li>
+        <li>Click <strong>Submit and continue</strong>. The planner unblocks immediately; this window should close.</li>
       </ol>
-      <p class="path-box"><code id="feedback-path">__FEEDBACK_PATH__</code></p>
-      <p class="path-box">Return to the planner session. It will apply comments, regenerate this page, and repeat until every item is confirmed.</p>
+      <p class="path-box" id="submit-help">Every item must be confirmed or have a comment before submit.</p>
     </div>
     <div class="toolbar">
-      <button class="btn" type="button" onclick="exportFeedback()">Export feedback</button>
+      <button class="btn" id="submit-btn" type="button" onclick="submitFeedback()">Submit and continue</button>
       <button class="btn secondary" type="button" onclick="confirmAll()">Confirm all</button>
       <span class="summary" id="summary"></span>
     </div>
@@ -164,10 +165,13 @@
     const REVISION = __REVISION__;
     const ITEMS = __ITEMS_DATA__;
     const INITIAL_FEEDBACK = __INITIAL_FEEDBACK__;
-    const FEEDBACK_PATH = '__FEEDBACK_PATH__';
+    const FEEDBACK_PATH = __FEEDBACK_PATH__;
+    const REVIEW_ORIGIN = __REVIEW_ORIGIN__;
+    const REVIEW_TOKEN = __REVIEW_TOKEN__;
     const storageKey = `harness-spec-review:${FEEDBACK_PATH}:${REVISION}`;
 
     let feedbackById = {};
+    const openIds = new Set();
     for (const row of INITIAL_FEEDBACK) feedbackById[row.id] = { ...row };
     try {
       const saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
@@ -189,24 +193,61 @@
         .replaceAll('"', '&quot;');
     }
 
+    function statusLabel(row) {
+      const comment = String(row.comment || '').trim();
+      if (row.confirmed) return 'confirmed';
+      if (comment) return 'comment';
+      return 'pending';
+    }
+
+    function paintCardChrome(card, row) {
+      const comment = String(row.comment || '').trim();
+      card.classList.toggle('confirmed', Boolean(row.confirmed));
+      card.classList.toggle('has-comment', Boolean(comment) && !row.confirmed);
+      const status = card.querySelector('[data-status]');
+      if (status) status.textContent = statusLabel(row);
+      const checkbox = card.querySelector('input[type="checkbox"]');
+      if (checkbox && checkbox.checked !== Boolean(row.confirmed)) checkbox.checked = Boolean(row.confirmed);
+      const textarea = card.querySelector('textarea');
+      if (textarea && textarea.value !== String(row.comment || '')) {
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        textarea.value = row.comment || '';
+        if (document.activeElement === textarea) {
+          try { textarea.setSelectionRange(start, end); } catch {}
+        }
+      }
+    }
+
     function render() {
       const root = document.getElementById('cards');
+      const activeId = document.activeElement?.dataset?.itemId || null;
+      const selection = activeId && document.activeElement?.tagName === 'TEXTAREA'
+        ? { start: document.activeElement.selectionStart, end: document.activeElement.selectionEnd }
+        : null;
       root.innerHTML = '';
       for (const item of ITEMS) {
         const row = rowFor(item.id);
         const comment = String(row.comment || '').trim();
         const card = document.createElement('article');
+        card.dataset.id = item.id;
         card.className = 'card' + (row.confirmed ? ' confirmed' : '') + (comment && !row.confirmed ? ' has-comment' : '');
+        if (openIds.has(item.id)) card.classList.add('open');
         const head = document.createElement('div');
         head.className = 'card-head';
-        head.addEventListener('click', () => card.classList.toggle('open'));
+        head.addEventListener('click', () => {
+          const willOpen = !card.classList.contains('open');
+          card.classList.toggle('open', willOpen);
+          if (willOpen) openIds.add(item.id);
+          else openIds.delete(item.id);
+        });
         head.innerHTML = `
           <span class="kind ${escapeHtml(item.kind || 'section')}">${escapeHtml(item.kind || 'section')}</span>
           <div style="flex:1">
             <div class="title">${escapeHtml(item.title || item.id)}</div>
             ${item.summary ? `<div class="summary-line">${escapeHtml(item.summary)}</div>` : ''}
           </div>
-          <span class="kind">${row.confirmed ? 'confirmed' : comment ? 'comment' : 'pending'}</span>`;
+          <span class="kind" data-status>${statusLabel(row)}</span>`;
         const body = document.createElement('div');
         body.className = 'card-body';
         const detail = document.createElement('div');
@@ -222,22 +263,33 @@
         const label = document.createElement('label');
         label.textContent = 'Comment (planner will revise this item)';
         const textarea = document.createElement('textarea');
+        textarea.dataset.itemId = item.id;
         textarea.value = row.comment || '';
         textarea.addEventListener('input', () => updateComment(item.id, textarea.value));
         const confirmLabel = document.createElement('label');
         confirmLabel.className = 'confirm-row';
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
+        checkbox.dataset.itemId = item.id;
         checkbox.checked = Boolean(row.confirmed);
         checkbox.addEventListener('change', () => updateConfirmed(item.id, checkbox.checked));
         confirmLabel.appendChild(checkbox);
-        confirmLabel.appendChild(document.createTextNode(' Confirmed — this item is correct'));
+        confirmLabel.appendChild(document.createTextNode(' Confirmed - this item is correct'));
         body.appendChild(label);
         body.appendChild(textarea);
         body.appendChild(confirmLabel);
         card.appendChild(head);
         card.appendChild(body);
         root.appendChild(card);
+      }
+      if (activeId) {
+        const focusEl = root.querySelector(`[data-item-id="${CSS.escape(activeId)}"]`);
+        if (focusEl) {
+          focusEl.focus();
+          if (selection && focusEl.tagName === 'TEXTAREA') {
+            try { focusEl.setSelectionRange(selection.start, selection.end); } catch {}
+          }
+        }
       }
       updateSummary();
       persist();
@@ -247,14 +299,30 @@
       const row = rowFor(id);
       row.comment = value;
       if (value.trim()) row.confirmed = false;
-      render();
+      openIds.add(id);
+      const card = document.querySelector(`article[data-id="${CSS.escape(id)}"]`);
+      if (card) {
+        card.classList.add('open');
+        paintCardChrome(card, row);
+      }
+      updateSummary();
+      persist();
     }
 
     function updateConfirmed(id, value) {
       const row = rowFor(id);
       row.confirmed = value;
       if (value) row.comment = '';
-      render();
+      openIds.add(id);
+      const card = document.querySelector(`article[data-id="${CSS.escape(id)}"]`);
+      if (card) {
+        card.classList.add('open');
+        const textarea = card.querySelector('textarea');
+        if (textarea && value) textarea.value = '';
+        paintCardChrome(card, row);
+      }
+      updateSummary();
+      persist();
     }
 
     function confirmAll() {
@@ -266,11 +334,32 @@
       render();
     }
 
+    function pendingIds() {
+      return ITEMS.filter((item) => {
+        const row = rowFor(item.id);
+        const comment = String(row.comment || '').trim();
+        return !row.confirmed && !comment;
+      }).map((item) => item.id);
+    }
+
     function updateSummary() {
       const confirmed = ITEMS.filter((item) => rowFor(item.id).confirmed).length;
       const comments = ITEMS.filter((item) => String(rowFor(item.id).comment || '').trim()).length;
+      const pending = pendingIds();
       document.getElementById('summary').textContent =
-        `${confirmed}/${ITEMS.length} confirmed` + (comments ? ` · ${comments} with comments` : '');
+        `${confirmed}/${ITEMS.length} confirmed` +
+        (comments ? ` · ${comments} with comments` : '') +
+        (pending.length ? ` · ${pending.length} pending` : '');
+      const btn = document.getElementById('submit-btn');
+      if (btn) btn.disabled = pending.length > 0;
+      const help = document.getElementById('submit-help');
+      if (help) {
+        help.textContent = pending.length
+          ? `Pending before submit: ${pending.join(', ')}`
+          : (REVIEW_ORIGIN
+            ? 'Ready. Submit and continue writes feedback and closes this page for the planner.'
+            : 'Ready. Open this review via `spec-review.mjs open` so Submit can reach the planner.');
+      }
     }
 
     function persist() {
@@ -286,21 +375,62 @@
       return payload;
     }
 
-    function exportFeedback() {
-      const payload = persist();
-      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'spec-review-feedback.json';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      alert(`Save the downloaded file to:\n\n${FEEDBACK_PATH}\n\nThen return to the planner session.`);
+    async function submitFeedback() {
+      const pending = pendingIds();
+      if (pending.length) {
+        alert(`Confirm or comment every item first.\nPending: ${pending.join(', ')}`);
+        return;
+      }
+      if (!REVIEW_ORIGIN) {
+        alert('This page was opened as a static file. Run `spec-review.mjs open <project>` so Submit can notify the planner.');
+        return;
+      }
+      const btn = document.getElementById('submit-btn');
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Submitting...';
+      }
+      try {
+        const payload = persist();
+        const res = await fetch(`${REVIEW_ORIGIN}/feedback`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-harness-review-token': REVIEW_TOKEN },
+          body: JSON.stringify(payload),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || !body.ok) {
+          throw new Error(body.error || `submit failed (${res.status})`);
+        }
+        localStorage.removeItem(storageKey);
+        try {
+          const ch = new BroadcastChannel('harness-spec-review');
+          ch.postMessage({ type: 'submitted', origin: REVIEW_ORIGIN, exitCode: body.exitCode });
+          ch.close();
+        } catch {}
+        document.body.innerHTML = '<div class="wrap"><h1>Submitted to planner</h1><p class="meta">The planner session is continuing. This window should close now.</p><p class="path-box">If it stays open, close this window manually. Do not reuse older review tabs.</p></div>';
+        // App windows opened with chromium --app=... honor close(); plain tabs often ignore it.
+        window.close();
+        setTimeout(() => window.close(), 100);
+        setTimeout(() => window.close(), 500);
+      } catch (error) {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = 'Submit and continue';
+        }
+        updateSummary();
+        alert(`Could not submit feedback:\n${error.message || error}`);
+      }
+    }
+
+    if (REVIEW_ORIGIN) {
+      const session = document.getElementById('session-url');
+      if (session) session.textContent = `Active review session: ${REVIEW_ORIGIN} (this window only)`;
+      document.title = `Spec review · ${REVIEW_ORIGIN}`;
     }
 
     render();
+
+__E2E_AUTOMATION__
   </script>
 </body>
 </html>

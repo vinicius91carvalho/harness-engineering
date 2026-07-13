@@ -45,6 +45,13 @@ Workers stream live thinking, tool calls, and MCP warmup in the pane.
   <img src="assets/example-agent-herdr.png" alt="herdr workspace with supervisor overview and per-Work-Item agent tabs" width="960">
 </p>
 
+### Real project: CauseFlow AI
+
+[CauseFlow AI](https://github.com/vinicius91carvalho/causeflow-ai) is a real multi-app monorepo (`core`, `web`, `relay`, `public-docs`) that was migrated to a fully open-source, Docker-runnable stack through this harness end to end.
+The operator used **planner**, **setup**, **supervisor**, **generator**, and **monorepo-supervisor-ops** to remove AWS, Stripe, Clerk, and other SaaS dependencies, add `docker compose`, ship the marketing site to GitHub Pages, and drive real dashboard E2E against Core.
+The full operator brief - goal locks, sync playbook, cadence, closeout, and a day-by-day status log - is archived in [`examples/causeflow-ai-opensource-omnigent-prompt.md`](examples/causeflow-ai-opensource-omnigent-prompt.md) as a template you can adapt for your own monorepo goals.
+Delivery completed **2026-07-12** with all four subprojects at `run_completed`.
+
 ## Quickstart
 
 **1. Install once in a terminal** ([details](#install)):
@@ -60,7 +67,7 @@ The installer then clones the **latest GitHub Release tag** (or a pin — see [I
 
 | Step | What you type | What happens |
 | --- | --- | --- |
-| **2. Plan** | `/harness:planner Build a notes app where a user can publish a note and find it after reloading.` | Grills you one question at a time (ambiguities, trade-offs, edge cases), then writes `project_specs.xml` with `<domain>`, Acceptance Checks, and `<planning_decisions>` |
+| **2. Plan** | `/harness:planner Build a notes app where a user can publish a note and find it after reloading.` | Grills you one question at a time (ambiguities, trade-offs, edge cases), opens a blocking spec review until you submit, then writes `project_specs.xml` with `<domain>`, Acceptance Checks, and `<planning_decisions>` |
 | **3. Build** | `/harness:generator` | Claims work, codes, QA's, integrates — answer **All** for a new project |
 | **4. Know you're done** | Goal Review passes; every Work Item shows `implementation`, `qa`, and `integration` | Not when the chat goes quiet |
 
@@ -84,9 +91,9 @@ The installer then clones the **latest GitHub Release tag** (or a pin — see [I
 | Back up configuration | `/harness:update-project` | `/harness-update-project` | `/harness-update-project` |
 
 **Grilling** (built into planner): before `/harness:generator` runs, the planner asks one product question at a time about ambiguous requirements (two readers could disagree), architectural trade-offs (two viable approaches), and edge cases (empty input, expired session, not-found, and similar).
-Each answer is recorded in `project_specs.xml` under `<planning_decisions>` and proved by Acceptance Checks.
+Each answer is recorded in the spec draft under `<planning_decisions>` and proved by Acceptance Checks.
 After reconcile, Work Items in `feature_list.json` carry `planning_decision_ids`.
-Spec review does not open until the grilling **Ready Gate** passes.
+Spec review does not open until the grilling **Ready Gate** passes; `project_specs.xml` is written only after you submit.
 You can also activate grilling directly by asking “grill me.”
 Generator bundles `worktree-git-recovery` for narrow git-only fixes in a worktree.
 
@@ -113,7 +120,9 @@ The orchestrator picks them per phase from `agents/` and optional `.harness/role
 
 ```mermaid
 flowchart TD
-  U[You: Skill in chat] --> SPEC[project_specs.xml]
+  U[You: Skill in chat] --> DRAFT[spec draft]
+  DRAFT --> REVIEW[localhost spec review]
+  REVIEW -->|Submit and continue| SPEC[project_specs.xml]
   SPEC --> Q[feature_list.json]
   Q --> CL[Claim Lease + worktree]
   CL --> C[coding-agent]
@@ -128,7 +137,7 @@ See [CONTEXT.md](CONTEXT.md) for the full glossary and bounded contexts.
 
 ## How the workflow runs
 
-1. **Specify** — planner grills open product questions, then writes the Project Goal, product vocabulary and bounded contexts under `<domain>`, Acceptance Checks, and `<planning_decisions>` (setup maps an existing repo without grilling a new goal).
+1. **Specify** — planner grills open product questions, opens a localhost spec review until you submit, then writes the Project Goal, product vocabulary and bounded contexts under `<domain>`, Acceptance Checks, and `<planning_decisions>` (setup maps an existing repo without grilling a new goal).
 2. **Reconcile** — generator maps every check to a Work Item (missing mappings block execution).
 3. **Claim** — each ready context gets a lease, branch, worktree, and port.
 4. **Build & inspect** — coding-agent implements; qa-agent tests at a real boundary.
