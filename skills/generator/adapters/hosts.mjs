@@ -1,4 +1,4 @@
-import { hasCompleteVerdict, parseObject } from '../lib/worker-outcome.mjs'
+import { hasCompleteVerdict, parseVerdict } from '../lib/worker-outcome.mjs'
 import { spawnHostAgent, hostSpawnVisible, terminateHostProcess } from '../lib/agent-spawn.mjs'
 import { createAgentStreamFormatter, withVisibleAgentMode } from '../lib/agent-stream.mjs'
 
@@ -122,7 +122,7 @@ export async function runHostAgentSession({
       if (verdictSeen || settled) return
       const assistant = formatter?.assistantText() || ''
       if (!hasCompleteVerdict(assistant)) return
-      const parsed = parseObject(assistant)
+      const parsed = parseVerdict(assistant)
       if (!parsed || typeof parsed !== 'object' || !parsed.id) return
       verdictSeen = true
       parsedVerdict = parsed
@@ -168,7 +168,7 @@ export async function runHostAgentSession({
       const assistant = formatter?.assistantText()?.trim() || ''
       const detail = (stderr || assistant || stdout || '').trim()
       const parseSource = assistant || stdout || stderr
-      const parsed = parsedVerdict || parseObject(parseSource)
+      const parsed = parsedVerdict || parseVerdict(parseSource)
       const ok = (!timedOut && (code === 0 || (verdictSeen && parsed)))
       finish({
         ok,

@@ -2,6 +2,7 @@ import { appendFile, mkdir, readFile, rename, writeFile, unlink } from 'node:fs/
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { processAlive } from './orphan-claims.mjs'
 
 /**
  * Append-only Control Journal.
@@ -25,8 +26,7 @@ export function journalLockHolderAlive(lockPath) {
     const token = String(readFileSync(lockPath, 'utf8') || '').trim()
     const pid = Number(String(token).split('.')[0])
     if (!Number.isFinite(pid) || pid <= 0) return false
-    process.kill(pid, 0)
-    return true
+    return processAlive(pid)
   } catch {
     return false
   }
@@ -292,4 +292,30 @@ export async function compactControlJournal(controlRoot, {
       preservedLineage: lineagePreserved.length,
     }
   })
+}
+
+export async function maybeCompactControlJournal(controlRoot, {
+  minTail = 50,
+  lease = null,
+} = {}) {
+  const paths = journalPaths(controlRoot)
+  try {
+    const meta = existsSync(paths.meta) ? JSON.parse(await readFile(paths.meta, 'utf8')) : null
+    if (!meta || !Number.isFinite(Number(meta.lastId))) {
+      return await compactControlJournal(controlRoot, { minTail, lease })
+    }
+    const compactedThroughId = Number(meta.compactedThroughId || 0)
+    const tailEstimate = Number(meta.lastId) - compactedThroughId
+    if (tailEstimate <= minTail) {
+      return {
+        compacted: false,
+        skipped: true,
+        reason: 'tail-below-threshold',
+        kept: tailEstimate,
+      }
+    }
+  } catch {
+    return await compactControlJournal(controlRoot, { minTail, lease })
+  }
+  return await compactControlJournal(controlRoot, { minTail, lease })
 }

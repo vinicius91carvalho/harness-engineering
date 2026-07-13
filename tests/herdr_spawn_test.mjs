@@ -24,6 +24,7 @@ import {
   detectPaneMergeLockWait,
   paneShowsIdleShell,
   closeStaleHarnessPanesForProject,
+  createPaneSnapshot,
   listTabPanes,
   listHarnessWorkerTabs,
 } from '../skills/supervisor/lib/herdr-spawn.mjs'
@@ -150,6 +151,17 @@ const firstLog = spawnSync('cat', [log], { encoding: 'utf8', env }).stdout
 assert(firstLog.includes('1-r2'), 'worker runs in dedicated tab root pane')
 assert(firstLog.includes('PATH='), 'pane run forwards supervisor PATH into the worker pane')
 assert(firstLog.includes('HARNESS_HERDR_PANE=') && firstLog.includes('HARNESS_DISPLAY='), 'pane run injects herdr display env')
+
+resetLog()
+const snapshot = createPaneSnapshot()
+assert(paneExists(first.paneId, snapshot) === true, 'pane snapshot answers existence without pane get')
+assert(getPaneAgentStatus(first.paneId, snapshot) === 'working', 'pane snapshot answers agent status without pane get')
+assert(readPaneTail(first.paneId, 20, snapshot).includes('worker output'), 'pane snapshot reads tail')
+assert(readPaneTail(first.paneId, 20, snapshot).includes('worker output'), 'pane snapshot caches repeated tail reads')
+const snapshotLog = spawnSync('cat', [log], { encoding: 'utf8', env }).stdout
+assert((snapshotLog.match(/pane-list/g) || []).length === 1, 'pane snapshot uses one pane list')
+assert(!snapshotLog.includes('pane-get'), 'pane snapshot avoids pane get lookups')
+assert((snapshotLog.match(/pane-read/g) || []).length === 1, 'pane snapshot caches tail reads per lines/source')
 
 const second = spawnAgent('worker-core-foundation', ['node', '-e', 'console.log(2)'], {
   cwd: '/tmp/worktree',

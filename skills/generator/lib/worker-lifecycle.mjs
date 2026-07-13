@@ -103,6 +103,14 @@ export function planWorkerStop(worker, { signal = 'SIGTERM' } = {}) {
   return { kind: 'noop' }
 }
 
+export function processGroupForWorker(worker = {}, runState = {}) {
+  const type = worker?.type || worker?.display || null
+  if (type === 'herdr') {
+    return runState.ownerPid || worker?.pid || runState.childPid || null
+  }
+  return worker?.pid || runState.ownerPid || runState.childPid || null
+}
+
 export function planWorkerCleanupTargets(worker) {
   const owned = worker?.ownedResources || {}
   return {

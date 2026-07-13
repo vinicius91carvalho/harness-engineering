@@ -23,6 +23,7 @@ export const RESOURCE_CLEANUP_RULE =
   '(`docker compose rm -sf <app-services>` or stop those exact containers). Full ' +
   '`docker compose down --remove-orphans` is allowed only when you are the last user of that ' +
   'stack (no healthy shared infra still required by another live worker). ' +
+  'If you create private runtime resources, record exact PIDs/container names in `.harness/runtime-owned.jsonl` when practical. ' +
   'For named WI/AC containers you created: `docker rm -f` on those exact names ' +
   '(wi-ac-*, ac0*). Do not tear down compose stacks or containers you did not start. ' +
   'Cleanup failures belong in notes/defects; never skip the verdict to clean up.'

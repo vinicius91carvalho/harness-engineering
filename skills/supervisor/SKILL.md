@@ -92,7 +92,7 @@ node "$CONTROL/scripts/harness-control.mjs" preflight --repo "$REPO"
 Preflight always:
 
 1. `reconcile.mjs --check` (blocks start on failure → `needs_input` / amend)
-2. Prunes dead Resource Governor reservations
+2. Prunes dead Resource Governor reservations and stale Resource Governor locks
 3. Clears dead Claim Lease entries only when claim session **and** run-state
    owner/child PIDs are dead (never under a live herdr orchestrator; does not
    `git branch -D` — orphan worktree dirs are removed separately)
@@ -251,8 +251,14 @@ Cite `fleetSnapshot.lastRunCompletedSummary` and Goal Review evidence when repor
 It is **not** the pass/fail signal for Work Items — see Hard rules above.
 
 Prefer `status.fleetSnapshot` ops fields (`supervisorLive`, `ghostClaims`,
-`emptyFleetActionable`, `needsGoalReviewRetry`, `lastRunCompletedSummary`) and
+`emptyFleetActionable`, `needsGoalReviewRetry`, `lastRunCompletedSummary`,
+`hostResources`, `governorReservations`, `sharedRuntime`, `recoveryReasons`,
+`pressureAdvice`) and
 recent Control Events over re-scraping raw state files.
+`fleetSnapshot.workers` excludes worker rows with an explicit recorded PID that
+is no longer live.
+Resource Governor admission is swap-aware and reservation-weighted; zero capacity
+defers retries without burning Attempts.
 The supervisor tick owns Hybrid Empty-Fleet Recovery (ghost claims, dead locks,
 orphan PIDs, re-admit when capacity allows).
 The Control Host LLM acts only on Wake Triage judgment, quota pauses, cross-project
@@ -321,6 +327,8 @@ Supervisor teardown is no longer browser-only: `kill-worker`, `workerClosed`,
 and operator `harness-control stop` also run `cleanupWorktreeRuntime`
 (`.harness/app.pid` tree, worktree-scoped `next`/`tsx`/`esbuild`, and
 `docker compose down --remove-orphans`).
+For herdr workers, `kill-worker` targets the Run State owner process tree before
+falling back to the nested agent child PID.
 If `docker ps` still shows WI/AC leftovers (`wi-ac-*`, `ac0*`, completed
 subproject stacks) while no live worker owns them, treat that as a workflow
 defect: stop the orphans, then harden generator prompts/skills the same turn

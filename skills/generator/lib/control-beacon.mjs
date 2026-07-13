@@ -1,6 +1,6 @@
 /** Control-host beacon: fail-closed soft stop policy (ADR-0019). */
 
-import { isLiveRunOwner, processAlive as defaultProcessAlive } from './orphan-claims.mjs'
+import { processAlive as defaultProcessAlive, resolveWorkerLive } from './runtime-view.mjs'
 
 export const DEFAULT_REQUIRED_CONSUMERS = ['herdr-notify']
 
@@ -24,31 +24,7 @@ export function turnEndDrain() {
  * @param {object|null} [options.runState]
  * @param {boolean|null} [options.paneExists] - false when herdr pane is gone
  */
-export function resolveWorkerLive(worker = {}, {
-  processAlive = defaultProcessAlive,
-  runState = null,
-  paneExists = null,
-} = {}) {
-  // Never trust a persisted live flag alone - recompute from pid / Run State / pane.
-  if (worker.status === 'done' || worker.health === 'done' || worker.terminal === true) return false
-  if (worker.live === false) return false
-
-  const isHerdr = worker.type === 'herdr' || worker.display === 'herdr'
-  const pid = worker.childPid || worker.pid
-
-  if (pid && processAlive(pid)) {
-    if (isHerdr && worker.paneId && paneExists === false) return false
-    return true
-  }
-
-  const runStateInput = runState ?? worker.runState ?? null
-  if (runStateInput && isLiveRunOwner(runStateInput, processAlive)) {
-    if (isHerdr && worker.paneId && paneExists === false) return false
-    return true
-  }
-
-  return false
-}
+export { resolveWorkerLive }
 
 function pendingInputRows(pendingInputs = {}) {
   return Object.values(pendingInputs).filter((row) => {

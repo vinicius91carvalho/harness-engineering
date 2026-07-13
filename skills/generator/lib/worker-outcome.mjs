@@ -11,36 +11,44 @@ export const VERDICT_END = '===HARNESS-VERDICT-END==='
 
 export const VERDICT_HINT = `Emit that JSON as the very last thing you print, on its own lines, wrapped exactly:\n${VERDICT_BEGIN}\n{...}\n${VERDICT_END}`
 
-/** True when a full BEGIN…END verdict block is present (agent may hang after printing it). */
-export function hasCompleteVerdict(text) {
-  const open = String(text || '').lastIndexOf(VERDICT_BEGIN)
-  if (open < 0) return false
-  const rest = text.slice(open + VERDICT_BEGIN.length)
-  const close = rest.indexOf(VERDICT_END)
-  if (close < 0) return false
-  const body = rest.slice(0, close).trim()
+function parseJsonObject(candidate) {
   try {
-    const v = JSON.parse(body)
-    return Boolean(v && typeof v === 'object')
+    const parsed = JSON.parse(candidate)
+    return parsed && typeof parsed === 'object' ? parsed : null
   } catch {
-    return false
+    return null
   }
 }
 
+function delimitedVerdictBody(text, { requireEnd = false } = {}) {
+  const source = String(text || '')
+  const open = source.lastIndexOf(VERDICT_BEGIN)
+  if (open < 0) return null
+  const rest = source.slice(open + VERDICT_BEGIN.length)
+  const close = rest.indexOf(VERDICT_END)
+  if (requireEnd && close < 0) return null
+  return (close >= 0 ? rest.slice(0, close) : rest).trim()
+}
+
+/** True when a full BEGIN…END verdict block is present (agent may hang after printing it). */
+export function hasCompleteVerdict(text) {
+  const body = delimitedVerdictBody(text, { requireEnd: true })
+  return Boolean(body && parseJsonObject(body))
+}
+
 export function parseVerdict(text) {
-  const trimmed = text.trim()
-  const open = trimmed.lastIndexOf(VERDICT_BEGIN)
-  if (open >= 0) {
-    const rest = trimmed.slice(open + VERDICT_BEGIN.length)
-    const close = rest.indexOf(VERDICT_END)
-    const body = (close >= 0 ? rest.slice(0, close) : rest).trim()
-    try { const v = JSON.parse(body); if (v && typeof v === 'object') return v } catch {}
+  const trimmed = String(text || '').trim()
+  const body = delimitedVerdictBody(trimmed)
+  if (body != null) {
+    const parsed = parseJsonObject(body)
+    if (parsed) return parsed
   }
   const candidates = [trimmed, ...trimmed.split('\n').reverse()]
   const start = trimmed.indexOf('{'), end = trimmed.lastIndexOf('}')
   if (start >= 0 && end > start) candidates.push(trimmed.slice(start, end + 1))
   for (const candidate of candidates) {
-    try { const parsed = JSON.parse(candidate); if (parsed && typeof parsed === 'object') return parsed } catch {}
+    const parsed = parseJsonObject(candidate)
+    if (parsed) return parsed
   }
   return null
 }
@@ -52,19 +60,12 @@ export function isMalformedGoalReviewVerdict(text = '') {
   const parsed = parseVerdict(trimmed)
   if (parsed && typeof parsed.goal === 'boolean') return false
 
-  const open = trimmed.lastIndexOf(VERDICT_BEGIN)
-  if (open >= 0) {
-    const rest = trimmed.slice(open + VERDICT_BEGIN.length)
-    const close = rest.indexOf(VERDICT_END)
-    const body = (close >= 0 ? rest.slice(0, close) : rest).trim()
+  const body = delimitedVerdictBody(trimmed)
+  if (body != null) {
     if (!body) return true
-    try {
-      const value = JSON.parse(body)
-      if (!value || typeof value !== 'object' || !('goal' in value)) return true
-      return false
-    } catch {
-      return true
-    }
+    const value = parseJsonObject(body)
+    if (!value || !('goal' in value)) return true
+    return false
   }
 
   if (/\b(goal review )?(passed|passes)\b/i.test(trimmed)
@@ -74,9 +75,6 @@ export function isMalformedGoalReviewVerdict(text = '') {
   }
   return false
 }
-
-/** @deprecated use parseVerdict */
-export const parseObject = parseVerdict
 
 export function isProviderQuotaLimited(detail) {
   return /\b429\b|rate.?limit|usage limit|try again at|quota exceeded|too many requests/i.test(detail || '')
@@ -158,9 +156,6 @@ export function validateOutcome(value, { mode = null } = {}) {
   return { valid: errors.length === 0, mode: resolvedMode, errors, value }
 }
 
-/** @deprecated use validateOutcome */
-export const validateWorkerVerdict = validateOutcome
-
 export async function writeDurable(runStateFilePath, result) {
   const file = resultFileFromRunState(runStateFilePath)
   const payload = {
@@ -179,9 +174,6 @@ export async function writeDurable(runStateFilePath, result) {
   return file
 }
 
-/** @deprecated use writeDurable */
-export const writeWorkerResult = writeDurable
-
 export async function readDurable(runStateFilePath, { expectedInvocationId = null, expectedLeaseToken = null, expectedReviewedHead = null } = {}) {
   const file = resultFileFromRunState(runStateFilePath)
   const value = await readJson(file, null)
@@ -193,9 +185,6 @@ export async function readDurable(runStateFilePath, { expectedInvocationId = nul
   if (expectedLeaseToken && !value.leaseToken) return null
   return value
 }
-
-/** @deprecated use readDurable */
-export const readWorkerResult = readDurable
 
 export async function clearWorkerResult(runStateFilePath) {
   const file = resultFileFromRunState(runStateFilePath)
@@ -264,9 +253,6 @@ export function interpretClosed({
   }
   return result
 }
-
-/** @deprecated use interpretClosed */
-export const interpretWorkerOutcome = interpretClosed
 
 // --- Live health (pane signals → verdict / recycle) ---
 
@@ -540,9 +526,6 @@ export function assessLive(signals = {}) {
   }
 }
 
-/** @deprecated use assessLive */
-export const assessWorkerHealth = assessLive
-
 /** Prefer visible pane source when scrollback is empty. */
 export function paneReadSource(scrollMaxOffset = 0) {
   return Number(scrollMaxOffset) > 0 ? 'recent' : 'visible'
@@ -592,6 +575,3 @@ export function isInfraNoise(text = '') {
     || /\bkilling shell\b/i.test(blob)
     || /\bpane ended before run state completed\b/i.test(blob)
 }
-
-/** @deprecated use isInfraNoise */
-export const isHarnessInfrastructureError = isInfraNoise

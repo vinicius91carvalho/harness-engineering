@@ -3,19 +3,25 @@
  * Pure JSON builder — does not read sibling control dirs ad hoc.
  */
 
-import { processAlive as defaultProcessAlive } from './orphan-claims.mjs'
+import { processAlive as defaultProcessAlive, resolveWorkerLive } from './runtime-view.mjs'
 
 export const FLEET_SNAPSHOT_SCHEMA = 'harness-fleet-snapshot.v1'
 
-function activeWorkerRows(state = {}) {
+function activeWorkerRows(state = {}, { processAlive = defaultProcessAlive } = {}) {
   const workers = state.workers && typeof state.workers === 'object' ? state.workers : {}
-  return Object.entries(workers).map(([context, worker]) => ({
-    context,
-    type: worker?.type || null,
-    paneId: worker?.paneId || null,
-    pid: worker?.pid || null,
-    tabId: worker?.tabId || null,
-  }))
+  return Object.entries(workers)
+    .filter(([, worker]) => {
+      const pid = worker?.childPid || worker?.pid
+      return !pid || resolveWorkerLive(worker, { processAlive })
+    })
+    .map(([context, worker]) => ({
+      context,
+      type: worker?.type || null,
+      paneId: worker?.paneId || null,
+      pid: worker?.pid || null,
+      childPid: worker?.childPid || null,
+      tabId: worker?.tabId || null,
+    }))
 }
 
 function stuckRows(state = {}) {
@@ -39,6 +45,8 @@ function capacityView(capacity) {
     available: capacity.available ?? null,
     slots: capacity.slots ?? null,
     active: capacity.active ?? null,
+    activeCost: capacity.activeCost ?? null,
+    pressureReason: capacity.pressureReason ?? null,
   }
 }
 
@@ -139,8 +147,8 @@ export function isEmptyFleetRepaired(fleetSnapshot = {}) {
   return false
 }
 
-function compactFleetShape(state = {}, extras = {}) {
-  const activeWorkers = activeWorkerRows(state)
+function compactFleetShape(state = {}, extras = {}, { processAlive = defaultProcessAlive } = {}) {
+  const activeWorkers = activeWorkerRows(state, { processAlive })
   return {
     workers: activeWorkers.length,
     counts: state.progress || {},
@@ -165,7 +173,7 @@ export function fleetOpsFields({
   localHost = '',
   leaseSeconds = 30,
 } = {}) {
-  const fleet = compactFleetShape(state, { ...wakeExtended, ghostClaims })
+  const fleet = compactFleetShape(state, { ...wakeExtended, ghostClaims }, { processAlive })
   const live = typeof supervisorLive === 'boolean'
     ? supervisorLive
     : deriveSupervisorLive(state, { processAlive, localHost, leaseSeconds })
@@ -207,11 +215,18 @@ export function buildProjectSnapshot({
   lastRunCompletedSummary,
   wakeTriage = null,
   wakeExtended = null,
+  hostResources = null,
+  governorReservations = null,
+  sharedRuntime = null,
+  recoveryReasons = [],
+  pressureAdvice = null,
+  staleLocks = [],
+  deadRuntime = [],
   processAlive,
   localHost = '',
   leaseSeconds = 30,
 } = {}) {
-  const activeWorkers = activeWorkerRows(state)
+  const activeWorkers = activeWorkerRows(state, { processAlive })
   const ops = fleetOpsFields({
     state,
     events,
@@ -234,6 +249,13 @@ export function buildProjectSnapshot({
     pendingInputs: pendingInputCount(state),
     retryQueueSize: Object.keys(state.retryQueue || {}).length,
     progress: state.progress || {},
+    hostResources,
+    governorReservations,
+    sharedRuntime,
+    recoveryReasons: Array.isArray(recoveryReasons) ? recoveryReasons : [],
+    pressureAdvice,
+    staleLocks: Array.isArray(staleLocks) ? staleLocks : [],
+    deadRuntime: Array.isArray(deadRuntime) ? deadRuntime : [],
     supervisorLive: typeof supervisorLive === 'boolean' ? supervisorLive : ops.supervisorLive,
     ghostClaims: Array.isArray(ghostClaims) ? ghostClaims : ops.ghostClaims,
     emptyFleetActionable: typeof emptyFleetActionable === 'boolean'
@@ -273,23 +295,34 @@ export function buildFleetSnapshot({ projects } = {}) {
  * @param {object} [extras] - optional ops / wake fields (ghostClaims, integrationHead, repaired, ...)
  */
 export function fleetSnapshotFromState(state = {}, extras = {}) {
-  const fleet = compactFleetShape(state, extras)
+  const {
+    processAlive: alive = defaultProcessAlive,
+    ...fleetExtras
+  } = extras || {}
+  const fleet = compactFleetShape(state, fleetExtras, { processAlive: alive })
   const ops = fleetOpsFields({
     state,
-    events: extras.events || [],
-    ghostClaims: extras.ghostClaims ?? [],
-    wakeExtended: extras,
-    supervisorLive: extras.supervisorLive,
-    processAlive: extras.processAlive,
-    localHost: extras.localHost || '',
-    leaseSeconds: extras.leaseSeconds,
+    events: fleetExtras.events || [],
+    ghostClaims: fleetExtras.ghostClaims ?? [],
+    wakeExtended: fleetExtras,
+    supervisorLive: fleetExtras.supervisorLive,
+    processAlive: alive,
+    localHost: fleetExtras.localHost || '',
+    leaseSeconds: fleetExtras.leaseSeconds,
   })
   return {
     ...fleet,
-    supervisorLive: extras.supervisorLive ?? ops.supervisorLive,
-    ghostClaims: extras.ghostClaims ?? ops.ghostClaims,
-    emptyFleetActionable: extras.emptyFleetActionable ?? ops.emptyFleetActionable,
-    needsGoalReviewRetry: extras.needsGoalReviewRetry ?? ops.needsGoalReviewRetry,
-    lastRunCompletedSummary: extras.lastRunCompletedSummary ?? ops.lastRunCompletedSummary,
+    hostResources: fleetExtras.hostResources ?? null,
+    governorReservations: fleetExtras.governorReservations ?? null,
+    sharedRuntime: fleetExtras.sharedRuntime ?? null,
+    recoveryReasons: Array.isArray(fleetExtras.recoveryReasons) ? fleetExtras.recoveryReasons : [],
+    pressureAdvice: fleetExtras.pressureAdvice ?? null,
+    staleLocks: Array.isArray(fleetExtras.staleLocks) ? fleetExtras.staleLocks : [],
+    deadRuntime: Array.isArray(fleetExtras.deadRuntime) ? fleetExtras.deadRuntime : [],
+    supervisorLive: fleetExtras.supervisorLive ?? ops.supervisorLive,
+    ghostClaims: fleetExtras.ghostClaims ?? ops.ghostClaims,
+    emptyFleetActionable: fleetExtras.emptyFleetActionable ?? ops.emptyFleetActionable,
+    needsGoalReviewRetry: fleetExtras.needsGoalReviewRetry ?? ops.needsGoalReviewRetry,
+    lastRunCompletedSummary: fleetExtras.lastRunCompletedSummary ?? ops.lastRunCompletedSummary,
   }
 }

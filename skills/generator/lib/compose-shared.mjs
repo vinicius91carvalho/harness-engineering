@@ -12,10 +12,13 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { hostname } from 'node:os'
+import { randomUUID } from 'node:crypto'
+import { processAlive } from './runtime-view.mjs'
 
 /** Service name tokens treated as shared infra (matched as substrings). */
 export const SHARED_INFRA_SERVICE_HINTS = [
@@ -59,6 +62,39 @@ export function composeSharedPath(commonGit) {
   return join(commonGit, 'harness-locks', 'compose-shared.json')
 }
 
+function composeSharedLockDir(commonGit) {
+  return join(commonGit, 'harness-locks', 'compose-shared.lock')
+}
+
+function withRegistryLock(commonGit, fn) {
+  if (!commonGit) return fn()
+  const lockDir = composeSharedLockDir(commonGit)
+  mkdirSync(dirname(lockDir), { recursive: true })
+  const token = `${process.pid}.${randomUUID()}`
+  const started = Date.now()
+  for (;;) {
+    try {
+      mkdirSync(lockDir)
+      writeFileSync(join(lockDir, 'owner'), token)
+      break
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error
+      let pid = 0
+      try { pid = Number(String(readFileSync(join(lockDir, 'owner'), 'utf8')).split('.')[0]) } catch {}
+      if (!pid || !processAlive(pid)) {
+        try { rmSync(lockDir, { recursive: true, force: true }); continue } catch {}
+      }
+      if (Date.now() - started > 5000) throw new Error('compose shared registry lock timeout')
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25)
+    }
+  }
+  try {
+    return fn()
+  } finally {
+    try { rmSync(lockDir, { recursive: true, force: true }) } catch {}
+  }
+}
+
 function readRegistry(commonGit) {
   const file = composeSharedPath(commonGit)
   if (!existsSync(file)) return emptyRegistry()
@@ -89,6 +125,22 @@ function writeRegistry(commonGit, registry) {
   return next
 }
 
+function pruneDeadHolders(registry) {
+  let pruned = 0
+  for (const [project, entry] of Object.entries(registry.projects || {})) {
+    const holders = entry?.holders && typeof entry.holders === 'object' ? entry.holders : {}
+    for (const [context, holder] of Object.entries(holders)) {
+      if (holder?.pid && !processAlive(holder.pid)) {
+        delete holders[context]
+        pruned += 1
+      }
+    }
+    if (Object.keys(holders).length === 0) delete registry.projects[project]
+    else entry.holders = holders
+  }
+  return { registry, pruned }
+}
+
 function projectKey(projectId) {
   return String(projectId || 'root')
 }
@@ -97,18 +149,37 @@ function projectKey(projectId) {
  * Record that `context` is using the shared compose stack for `projectId`.
  * @returns {{ holders: string[], count: number }}
  */
-export function acquireComposeShare(commonGit, projectId, context, { host = hostname() } = {}) {
+export function acquireComposeShare(commonGit, projectId, context, {
+  host = hostname(),
+  pid = process.pid,
+  worktree = null,
+  services = [],
+  ports = [],
+  fingerprint = null,
+  ttlMs = 60 * 60 * 1000,
+} = {}) {
   if (!commonGit || !context) return { holders: [], count: 0 }
-  const key = projectKey(projectId)
-  const registry = readRegistry(commonGit)
-  const entry = registry.projects[key] || { holders: {}, host }
-  entry.host = host
-  entry.holders = entry.holders && typeof entry.holders === 'object' ? entry.holders : {}
-  entry.holders[context] = { at: new Date().toISOString(), host }
-  registry.projects[key] = entry
-  writeRegistry(commonGit, registry)
-  const holders = Object.keys(entry.holders)
-  return { holders, count: holders.length }
+  return withRegistryLock(commonGit, () => {
+    const key = projectKey(projectId)
+    const { registry } = pruneDeadHolders(readRegistry(commonGit))
+    const entry = registry.projects[key] || { holders: {}, host, fingerprint }
+    entry.host = host
+    entry.fingerprint = fingerprint || entry.fingerprint || null
+    entry.holders = entry.holders && typeof entry.holders === 'object' ? entry.holders : {}
+    entry.holders[context] = {
+      at: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + ttlMs).toISOString(),
+      host,
+      pid,
+      worktree,
+      services,
+      ports,
+    }
+    registry.projects[key] = entry
+    writeRegistry(commonGit, registry)
+    const holders = Object.keys(entry.holders)
+    return { holders, count: holders.length, entry }
+  })
 }
 
 /**
@@ -117,26 +188,34 @@ export function acquireComposeShare(commonGit, projectId, context, { host = host
  */
 export function releaseComposeShare(commonGit, projectId, context) {
   if (!commonGit || !context) return { holders: [], count: 0, lastHolder: true }
-  const key = projectKey(projectId)
-  const registry = readRegistry(commonGit)
-  const entry = registry.projects[key]
-  if (!entry?.holders) {
-    return { holders: [], count: 0, lastHolder: true }
-  }
-  delete entry.holders[context]
-  if (Object.keys(entry.holders).length === 0) {
-    delete registry.projects[key]
-  } else {
-    registry.projects[key] = entry
-  }
-  writeRegistry(commonGit, registry)
-  const holders = Object.keys(entry.holders || {})
-  return { holders, count: holders.length, lastHolder: holders.length === 0 }
+  return withRegistryLock(commonGit, () => {
+    const key = projectKey(projectId)
+    const { registry } = pruneDeadHolders(readRegistry(commonGit))
+    const entry = registry.projects[key]
+    if (!entry?.holders) {
+      return { holders: [], count: 0, lastHolder: true }
+    }
+    delete entry.holders[context]
+    if (Object.keys(entry.holders).length === 0) {
+      delete registry.projects[key]
+    } else {
+      registry.projects[key] = entry
+    }
+    writeRegistry(commonGit, registry)
+    const holders = Object.keys(entry.holders || {})
+    return { holders, count: holders.length, lastHolder: holders.length === 0 }
+  })
 }
 
 export function composeShareHolders(commonGit, projectId) {
-  const entry = readRegistry(commonGit).projects[projectKey(projectId)]
+  const entry = pruneDeadHolders(readRegistry(commonGit)).registry.projects[projectKey(projectId)]
   return Object.keys(entry?.holders || {})
+}
+
+export function composeShareSnapshot(commonGit) {
+  if (!commonGit) return { projects: {}, pruned: 0 }
+  const { registry, pruned } = pruneDeadHolders(readRegistry(commonGit))
+  return { projects: registry.projects || {}, pruned }
 }
 
 export function composeShareCount(commonGit, projectId) {
@@ -168,7 +247,6 @@ export function planComposeTeardown({
     return { mode: 'full_down', reason: 'force', keepInfra: false }
   }
   const others = siblingHolders.filter((h) => h && h !== context)
-  const effective = Math.max(shareCount, others.length + (context && siblingHolders.includes(context) ? 1 : 0))
   // After release, shareCount is remaining holders. If any remain, keep infra.
   if (shareCount > 0 || others.length > 0) {
     return {
@@ -179,7 +257,5 @@ export function planComposeTeardown({
       keepInfra: true,
     }
   }
-  // effective unused except for clarity in tests
-  void effective
   return { mode: 'full_down', reason: 'last_holder', keepInfra: false }
 }

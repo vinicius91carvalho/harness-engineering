@@ -46,6 +46,7 @@ in `.harness/app.pid` only (`kill "$(cat .harness/app.pid)"` — never `pkill -f
 / `killall` with WORKDIR or PORT substrings).
 Do not leave containers or servers running for a later task.
 Do not tear down stacks you did not start (other subprojects or live sibling contexts).
+When a reusable infra stack is intentionally shared, rely on the harness Shared Runtime Lease; still record and remove private app containers, ports, and PIDs through the owned runtime manifest or `.harness/app.pid`.
 Coding, isolated QA, and Integrated Verification prompts all carry this rule.
 
 **No nested Task/subagent re-delegation:** coding and QA workers ARE the assigned

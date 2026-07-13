@@ -6,14 +6,13 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
-import { parseObject, isProviderQuotaLimited, VERDICT_BEGIN, VERDICT_END, isInfraNoise, isHarnessInfrastructureError, stuckThresholdMs } from '../skills/generator/lib/worker-outcome.mjs'
+import { parseVerdict, isProviderQuotaLimited, VERDICT_BEGIN, VERDICT_END, isInfraNoise, stuckThresholdMs, interpretClosed } from '../skills/generator/lib/worker-outcome.mjs'
 import { readyWorkItems, isWorkItemReady, validateDependencyGraph } from '../skills/generator/lib/ready-work-items.mjs'
 import { parseProjectSpecification } from '../skills/generator/lib/project-specification.mjs'
 import { resolveProjectTopology } from '../skills/generator/lib/project-topology.mjs'
 import { claimKey, projectIdFromPrefix, resultFileFromRunState } from '../skills/generator/lib/project-keys.mjs'
 import { pickClaimCandidate, mergeDo, restoreDirtyRuntimeLogs } from '../skills/generator/lib/claim-lease.mjs'
 import { MARKER_PATTERN, hasMergeMarkers, unionAppendOnly } from '../skills/generator/lib/integrate-checkpoint.mjs'
-import { interpretWorkerOutcome } from '../skills/generator/lib/worker-outcome.mjs'
 import { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } from '../skills/generator/lib/supervisor-tick.mjs'
 import { planTickAdmission, goalReviewAdmissible, goalReviewGate } from '../skills/generator/lib/supervisor-admission.mjs'
 import { goalReviewAdmissible as goalReviewContract } from '../skills/generator/lib/completion-contract.mjs'
@@ -22,7 +21,7 @@ import {
   isCheckoutCleanForGoalReview,
 } from '../skills/generator/lib/checkout-dirt.mjs'
 import { mkey, strikeOf, buildPlan, buildCandidates, lastCoder, candidatePool, isNoCreditsCandidate } from '../skills/generator/lib/route-plan.mjs'
-import { buildOrchestratorArgv, buildWorkerBase, planWorkerHerdrMeta, planWorkerStop, planWorkerCleanupTargets, terminateProcessTree } from '../skills/generator/lib/worker-lifecycle.mjs'
+import { buildOrchestratorArgv, buildWorkerBase, planWorkerHerdrMeta, planWorkerStop, planWorkerCleanupTargets, terminateProcessTree, processGroupForWorker } from '../skills/generator/lib/worker-lifecycle.mjs'
 import { pruneOrphanPendingInputs, isCrashBoundContext, liveClaimContexts } from '../skills/generator/lib/supervisor-claims.mjs'
 import {
   authorizeRecovery,
@@ -39,9 +38,9 @@ import {
   shouldEnqueueStuckWorkerRetry,
 } from '../skills/generator/lib/failure-policy.mjs'
 import {
-  readWorkerResult,
-  validateWorkerVerdict,
-  writeWorkerResult,
+  readDurable,
+  validateOutcome,
+  writeDurable,
 } from '../skills/generator/lib/worker-result.mjs'
 import { createWorkflowState } from '../skills/generator/lib/workflow-state.mjs'
 import { applyLedgerToCatalog, readLedger, ledgerPath } from '../skills/generator/lib/execution-ledger.mjs'
@@ -52,7 +51,13 @@ import {
   classifyRunStateHealth,
   listGhostClaims,
   abandonGhostRun,
+  processAlive,
 } from '../skills/generator/lib/orphan-claims.mjs'
+import { runtimeView } from '../skills/generator/lib/runtime-view.mjs'
+import { parseMeminfo, readHostResources } from '../skills/generator/lib/host-resources.mjs'
+import { planRuntimeRecovery } from '../skills/generator/lib/runtime-recovery.mjs'
+import { nextTickDelay, tickWatchPaths } from '../skills/generator/lib/tick-context.mjs'
+import { appendOwnedRuntime, readOwnedRuntime } from '../skills/generator/lib/runtime-manifest.mjs'
 import { cleanupBrowserOrphans } from '../skills/generator/lib/browser-cleanup.mjs'
 import { mergeAcquire, mergeRelease, clearDeadLock } from '../skills/generator/lib/claim-lease.mjs'
 import { hostSpawnVisible } from '../skills/generator/lib/agent-spawn.mjs'
@@ -68,9 +73,9 @@ function withoutIntegrationBranchEnv(fn) {
   }
 }
 
-test('parseObject reads delimited verdict', () => {
+test('parseVerdict reads delimited verdict', () => {
   const body = `${VERDICT_BEGIN}\n{"goal":true}\n${VERDICT_END}`
-  assert.deepEqual(parseObject(body), { goal: true })
+  assert.deepEqual(parseVerdict(body), { goal: true })
 })
 
 test('isProviderQuotaLimited detects common quota messages', () => {
@@ -244,8 +249,8 @@ test('project keys', () => {
 })
 
 test('harness infrastructure error detection', () => {
-  assert.equal(isHarnessInfrastructureError('orchestrator: cannot read feature_list.json'), true)
-  assert.equal(isHarnessInfrastructureError('QA failed after Attempt 3'), false)
+  assert.equal(isInfraNoise('orchestrator: cannot read feature_list.json'), true)
+  assert.equal(isInfraNoise('QA failed after Attempt 3'), false)
 })
 
 test('stuck threshold default', () => {
@@ -314,6 +319,14 @@ test('worker lifecycle stop and cleanup plans cover herdr and background', () =>
   assert.equal(planWorkerStop(null).kind, 'noop')
   assert.equal(planWorkerStop({ type: 'herdr', paneId: 'w1:p2' }).kind, 'close_display')
   assert.equal(planWorkerStop({ type: 'background', child: { pid: 4242 } }).kind, 'terminate_tree')
+  assert.equal(processGroupForWorker(
+    { type: 'herdr', pid: 333 },
+    { ownerPid: 111, childPid: 222 },
+  ), 111)
+  assert.equal(processGroupForWorker(
+    { type: 'background', pid: 333 },
+    { ownerPid: 111, childPid: 222 },
+  ), 333)
   assert.deepEqual(planWorkerCleanupTargets({ port: 9, worktree: '/wt' }), {
     port: 9,
     workdir: '/wt',
@@ -473,13 +486,13 @@ test('pi herdr stream uses --mode json and formats thinking/tools', async () => 
   assert.match(fmt.assistantText(), /"ok":true/)
 })
 
-test('parseObject reports complete vs open verdict', async () => {
-  const { parseObject, hasCompleteVerdict } = await import('../skills/generator/lib/worker-outcome.mjs')
+test('parseVerdict reports complete vs open verdict', async () => {
+  const { parseVerdict, hasCompleteVerdict } = await import('../skills/generator/lib/worker-outcome.mjs')
   const open = '===HARNESS-VERDICT-BEGIN===\n{"id":"x","ok":true}\n'
   const closed = `${open}===HARNESS-VERDICT-END===\n`
   assert.equal(hasCompleteVerdict(open), false)
   assert.equal(hasCompleteVerdict(closed), true)
-  assert.equal(parseObject(closed).ok, true)
+  assert.equal(parseVerdict(closed).ok, true)
 })
 
 test('cursor agent herdr stream uses stream-json and formats thinking/tools', async () => {
@@ -539,6 +552,41 @@ test('orphan-claims detects live, ghost, idle, and terminal run states', () => {
     classifyRunStateHealth({ status: 'claimed', phase: 'claimed', heartbeatEpoch: 999 }, alive).health,
     'idle',
   )
+})
+
+test('processAlive treats permission-denied probes as live', () => {
+  const originalKill = process.kill
+  process.kill = () => {
+    const error = new Error('permission denied')
+    error.code = 'EPERM'
+    throw error
+  }
+  try {
+    assert.equal(processAlive(12345), true)
+  } finally {
+    process.kill = originalKill
+  }
+})
+
+test('runtimeView classifies live-stale, remote-owned, and missing herdr panes', () => {
+  assert.equal(runtimeView({
+    runState: { status: 'running', ownerPid: 42, heartbeatEpoch: 10 },
+    processAlive: (pid) => pid === 42,
+    nowEpoch: 200,
+    staleSeconds: 60,
+  }).health, 'live_stale')
+  assert.equal(runtimeView({
+    runState: { status: 'running', ownerPid: 42, ownerHost: 'remote', heartbeatEpoch: 195 },
+    processAlive: () => false,
+    localHost: 'local',
+    nowEpoch: 200,
+    leaseSeconds: 60,
+  }).health, 'remote_owned')
+  assert.equal(runtimeView({
+    worker: { type: 'herdr', paneId: '1-2', pid: 42 },
+    processAlive: (pid) => pid === 42,
+    paneExists: false,
+  }).live, false)
 })
 
 test('listGhostClaims finds building contexts with dead PIDs', () => {
@@ -632,8 +680,8 @@ test('unionAppendOnly keeps both journal sides', () => {
   assert.equal(unionAppendOnly('', 'only\n'), 'only\n')
 })
 
-test('interpretWorkerOutcome goal-review complete', () => {
-  const result = interpretWorkerOutcome({
+test('interpretClosed goal-review complete', () => {
+  const result = interpretClosed({
     key: 'goal-review',
     tail: '',
     persisted: null,
@@ -651,8 +699,8 @@ test('interpretWorkerOutcome goal-review complete', () => {
   assert.equal(result.durable, true)
 })
 
-test('interpretWorkerOutcome blocked context', () => {
-  const result = interpretWorkerOutcome({
+test('interpretClosed blocked context', () => {
+  const result = interpretClosed({
     key: 'core',
     tail: '',
     persisted: null,
@@ -664,8 +712,8 @@ test('interpretWorkerOutcome blocked context', () => {
   assert.equal(result.summary, 'Attempt budget exhausted')
 })
 
-test('interpretWorkerOutcome context complete when integrated', () => {
-  const result = interpretWorkerOutcome({
+test('interpretClosed context complete when integrated', () => {
+  const result = interpretClosed({
     key: 'core',
     tail: '',
     persisted: null,
@@ -1197,31 +1245,31 @@ test('failure-policy facade modules re-export canonical symbols', async () => {
 test('worker-result fences stale invocation and validates verdicts', async () => {
   const tmp = mkdtempSync(join(tmpdir(), 'worker-result-'))
   const stateFile = join(tmp, 'core.json')
-  await writeWorkerResult(stateFile, {
+  await writeDurable(stateFile, {
     invocationId: 'inv-a',
     leaseToken: 'lease-a',
     payload: { total: 1, passed: 1, stuck: [] },
   })
-  const scoped = await readWorkerResult(stateFile, {
+  const scoped = await readDurable(stateFile, {
     expectedInvocationId: 'inv-a',
     expectedLeaseToken: 'lease-a',
   })
   assert.equal(scoped.passed, 1)
-  const staleInvocation = await readWorkerResult(stateFile, {
+  const staleInvocation = await readDurable(stateFile, {
     expectedInvocationId: 'inv-b',
     expectedLeaseToken: 'lease-a',
   })
   assert.equal(staleInvocation, null)
-  const staleLease = await readWorkerResult(stateFile, {
+  const staleLease = await readDurable(stateFile, {
     expectedInvocationId: 'inv-a',
     expectedLeaseToken: 'lease-b',
   })
   assert.equal(staleLease, null)
 
-  const goal = validateWorkerVerdict({ goal: true, summary: 'done' })
+  const goal = validateOutcome({ goal: true, summary: 'done' })
   assert.equal(goal.valid, true)
   assert.equal(goal.mode, 'goalReview')
-  const bad = validateWorkerVerdict({ goal: 'yes' })
+  const bad = validateOutcome({ goal: 'yes' })
   assert.equal(bad.valid, false)
 })
 
@@ -1557,7 +1605,7 @@ test('buildHostCommand passes model to pi and agent', async () => {
 
 test('worker-outcome classifies merge lock, verdict hang, and thinking', async () => {
   const {
-    classifyPaneTail, assessWorkerHealth, paneReadSource,
+    classifyPaneTail, assessLive, paneReadSource,
   } = await import('../skills/generator/lib/worker-outcome.mjs')
   assert.equal(classifyPaneTail('orchestrator: waiting for merge lock (holder pid=1)'), 'merge_lock')
   assert.equal(classifyPaneTail('thinking: next step\ntool → read'), 'tooling')
@@ -1574,7 +1622,7 @@ test('worker-outcome classifies merge lock, verdict hang, and thinking', async (
   assert.equal(paneReadSource(0), 'visible')
   assert.equal(paneReadSource(12), 'recent')
 
-  const waiting = assessWorkerHealth({
+  const waiting = assessLive({
     tailText: 'orchestrator: waiting for merge lock…',
     mergeHolderAlive: true,
     childAlive: false,
@@ -1583,7 +1631,7 @@ test('worker-outcome classifies merge lock, verdict hang, and thinking', async (
   assert.equal(waiting.verdict, 'waiting_expected')
   assert.equal(waiting.recycle, false)
 
-  const stuckLock = assessWorkerHealth({
+  const stuckLock = assessLive({
     tailText: 'orchestrator: waiting for merge lock…',
     mergeHolderAlive: false,
     childAlive: false,
@@ -1591,7 +1639,7 @@ test('worker-outcome classifies merge lock, verdict hang, and thinking', async (
   })
   assert.equal(stuckLock.verdict, 'stuck')
 
-  const healthy = assessWorkerHealth({
+  const healthy = assessLive({
     tailText: 'thinking: working\ntool → shell',
     scrollDelta: 3,
     childAlive: true,
@@ -1831,6 +1879,7 @@ test('compose-shared refcount keeps infra up for sibling workers', async () => {
     releaseComposeShare,
     composeShareCount,
     planComposeTeardown,
+    composeShareSnapshot,
     isAppService,
     isSharedInfraService,
   } = await import('../skills/generator/lib/compose-shared.mjs')
@@ -1840,9 +1889,12 @@ test('compose-shared refcount keeps infra up for sibling workers', async () => {
   assert.equal(isAppService('causeflow-api'), true)
   assert.equal(isAppService('causeflow-postgres'), false)
 
-  acquireComposeShare(root, 'core', 'open-source-local-runtime')
+  acquireComposeShare(root, 'core', 'open-source-local-runtime', { pid: process.pid, worktree: '/wt/core', services: ['postgres'], ports: [5432] })
   acquireComposeShare(root, 'core', 'dashboard')
   assert.equal(composeShareCount(root, 'core'), 2)
+  const snap = composeShareSnapshot(root)
+  assert.equal(snap.projects.core.holders['open-source-local-runtime'].worktree, '/wt/core')
+  assert.deepEqual(snap.projects.core.holders['open-source-local-runtime'].services, ['postgres'])
 
   const afterOne = releaseComposeShare(root, 'core', 'dashboard')
   assert.equal(afterOne.count, 1)
@@ -1857,6 +1909,14 @@ test('compose-shared refcount keeps infra up for sibling workers', async () => {
   assert.equal(afterLast.lastHolder, true)
   assert.equal(planComposeTeardown({ shareCount: 0 }).mode, 'full_down')
   assert.equal(planComposeTeardown({ shareCount: 1, force: true }).mode, 'full_down')
+})
+
+test('runtime manifest records exact resources for cleanup', () => {
+  const root = mkdtempSync(join(tmpdir(), 'runtime-manifest-'))
+  assert.equal(appendOwnedRuntime(root, { context: 'core', pids: [123], containers: ['wi-ac-1'] }), true)
+  const rows = readOwnedRuntime(root)
+  assert.equal(rows.length, 1)
+  assert.deepEqual(rows[0].containers, ['wi-ac-1'])
 })
 
 test('control journal compaction preserves pending input lineage', async () => {
@@ -1878,6 +1938,35 @@ test('control journal compaction preserves pending input lineage', async () => {
   assert.ok(eventsAfter.some((event) => event.id === input.id && event.kind === 'input_required'))
   const derived = deriveSnapshot(eventsAfter)
   assert.equal(derived.pendingInputs[input.id].status, 'pending')
+})
+
+test('control journal maybeCompact gates on cheap metadata', async () => {
+  const {
+    appendControlEvent, maybeCompactControlJournal, readControlEvents,
+  } = await import('../skills/generator/lib/control-journal.mjs')
+  const below = mkdtempSync(join(tmpdir(), 'journal-maybe-below-'))
+  for (let i = 0; i < 3; i++) {
+    await appendControlEvent(below, { kind: 'progress', workers: i })
+  }
+  const skipped = await maybeCompactControlJournal(below, { minTail: 10 })
+  assert.equal(skipped.compacted, false)
+  assert.equal(skipped.skipped, true)
+  assert.equal(skipped.reason, 'tail-below-threshold')
+  assert.equal((await readControlEvents(below, join(below, 'events.jsonl'))).length, 3)
+
+  const missingMeta = mkdtempSync(join(tmpdir(), 'journal-maybe-missing-meta-'))
+  mkdirSync(missingMeta, { recursive: true })
+  writeFileSync(join(missingMeta, 'events.jsonl'), `${JSON.stringify({ id: 1, kind: 'progress' })}\n`)
+  const fallback = await maybeCompactControlJournal(missingMeta, { minTail: 10 })
+  assert.equal(fallback.compacted, false)
+  assert.equal(fallback.kept, 1)
+
+  const above = mkdtempSync(join(tmpdir(), 'journal-maybe-above-'))
+  for (let i = 0; i < 12; i++) {
+    await appendControlEvent(above, { kind: 'progress', workers: i })
+  }
+  const compacted = await maybeCompactControlJournal(above, { minTail: 3 })
+  assert.equal(compacted.compacted, true)
 })
 
 test('control journal ignores caller id and keeps latest duplicate', async () => {
@@ -1946,6 +2035,61 @@ test('resource governor prunes dead-pid reservations and reuses context', async 
   assert.equal(second.reservation.id, first.reservation.id)
   await releaseAdmission(commonGit, first.reservation.id)
   assert.ok(observed)
+})
+
+test('host resources parse meminfo and expose swap pressure facts', () => {
+  const meminfo = parseMeminfo('MemAvailable:       2097152 kB\nSwapTotal:          1048576 kB\nSwapFree:            262144 kB\n')
+  assert.equal(meminfo.MemAvailable, 2048)
+  assert.equal(meminfo.SwapTotal, 1024)
+  const host = readHostResources({ meminfoText: 'MemAvailable:       2097152 kB\nSwapTotal:          1048576 kB\nSwapFree:            262144 kB\n' })
+  assert.equal(host.memory.availableMb, 2048)
+  assert.equal(host.swap.usedMb, 768)
+  assert.ok(host.swap.usedRatio > 0.7)
+})
+
+test('resource governor accounts for weighted reservations', async () => {
+  const { requestAdmission, observeCapacity, releaseAdmission, resourceCost } = await import('../skills/generator/lib/resource-governor.mjs')
+  const tmp = mkdtempSync(join(tmpdir(), 'governor-weight-'))
+  const commonGit = join(tmp, '.git')
+  mkdirSync(commonGit, { recursive: true })
+  assert.equal(resourceCost('browser'), 2)
+  const opts = {
+    maxWorkers: 3,
+    quotaWorkers: 3,
+    cpuPerWorker: 0.25,
+    memoryPerWorkerMb: 1,
+    reserveMemoryMb: 0,
+    maxLoadRatio: 100,
+    maxSwapUsedRatio: 1,
+  }
+  const first = await requestAdmission(commonGit, { projectId: 'root', context: 'browser', resourceClass: 'browser', ...opts })
+  assert.equal(first.granted, true)
+  const observed = await observeCapacity(commonGit, opts)
+  assert.equal(observed.activeCost, 2)
+  assert.ok(observed.available <= observed.limit - 2)
+  await releaseAdmission(commonGit, first.reservation.id)
+})
+
+test('resource governor steals dead writer lock before timing out', async () => {
+  const { requestAdmission, releaseAdmission } = await import('../skills/generator/lib/resource-governor.mjs')
+  const tmp = mkdtempSync(join(tmpdir(), 'governor-lock-'))
+  const commonGit = join(tmp, '.git')
+  const governorDir = join(commonGit, 'harness-governor')
+  mkdirSync(governorDir, { recursive: true })
+  writeFileSync(join(governorDir, 'governor.lock'), '99999999.dead-writer\n')
+  const admission = await requestAdmission(commonGit, {
+    projectId: 'root',
+    context: 'core',
+    maxWorkers: 1,
+    quotaWorkers: 1,
+    cpuPerWorker: 0.25,
+    memoryPerWorkerMb: 1,
+    reserveMemoryMb: 0,
+    maxLoadRatio: 100,
+  })
+  assert.equal(admission.granted, true)
+  assert.equal(existsSync(join(governorDir, 'governor.lock')), false)
+  await releaseAdmission(commonGit, admission.reservation.id)
 })
 
 test('resource governor denies admission when full', async () => {
@@ -2164,6 +2308,7 @@ test('fleet snapshot builds structured multi-project bearings', async () => {
     state: stateA,
     eventsTip: 17,
     wakeTriage: { shouldWake: true },
+    processAlive: (pid) => pid === 42,
   })
   assert.equal(project.id, 'appA')
   assert.equal(project.journalTip, 17)
@@ -2175,14 +2320,63 @@ test('fleet snapshot builds structured multi-project bearings', async () => {
 
   const fleet = buildFleetSnapshot({
     projects: [
-      { id: 'appA', root: '/repo/appA', state: stateA, eventsTip: 17, wakeTriage: { shouldWake: true } },
+      {
+        id: 'appA',
+        root: '/repo/appA',
+        state: stateA,
+        eventsTip: 17,
+        wakeTriage: { shouldWake: true },
+        processAlive: (pid) => pid === 42,
+      },
       { id: 'appB', state: { status: 'complete' }, eventsTip: 9 },
     ],
   })
   assert.equal(fleet.schema, FLEET_SNAPSHOT_SCHEMA)
   assert.equal(fleet.projects.length, 2)
   assert.equal(fleet.projects[1].status, 'complete')
-  assert.equal(fleetSnapshotFromState(stateA).workers, 1)
+  assert.equal(fleetSnapshotFromState(stateA, { processAlive: (pid) => pid === 42 }).workers, 1)
+  const staleWorker = fleetSnapshotFromState({
+    status: 'running',
+    workers: { core: { type: 'background', pid: 99999999 } },
+    progress: { total: 2, integrated: 0, blocked: 0 },
+    pendingInputs: {},
+    retryQueue: {},
+  }, { processAlive: () => false })
+  assert.equal(staleWorker.workers, 0)
+  assert.equal(staleWorker.emptyFleetActionable, true)
+  const opsProject = buildProjectSnapshot({
+    state: stateA,
+    hostResources: { memory: { availableMb: 1000 }, swap: { usedMb: 0 } },
+    governorReservations: { activeCost: 2 },
+    sharedRuntime: { projects: { root: { holders: { core: {} } } } },
+    recoveryReasons: [{ kind: 'capacity_zero', reason: 'memory' }],
+    pressureAdvice: 'admission deferred by memory',
+  })
+  assert.equal(opsProject.governorReservations.activeCost, 2)
+  assert.equal(opsProject.sharedRuntime.projects.root.holders.core != null, true)
+  assert.equal(opsProject.recoveryReasons[0].kind, 'capacity_zero')
+})
+
+test('runtime recovery planner emits deterministic repair events', () => {
+  const plan = planRuntimeRecovery({
+    active: 0,
+    fleet: { emptyFleetActionable: true },
+    ghostClaims: [{ context: 'core', health: { reason: 'dead-owner-or-child' } }],
+    staleLocks: [{ lock: 'merge', reason: 'dead-holder' }],
+    crashCounts: { core: 5 },
+    snapshotCounts: { total: 2, integrated: 0 },
+  })
+  assert.equal(plan.repaired, true)
+  assert.deepEqual(plan.statePatch.crashCounts, {})
+  assert.ok(plan.actions.some((action) => action.kind === 'abandon_ghost'))
+  assert.ok(plan.events.some((event) => event.kind === 'dead_runtime'))
+  assert.ok(plan.events.some((event) => event.kind === 'empty_fleet_actionable'))
+})
+
+test('tick context computes event-driven delay with poll fallback', () => {
+  assert.equal(nextTickDelay({ pollMs: 2000, dirty: true }), 0)
+  assert.equal(nextTickDelay({ pollMs: 2000, eventDriven: false, dirty: true }), 2000)
+  assert.ok(tickWatchPaths({ controlRoot: '/c', runsDir: '/r', commonGit: '/g' }).includes('/c/responses'))
 })
 
 test('fleet snapshot ops fields derive supervisor, ghosts, and run_completed summary', async () => {

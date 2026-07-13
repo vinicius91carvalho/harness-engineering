@@ -34,6 +34,7 @@ case "$cmd" in
   pane)
     case "$1" in
       list)
+        printf 'pane-list\n' >>"$HARNESS_TEST_HERDR_LOG"
         node "$HARNESS_TEST_HERDR_HELPER" pane-list "$state"
         ;;
       split)
@@ -45,10 +46,12 @@ case "$cmd" in
         printf '%s\n' "{\"result\":{\"type\":\"ok\"}}"
         ;;
       get)
+        printf 'pane-get %s\n' "$2" >>"$HARNESS_TEST_HERDR_LOG"
         node "$HARNESS_TEST_HERDR_HELPER" pane-get "$state" "$2"
         ;;
       read)
         paneId=$2
+        printf 'pane-read %s\n' "$paneId" >>"$HARNESS_TEST_HERDR_LOG"
         node "$HARNESS_TEST_HERDR_HELPER" pane-read "$state" "$paneId"
         ;;
       close)

@@ -32,10 +32,7 @@ function currentHost() {
 }
 
 function sleepMs(ms) {
-  const deadline = Date.now() + ms
-  while (Date.now() < deadline) {
-    /* spin */
-  }
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, Number(ms) || 0))
 }
 
 function stealDeadStateLock(lockDir) {

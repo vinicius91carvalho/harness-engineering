@@ -1,73 +1,15 @@
 /** Pure Run State / Claim lease health helpers (no I/O). */
 
-const TERMINAL_STATUSES = new Set(['complete', 'blocked', 'failed', 'abandoned'])
+import {
+  classifyRunStateHealth,
+  isLiveRunOwner,
+  processAlive,
+} from './runtime-view.mjs'
+
 const RUNNINGISH_STATUSES = new Set(['running', 'starting', 'resuming'])
 const DEFAULT_ACTIVE_CLAIM_STATUSES = ['building']
 
-/** Shared kill(0) probe used as the default inject across health helpers. */
-export function processAlive(pid) {
-  if (!Number(pid)) return false
-  try {
-    process.kill(Number(pid), 0)
-    return true
-  } catch {
-    return false
-  }
-}
-
-/** True when ownerPid or childPid is alive. */
-export function isLiveRunOwner(runState, alive = processAlive) {
-  if (!runState || typeof runState !== 'object') return false
-  const check = alive || processAlive
-  return Boolean(check(runState.ownerPid) || check(runState.childPid))
-}
-
-/**
- * Classify Run State health for supervisor recovery.
- * @returns {{ health: 'live'|'ghost'|'idle'|'terminal', status?: string, phase?: string, reason?: string, ownerPid?: *, childPid?: * }}
- */
-export function classifyRunStateHealth(runState, alive = processAlive) {
-  if (!runState || typeof runState !== 'object') {
-    return { health: 'idle', reason: 'no-run-state' }
-  }
-
-  const status = String(runState.status || '')
-  const phase = String(runState.phase || '')
-
-  if (TERMINAL_STATUSES.has(status)) {
-    return { health: 'terminal', status, phase }
-  }
-
-  if (isLiveRunOwner(runState, alive || processAlive)) {
-    return {
-      health: 'live',
-      status,
-      phase,
-      ownerPid: runState.ownerPid ?? null,
-      childPid: runState.childPid ?? null,
-    }
-  }
-
-  const hadPid = Boolean(runState.ownerPid || runState.childPid)
-  const runningish = RUNNINGISH_STATUSES.has(status) || (status === 'claimed' && hadPid)
-
-  if (runningish) {
-    return {
-      health: 'ghost',
-      status,
-      phase,
-      ownerPid: runState.ownerPid ?? null,
-      childPid: runState.childPid ?? null,
-      reason: 'dead-owner-or-child',
-    }
-  }
-
-  if (status === 'claimed' || phase === 'claimed') {
-    return { health: 'idle', status, phase, reason: 'awaiting-orchestrator' }
-  }
-
-  return { health: 'idle', status, phase }
-}
+export { classifyRunStateHealth, isLiveRunOwner, processAlive }
 
 /**
  * Contexts with building-ish claims or running-ish Run State and dead PIDs.

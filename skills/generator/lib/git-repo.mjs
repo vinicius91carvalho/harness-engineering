@@ -3,6 +3,7 @@ import { isAbsolute, resolve, dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { integrationBranchName } from './integration-branch.mjs'
+import { processAlive as sharedProcessAlive } from './orphan-claims.mjs'
 
 export function git(repo, args, { allowFailure = false } = {}) {
   const result = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' })
@@ -34,25 +35,12 @@ export function readFeatureListFromIntegration(repo) {
   return JSON.parse(result.stdout)
 }
 
-/** @deprecated Use readFeatureListFromIntegration */
-export function readFeatureListFromMain(repo) {
-  return readFeatureListFromIntegration(repo)
-}
-
 export function portInUse(port) {
   const result = spawnSync('bash', ['-c', `echo >/dev/tcp/127.0.0.1/${port}`], { encoding: 'utf8' })
   return result.status === 0
 }
 
-export function processAlive(pid) {
-  if (!pid) return false
-  try {
-    process.kill(Number(pid), 0)
-    return true
-  } catch {
-    return false
-  }
-}
+export const processAlive = sharedProcessAlive
 
 export function readJsonFile(file, fallback = null) {
   try {

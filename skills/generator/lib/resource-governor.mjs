@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { hostname } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { computeCapacity } from './capacity.mjs'
+import { processAlive } from './orphan-claims.mjs'
 
 /**
  * Host-wide, provider-aware Resource Governor (ADR-0012).
@@ -23,6 +24,35 @@ function emptyState() {
   return { version: 1, reservations: {}, providers: {}, updatedAt: null }
 }
 
+export function resourceCost(resourceClass = 'coding', explicit = null) {
+  const direct = Number(explicit)
+  if (Number.isFinite(direct) && direct > 0) return direct
+  const cls = String(resourceClass || 'coding')
+  if (cls === 'static') return 0.5
+  if (cls === 'browser' || cls === 'goal-review') return 2
+  if (cls === 'compose-build') return 3
+  return 1
+}
+
+async function stealDeadGovernorLock(lockPath) {
+  let pid = 0
+  try {
+    const token = String(await readFile(lockPath, 'utf8') || '').trim()
+    pid = Number(token.split('.')[0])
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false
+  }
+  if (Number.isFinite(pid) && pid > 0 && processAlive(pid)) return false
+  const stale = `${lockPath}.stale.${randomUUID()}`
+  try {
+    await rename(lockPath, stale)
+    await unlink(stale)
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function withGovernorLock(commonGit, fn) {
   const lockPath = governorLockPath(commonGit)
   await mkdir(dirname(lockPath), { recursive: true })
@@ -37,6 +67,7 @@ async function withGovernorLock(commonGit, fn) {
       break
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error
+      if (await stealDeadGovernorLock(lockPath)) continue
       if (Date.now() - started > 10_000) throw new Error('resource governor lock timeout')
       await new Promise((r) => setTimeout(r, 25))
     }
@@ -69,11 +100,6 @@ async function writeState(file, state) {
   return next
 }
 
-function processAlive(pid) {
-  if (!Number(pid)) return false
-  try { process.kill(Number(pid), 0); return true } catch { return false }
-}
-
 function pruneExpired(state) {
   const now = Date.now()
   for (const [key, row] of Object.entries(state.reservations || {})) {
@@ -88,6 +114,8 @@ export async function observeCapacity(commonGit, options = {}) {
   const file = governorPath(commonGit)
   const state = pruneExpired(await readState(file))
   const activeWorkers = Object.values(state.reservations || {}).length
+  const activeCost = Object.values(state.reservations || {})
+    .reduce((sum, row) => sum + resourceCost(row.resourceClass, row.cost), 0)
   const providerKey = options.provider || 'default'
   const providerCooldownUntil = state.providers?.[providerKey]?.cooldownUntil
   const quotaWorkers = providerCooldownUntil && Date.parse(providerCooldownUntil) > Date.now()
@@ -96,8 +124,8 @@ export async function observeCapacity(commonGit, options = {}) {
   const capacity = await computeCapacity({
     ...options,
     quotaWorkers: quotaWorkers ?? options.quotaWorkers,
-  }, options.quotaFile, activeWorkers)
-  return { ...capacity, activeWorkers, file, state, slots: capacity.available }
+  }, options.quotaFile, activeCost)
+  return { ...capacity, activeWorkers, activeCost, file, state, slots: capacity.available }
 }
 
 /** Persist-prune dead/expired governor reservations (supervisor preflight). */
@@ -118,6 +146,8 @@ export async function requestAdmission(commonGit, {
   projectId,
   context,
   provider = 'default',
+  resourceClass = 'coding',
+  cost = null,
   ttlMs = 30 * 60 * 1000,
   quotaFile,
   ...capacityOptions
@@ -143,11 +173,14 @@ export async function requestAdmission(commonGit, {
       return { granted: false, reason: 'no-capacity', capacity: observed }
     }
     const id = randomUUID()
+    const reservationCost = resourceCost(resourceClass, cost)
     const reservation = {
       id,
       projectId,
       context,
       provider,
+      resourceClass,
+      cost: reservationCost,
       host: hostname(),
       pid: process.pid,
       at: new Date().toISOString(),
@@ -198,5 +231,6 @@ export function defaultGovernorOptions(env = process.env) {
     memoryPerWorkerMb: Math.max(1, num('memory-per-worker-mb', 1024)),
     reserveMemoryMb: Math.max(0, num('reserve-memory-mb', 1024)),
     maxLoadRatio: Math.max(0.1, num('max-load-ratio', 0.85)),
+    maxSwapUsedRatio: Math.max(0.01, num('max-swap-used-ratio', 0.2)),
   }
 }

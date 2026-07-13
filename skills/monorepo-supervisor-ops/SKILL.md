@@ -315,7 +315,12 @@ The supervisor runs `finished-tab-reaper.mjs` on each tick (rate-limited) and im
 cross-project bearings for monorepo recovery — journal tips, capacity/slots,
 active workers, stuck, pending inputs, ops fields (`supervisorLive`,
 `ghostClaims`, `emptyFleetActionable`, `needsGoalReviewRetry`,
-`lastRunCompletedSummary`), optional `wakeTriage.shouldWake`.
+`lastRunCompletedSummary`, `hostResources`, `governorReservations`,
+`sharedRuntime`, `recoveryReasons`, `pressureAdvice`), optional
+`wakeTriage.shouldWake`.
+Active worker counts exclude rows with an explicit recorded PID that is no longer live.
+Use `sharedRuntime` before stopping Docker infra: shared holders keep infra up,
+while private app containers from owned runtime manifests are safe cleanup targets.
 CLI: `harness-control fleet-snapshot --repo <path>`; `status` also embeds
 `fleetSnapshot` for the current project.
 Multi-project: pass a monorepo subproject path or root with `.harness/projects.json`

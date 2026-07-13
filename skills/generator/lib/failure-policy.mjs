@@ -1,6 +1,6 @@
 /** Failure classification, routing, authorization, and recovery decisions (single policy module). */
 
-import { isHarnessInfrastructureError } from './worker-outcome.mjs'
+import { isInfraNoise } from './worker-outcome.mjs'
 import { enrichGuidanceWithEvidence } from './evidence-guidance.mjs'
 
 export const FAILURE_CLASSES = [
@@ -518,7 +518,7 @@ export function planWorkerClosedActions({
     }
   }
 
-  const infraError = isHarnessInfrastructureError(tail) || prevTailClass === 'infra_error'
+  const infraError = isInfraNoise(tail) || prevTailClass === 'infra_error'
   if (infraError) {
     if (autoRepair && !harnessRepairs?.[key]) {
       return {
