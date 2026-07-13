@@ -84,6 +84,9 @@ export function inferDefectClass(verdict = {}, text = '') {
   if (/\b(dynamo|bootstrap|EADDRINUSE|ENOENT|infra|wiring|repository still uses|oss runtime)\b/.test(blob)) {
     return 'infra'
   }
+  if (/\b(session terminated|killing shell|session limit|orphanshell|host (?:kill|death|terminated)|pane ended before)\b/.test(blob)) {
+    return 'operational'
+  }
   return 'product'
 }
 
@@ -136,6 +139,9 @@ export function classifyFailure({
   }
   if (/merge conflict|conflict marker/.test(lower)) {
     return { class: 'merge_conflict', safeRecovery: 'repair_plan', consumesAttempt: true }
+  }
+  if (/\b(session terminated|killing shell|session limit|orphanshell|host (?:kill|death|terminated)|pane ended before)\b/.test(lower)) {
+    return { class: 'operational', safeRecovery: 'retry_same', consumesAttempt: false }
   }
   if (exitCode && exitCode !== 0 && phase !== 'QA' && phase !== 'INTEGRATED-QA') {
     return { class: 'operational', safeRecovery: 'retry_same', consumesAttempt: false }
@@ -398,6 +404,19 @@ export function shouldEnqueueStuckWorkerRetry(health) {
   return health?.tailClass !== 'infra_error'
 }
 
+/** Whether a closed worker produced an actionable verdict the supervisor can route on. */
+function hasActionableVerdict(result) {
+  if (!result) return false
+  if (result.durable) return true
+  if (typeof result.goal === 'boolean') return true
+  if (result.blocked) return true
+  if (result.retryGoalReview) return true
+  if (result.reopened?.length) return true
+  if (result.passed !== undefined || result.total !== undefined) return true
+  if (Array.isArray(result.stuck) && result.stuck.length) return true
+  return false
+}
+
 /**
  * Pure action plan for supervisor worker close handling.
  * Side effects are applied by harness-control from this plan.
@@ -415,6 +434,12 @@ export function planWorkerClosedActions({
   logFile,
   prevTailClass,
 }) {
+  const goal = key === 'goal-review'
+  const lastLine = tail.trim().split('\n').filter(Boolean).pop()?.slice(0, 200)
+  const reason = lastLine
+    ? `Worker exited with code ${exitCode}: ${lastLine}`
+    : `Worker exited with code ${exitCode}`
+
   if (rateLimited) {
     return {
       action: 'quota_retry',
@@ -448,8 +473,35 @@ export function planWorkerClosedActions({
     }
   }
 
+  // Non-verdict closes (host death, session limits, orphan shell) route through
+  // classifyFailure before blocked_input / crash-bound product paths.
+  if (!hasActionableVerdict(result)) {
+    const closeText = `${reason}\n${tail}`
+    const classified = classifyFailure({
+      reason: closeText,
+      exitCode,
+      phase: goal ? 'goal-review' : '',
+    })
+    const hostDeath = /\b(Session terminated, killing shell|session limit|orphanShell|killing shell|pane ended before)\b/i.test(tail)
+    const operationalNoise = hostDeath || inferDefectClass({}, closeText) === 'operational'
+    if (operationalNoise) {
+      if (goal) {
+        return {
+          action: 'goal_review_retry',
+          guidance: `Goal Review worker closed operationally (${classified.class}); retry: ${lastLine || reason}`,
+          clearGoalBlock: true,
+        }
+      }
+      return {
+        action: 'quota_retry',
+        context: key,
+        guidance: `Worker closed operationally (${classified.class}); retry: ${lastLine || reason}`,
+        clearCrashCount: true,
+      }
+    }
+  }
+
   if (result?.blocked || result?.stuck?.length) {
-    const goal = key === 'goal-review'
     return {
       action: 'blocked_input',
       scope: goal ? 'goal' : 'context',
@@ -468,12 +520,6 @@ export function planWorkerClosedActions({
       clearCrashCount: true,
     }
   }
-
-  const goal = key === 'goal-review'
-  const lastLine = tail.trim().split('\n').filter(Boolean).pop()?.slice(0, 200)
-  const reason = lastLine
-    ? `Worker exited with code ${exitCode}: ${lastLine}`
-    : `Worker exited with code ${exitCode}`
 
   const infraError = isHarnessInfrastructureError(tail) || prevTailClass === 'infra_error'
   if (infraError) {

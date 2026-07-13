@@ -618,6 +618,7 @@ class Supervisor {
     if (this.config.display !== 'herdr') return
     const claims = await ownClaims()
     const savedWorkers = this.state?.workers || {}
+    let added = false
     for (const agent of listProjectWorkerAgents(projectId)) {
       const context = contextFromWorkerAgent(agent.agent, projectId)
       if (!context || this.workers.has(context)) continue
@@ -636,7 +637,7 @@ class Supervisor {
         if (!claim) continue
       }
       const runState = await readJson(runStateFile(context), {})
-      const live = processAlive(runState.ownerPid) || processAlive(runState.childPid)
+      const live = isLiveRunOwner(runState, processAlive)
       if (!live && !detectPaneMergeLockWait(tail) && context !== 'goal-review') continue
       const saved = savedWorkers[context] || {}
       this.workers.set(context, {
@@ -651,6 +652,8 @@ class Supervisor {
         worktree: saved.worktree || claim.worktree,
         port: saved.port || claim.port,
         startedAt: saved.startedAt || new Date().toISOString(),
+        reservationId: saved.reservationId || null,
+        governorReservationId: saved.governorReservationId || null,
         ownedResources: {
           port: saved.port || claim.port,
           worktree: saved.worktree || claim.worktree,
@@ -658,7 +661,9 @@ class Supervisor {
           processGroup: runState.childPid || runState.ownerPid || null,
         },
       })
+      added = true
     }
+    if (added) await this.save()
   }
 
   async snapshot() {
@@ -1213,8 +1218,10 @@ class Supervisor {
       status: goalState.status || '',
     })
     if (gate.reason === 'already-reviewed-head') {
-      this.stopping = true
-      await this.save({ status: 'complete' })
+      await this.completeGoal({
+        goal: true,
+        summary: 'Goal Review already satisfied at reviewed head',
+      })
       return true
     }
     if (!gate.ok) return false
@@ -1456,6 +1463,7 @@ class Supervisor {
     const operatorStop = control.status === 'stopped'
     if (operatorStop) {
       const { stopAllowed, turnEndDrain } = await importLib('control-beacon.mjs')
+      await this.save()
       const snapshot = await buildBeaconSnapshotFromState(this.state)
       const decision = stopAllowed('soft', snapshot)
       if (!decision.allowed) {
@@ -1594,15 +1602,21 @@ async function readConsumerCursors() {
 }
 
 async function buildBeaconSnapshotFromState(state = {}) {
-  const { beaconSnapshot } = await importLib('control-beacon.mjs')
+  const { beaconSnapshot, resolveWorkerLive } = await importLib('control-beacon.mjs')
   const events = await readEvents()
   const journalTip = events.length ? Number(events[events.length - 1].id) || 0 : 0
-  const workers = Object.fromEntries(
-    Object.entries(state.workers || {}).map(([context, worker]) => [
+  const workers = {}
+  for (const [context, worker] of Object.entries(state.workers || {})) {
+    const runState = await readJson(runStateFile(context), {})
+    const isHerdr = worker.display === 'herdr' || worker.type === 'herdr'
+    const paneOk = isHerdr && worker.paneId ? paneExists(worker.paneId) : null
+    workers[context] = {
+      ...worker,
       context,
-      { ...worker, live: worker.pid ? processAlive(worker.pid) : true },
-    ]),
-  )
+      type: worker.display === 'herdr' ? 'herdr' : (worker.type || worker.display || 'background'),
+      live: resolveWorkerLive(worker, { processAlive, runState, paneExists: paneOk }),
+    }
+  }
   return beaconSnapshot({
     workers,
     journalTip,

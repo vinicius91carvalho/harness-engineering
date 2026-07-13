@@ -45,6 +45,36 @@ export function parseVerdict(text) {
   return null
 }
 
+/** True when Goal Review markers wrap empty/invalid JSON or prose pass lacks harness JSON. */
+export function isMalformedGoalReviewVerdict(text = '') {
+  const trimmed = String(text || '').trim()
+  if (!trimmed) return false
+  const parsed = parseVerdict(trimmed)
+  if (parsed && typeof parsed.goal === 'boolean') return false
+
+  const open = trimmed.lastIndexOf(VERDICT_BEGIN)
+  if (open >= 0) {
+    const rest = trimmed.slice(open + VERDICT_BEGIN.length)
+    const close = rest.indexOf(VERDICT_END)
+    const body = (close >= 0 ? rest.slice(0, close) : rest).trim()
+    if (!body) return true
+    try {
+      const value = JSON.parse(body)
+      if (!value || typeof value !== 'object' || !('goal' in value)) return true
+      return false
+    } catch {
+      return true
+    }
+  }
+
+  if (/\b(goal review )?(passed|passes)\b/i.test(trimmed)
+    || /\bproject goal complete\b/i.test(trimmed)
+    || /\b"?goal"?\s*:\s*true\b/i.test(trimmed)) {
+    return true
+  }
+  return false
+}
+
 /** @deprecated use parseVerdict */
 export const parseObject = parseVerdict
 
@@ -189,6 +219,14 @@ export function interpretClosed({
 } = {}) {
   let result = persisted ? { ...persisted, durable: true } : null
   if (!result) result = parseVerdict(tail)
+  if (!result && key === 'goal-review' && isMalformedGoalReviewVerdict(tail)) {
+    result = {
+      goal: false,
+      retryGoalReview: true,
+      summary: 'Goal Review returned empty or malformed verdict; retry',
+      malformedVerdict: true,
+    }
+  }
   if (!result) {
     // Never infer goal:true from a stale Run State alone — reviewedHead must
     // match the current integration HEAD (jobs-done detection).
@@ -544,8 +582,15 @@ export function isWorkerStuckByHealth(health) {
 }
 
 export function isInfraNoise(text = '') {
-  return /(?:^|\n)(?:orchestrator:|claim\.sh:|reconcile:|harness-control:)/.test(text)
-    || /\b(ENOENT|EACCES|syntax error|timed out waiting for merge lock|timed out waiting for state lock)\b/.test(text)
+  const blob = String(text || '')
+  return /(?:^|\n)(?:orchestrator:|claim\.sh:|reconcile:|harness-control:)/.test(blob)
+    || /\b(ENOENT|EACCES|syntax error|timed out waiting for merge lock|timed out waiting for state lock)\b/.test(blob)
+    || /\bSession terminated, killing shell\b/i.test(blob)
+    || /\bsession limit\b/i.test(blob)
+    || /\borphanShell\b/i.test(blob)
+    || /\bhost (?:kill|death|terminated)\b/i.test(blob)
+    || /\bkilling shell\b/i.test(blob)
+    || /\bpane ended before run state completed\b/i.test(blob)
 }
 
 /** @deprecated use isInfraNoise */

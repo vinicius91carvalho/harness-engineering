@@ -550,7 +550,12 @@ async function runGoalReviewLocked() {
     status: state.status || '',
   })
   if (gate.reason === 'already-reviewed-head') {
-    return { goal: true, reused: true, summary: state.lastResult, defects: [] }
+    return {
+      goal: true,
+      reused: true,
+      summary: state.lastResult || 'Goal Review already satisfied at reviewed head',
+      defects: [],
+    }
   }
   if (!gate.ok) {
     if (gate.reason === 'dirty-checkout') {

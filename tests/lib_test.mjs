@@ -1275,6 +1275,96 @@ test('planWorkerClosedActions blocked input', () => {
   assert.equal(plan.scope, 'context')
 })
 
+test('classifyFailure treats host-death strings as operational', () => {
+  const sessionKill = classifyFailure({ reason: 'Session terminated, killing shell... ...killed.' })
+  assert.equal(sessionKill.class, 'operational')
+  assert.equal(sessionKill.safeRecovery, 'retry_same')
+
+  const sessionLimit = classifyFailure({ reason: 'Claude session limit until 6am' })
+  assert.equal(sessionLimit.class, 'operational')
+
+  const orphan = classifyFailure({ reason: 'orphanShell detected after childPid died' })
+  assert.equal(orphan.class, 'operational')
+
+  assert.equal(isInfraNoise('Session terminated, killing shell...'), true)
+  assert.equal(isInfraNoise('Harness worker pane ended before run state completed'), true)
+})
+
+test('planWorkerClosedActions host-death on Goal Review retries operationally', () => {
+  const plan = planWorkerClosedActions({
+    key: 'goal-review',
+    exitCode: 1,
+    tail: 'agent: harness verdict received\nSession terminated, killing shell... ...killed.',
+    result: null,
+    rateLimited: false,
+    crashCount: 0,
+    harnessRepairs: {},
+    retryQueue: {},
+    autoRepair: false,
+    logFile: '/tmp/goal.log',
+    prevTailClass: 'unknown',
+  })
+  assert.equal(plan.action, 'goal_review_retry')
+  assert.equal(plan.clearGoalBlock, true)
+  assert.notEqual(plan.action, 'blocked_input')
+})
+
+test('planWorkerClosedActions host-death on context worker queues operational retry', () => {
+  const plan = planWorkerClosedActions({
+    key: 'core',
+    exitCode: 1,
+    tail: 'Session terminated, killing shell... ...killed.',
+    result: null,
+    rateLimited: false,
+    crashCount: 0,
+    harnessRepairs: {},
+    retryQueue: {},
+    autoRepair: false,
+    logFile: '/tmp/core.log',
+    prevTailClass: 'unknown',
+  })
+  assert.equal(plan.action, 'quota_retry')
+  assert.equal(plan.context, 'core')
+  assert.equal(plan.clearCrashCount, true)
+})
+
+test('interpretClosed and planWorkerClosedActions treat empty Goal Review verdict as retry', async () => {
+  const { interpretClosed, isMalformedGoalReviewVerdict } = await import('../skills/generator/lib/worker-outcome.mjs')
+
+  const emptyWrapped = `${VERDICT_BEGIN}\n\n${VERDICT_END}`
+  assert.equal(isMalformedGoalReviewVerdict(emptyWrapped), true)
+
+  const prosePass = 'Goal Review passed all acceptance checks on integrated main.'
+  assert.equal(isMalformedGoalReviewVerdict(prosePass), true)
+
+  const closed = interpretClosed({
+    key: 'goal-review',
+    tail: emptyWrapped,
+    persisted: null,
+    runState: { status: 'blocked', phase: 'blocked', lastResult: 'stale block' },
+    featureIds: [],
+    queue: [],
+  })
+  assert.equal(closed.retryGoalReview, true)
+  assert.equal(closed.malformedVerdict, true)
+
+  const plan = planWorkerClosedActions({
+    key: 'goal-review',
+    exitCode: 0,
+    tail: emptyWrapped,
+    result: closed,
+    rateLimited: false,
+    crashCount: 0,
+    harnessRepairs: {},
+    retryQueue: {},
+    autoRepair: false,
+    logFile: '/tmp/goal.log',
+    prevTailClass: 'unknown',
+  })
+  assert.equal(plan.action, 'goal_review_retry')
+  assert.notEqual(plan.action, 'blocked_input')
+})
+
 test('createWorkflowState journal and readFeatures', async () => {
   const tmp = mkdtempSync(join(tmpdir(), 'workflow-state-'))
   const stateFile = join(tmp, 'state.json')
@@ -2227,4 +2317,62 @@ test('control-beacon blocks soft stop and allows force when authorized', async (
   assert.equal(stopAllowed('force', idle, { authorized: false }).allowed, false)
   assert.equal(stopAllowed('force', live, { authorized: true }).allowed, true)
   assert.deepEqual(turnEndDrain(), { waitForFinalizers: true })
+})
+
+test('control-beacon herdr without pid and without live run-state is not live', async () => {
+  const {
+    resolveWorkerLive,
+    beaconSnapshot,
+    stopAllowed,
+  } = await import('../skills/generator/lib/control-beacon.mjs')
+
+  const dead = () => false
+  const herdrRow = { display: 'herdr', paneId: '1-2', context: 'core' }
+
+  assert.equal(resolveWorkerLive(herdrRow, {
+    processAlive: dead,
+    runState: {},
+    paneExists: true,
+  }), false)
+
+  assert.equal(resolveWorkerLive(herdrRow, {
+    processAlive: dead,
+    runState: { ownerPid: 42, status: 'running' },
+    paneExists: true,
+  }), false)
+
+  assert.equal(resolveWorkerLive(herdrRow, {
+    processAlive: (pid) => pid === 42,
+    runState: { ownerPid: 42, status: 'running' },
+    paneExists: true,
+  }), true)
+
+  assert.equal(resolveWorkerLive(herdrRow, {
+    processAlive: (pid) => pid === 42,
+    runState: { ownerPid: 42, status: 'running' },
+    paneExists: false,
+  }), false)
+
+  const staleHerdr = beaconSnapshot({
+    workers: [herdrRow],
+    journalTip: 5,
+    consumerCursors: { 'herdr-notify': { eventId: 5 } },
+    pendingInputs: {},
+    processAlive: dead,
+  })
+  assert.equal(staleHerdr.liveWorkerCount, 0)
+  assert.equal(stopAllowed('soft', staleHerdr).allowed, true)
+
+  const liveHerdr = beaconSnapshot({
+    workers: [{
+      ...herdrRow,
+      runState: { ownerPid: 99, status: 'running' },
+    }],
+    journalTip: 5,
+    consumerCursors: { 'herdr-notify': { eventId: 5 } },
+    pendingInputs: {},
+    processAlive: (pid) => pid === 99,
+  })
+  assert.equal(liveHerdr.liveWorkerCount, 1)
+  assert.equal(stopAllowed('soft', liveHerdr).allowed, false)
 })
