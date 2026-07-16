@@ -4,6 +4,7 @@ import { hostname } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { readJson, atomicJson } from './fs-json.mjs'
+import { processAlive as sharedProcessAlive } from './orphan-claims.mjs'
 
 /**
  * Fenced singleton Supervisor Lease (ADR-0015).
@@ -16,10 +17,7 @@ export function supervisorLeasePaths(controlRoot) {
   return { lockDir, ownerFile: join(lockDir, 'owner.json') }
 }
 
-export function processAlive(pid) {
-  if (!Number(pid)) return false
-  try { process.kill(Number(pid), 0); return true } catch { return false }
-}
+export const processAlive = sharedProcessAlive
 
 export function supervisorOwnerLive(owner, leaseSeconds = 30) {
   if (!owner?.token) return false

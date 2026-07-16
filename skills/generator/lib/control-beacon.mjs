@@ -1,5 +1,7 @@
 /** Control-host beacon: fail-closed soft stop policy (ADR-0019). */
 
+import { processAlive as defaultProcessAlive, resolveWorkerLive } from './runtime-view.mjs'
+
 export const DEFAULT_REQUIRED_CONSUMERS = ['herdr-notify']
 
 /** Bounded soft-stop wait before surfacing Input Request (policy note only). */
@@ -12,14 +14,17 @@ export function turnEndDrain() {
   return { waitForFinalizers: true }
 }
 
-function isLiveWorker(worker = {}, processAlive = defaultProcessAlive) {
-  if (worker.live === true) return true
-  if (worker.live === false) return false
-  if (worker.status === 'done' || worker.health === 'done' || worker.terminal === true) return false
-  const pid = worker.childPid || worker.pid
-  if (pid) return processAlive(pid)
-  return worker.type === 'herdr' || worker.display === 'herdr'
-}
+/**
+ * Pure live check for a persisted worker row plus optional cross-check inputs.
+ * Herdr rows without a live pid or Run State owner/child are not live.
+ *
+ * @param {object} worker
+ * @param {object} [options]
+ * @param {(pid: number) => boolean} [options.processAlive]
+ * @param {object|null} [options.runState]
+ * @param {boolean|null} [options.paneExists] - false when herdr pane is gone
+ */
+export { resolveWorkerLive }
 
 function pendingInputRows(pendingInputs = {}) {
   return Object.values(pendingInputs).filter((row) => {
@@ -59,7 +64,11 @@ export function beaconSnapshot({
   const workerList = Array.isArray(workers)
     ? workers
     : Object.entries(workers).map(([context, worker]) => ({ context, ...worker }))
-  const liveWorkers = workerList.filter((worker) => isLiveWorker(worker, processAlive))
+  const liveWorkers = workerList.filter((worker) => resolveWorkerLive(worker, {
+    processAlive,
+    runState: worker.runState ?? null,
+    paneExists: worker.paneExists ?? null,
+  }))
   const unackedInputs = pendingInputRows(pendingInputs)
   const behindConsumers = consumersBehindTip(journalTip, consumerCursors, requiredConsumers)
 
@@ -101,14 +110,4 @@ export function stopAllowed(intent, snapshot, { authorized = false } = {}) {
   }
 
   return { allowed: true, reason: null }
-}
-
-function defaultProcessAlive(pid) {
-  if (!Number(pid)) return false
-  try {
-    process.kill(Number(pid), 0)
-    return true
-  } catch {
-    return false
-  }
 }

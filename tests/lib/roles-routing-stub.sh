@@ -32,7 +32,7 @@ esac
 kind=unknown
 case "$prompt" in
   *"orchestrator repair planner"*) kind=repair ;;
-  *"Integrated Verification"*) kind=integration ;;
+  *"performing Integrated Verification"*) kind=integration ;;
   *"You are the qa-agent"*) kind=qa ;;
   *"You are the coding-agent"*) kind=coding ;;
 esac

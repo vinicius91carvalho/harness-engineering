@@ -1,7 +1,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { parseObject, VERDICT_BEGIN } from '../../generator/lib/verdict.mjs'
+import { parseVerdict, VERDICT_BEGIN } from '../../generator/lib/worker-outcome.mjs'
 import { inferDefectClass } from '../../generator/lib/failure-policy.mjs'
 import { gitCommonDir } from '../../generator/lib/git-repo.mjs'
 
@@ -102,7 +102,7 @@ export async function scan(scope = {}) {
         skipped.partial += 1
         continue
       }
-      const verdict = parseObject(body)
+      const verdict = parseVerdict(body)
       const looksStructured = body.trim().startsWith('{') || body.includes(VERDICT_BEGIN)
       if (looksStructured && !verdict) {
         skipped.nonJson += 1

@@ -6,44 +6,22 @@
  */
 import {
   existsSync,
-  mkdirSync,
   readdirSync,
-  readFileSync,
-  renameSync,
   rmSync,
   statSync,
-  writeFileSync,
 } from 'node:fs'
 import { dirname, join, basename } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { hostname } from 'node:os'
 
+import { isLiveRunOwner, abandonGhostRun, listGhostClaims, processAlive } from '../../generator/lib/orphan-claims.mjs'
+import { readJsonFile, writeJsonAtomic } from '../../generator/lib/git-repo.mjs'
+import { journalLockHolderAlive, journalPaths } from '../../generator/lib/control-journal.mjs'
+
 const GENERIC_RETRY = /^Auto-retry:/i
 
-function processAlive(pid) {
-  if (!Number(pid)) return false
-  try {
-    process.kill(Number(pid), 0)
-    return true
-  } catch {
-    return false
-  }
-}
-
-function readJsonSafe(file, fallback = {}) {
-  if (!existsSync(file)) return fallback
-  try {
-    return JSON.parse(readFileSync(file, 'utf8'))
-  } catch {
-    return fallback
-  }
-}
-
-function writeJson(file, value) {
-  mkdirSync(dirname(file), { recursive: true })
-  const tmp = `${file}.tmp.${process.pid}`
-  writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`)
-  renameSync(tmp, file)
+function keyFromRunFile(name) {
+  return String(name || '').replace(/\.json$/, '')
 }
 
 function git(repo, args) {
@@ -138,10 +116,23 @@ export async function runSupervisorPreflight({
     }
   }
 
-  // 3) Ghost Run States (running + dead owner/child) — before claim release
+  // 3) Ghost Run States (running + dead owner/child) - before claim release
   const claimsFile = join(commonGit, 'generator-claims.json')
   const runsDir = join(commonGit, 'harness-runs')
   const ghostRuns = []
+  const allClaims = readJsonFile(claimsFile, {})
+  const scopedClaims = {}
+  for (const [key, claim] of Object.entries(allClaims)) {
+    if (claim?.project && projectId && claim.project !== projectId && projectId !== 'root') continue
+    if (projectPrefix) {
+      const pid = String(projectPrefix).replace(/\/$/, '')
+      if (!key.startsWith(pid) && claim?.project !== projectId) continue
+    }
+    scopedClaims[key] = claim
+  }
+
+  const runStatesByContext = {}
+  const runStateFiles = {}
   if (existsSync(runsDir)) {
     for (const name of readdirSync(runsDir)) {
       if (!name.endsWith('.json') || name.endsWith('.result.json')) continue
@@ -149,24 +140,33 @@ export async function runSupervisorPreflight({
       if (pid && !name.startsWith(`${pid}--`) && name !== `${pid}.json`) continue
       if (!pid && name.includes('--') && projectId && projectId !== 'root') continue
       const file = join(runsDir, name)
-      const run = readJsonSafe(file, {})
-      if (run.status !== 'running' && run.status !== 'starting') continue
-      const ownerAlive = processAlive(run.ownerPid)
-      const childAlive = processAlive(run.childPid)
-      if (ownerAlive || childAlive) continue
-      ghostRuns.push({ file, name, context: run.context, ownerPid: run.ownerPid, childPid: run.childPid })
-      if (repair) {
-        writeJson(file, {
-          ...run,
-          status: 'abandoned',
-          phase: run.phase || 'abandoned',
-          abandonedAt: new Date().toISOString(),
-          abandonReason: 'preflight: owner/child PID dead',
-          ownerPid: null,
-          childPid: null,
-        })
-        actions.push({ kind: 'run_abandoned', name, context: run.context })
-      }
+      const run = readJsonFile(file, {})
+      const ctx = run.context || keyFromRunFile(name)
+      runStatesByContext[ctx] = run
+      runStateFiles[ctx] = { file, name }
+    }
+  }
+
+  const ghosts = listGhostClaims({
+    claims: scopedClaims,
+    runStatesByContext,
+    processAlive,
+  })
+  for (const ghost of ghosts) {
+    const meta = runStateFiles[ghost.context]
+    if (!meta) continue
+    ghostRuns.push({
+      file: meta.file,
+      name: meta.name,
+      context: ghost.context,
+      ownerPid: ghost.runState?.ownerPid,
+      childPid: ghost.runState?.childPid,
+    })
+    if (repair) {
+      writeJsonAtomic(meta.file, abandonGhostRun(ghost.runState, {
+        reason: 'preflight: owner/child PID dead',
+      }))
+      actions.push({ kind: 'run_abandoned', name: meta.name, context: ghost.context })
     }
   }
   if (!ghostRuns.length) actions.push({ kind: 'runs_ok' })
@@ -175,7 +175,7 @@ export async function runSupervisorPreflight({
   // 4) Dead claim leases — drop only abandoned building sessions (session PID was set
   //    and is now dead). Never clear blocked/held claims that have no session — those
   //    are intentional Claim Lease holds for blocked Work Items.
-  const claims = readJsonSafe(claimsFile, {})
+  const claims = readJsonFile(claimsFile, {})
   const deadClaims = []
   let claimsDirty = false
   const nextClaims = { ...claims }
@@ -189,8 +189,8 @@ export async function runSupervisorPreflight({
     if (!session) continue
     if (processAlive(session)) continue
     const runFile = join(runsDir, `${key}.json`)
-    const run = readJsonSafe(runFile, {})
-    if (processAlive(run.ownerPid) || processAlive(run.childPid)) continue
+    const run = readJsonFile(runFile, {})
+    if (isLiveRunOwner(run, processAlive)) continue
     deadClaims.push({ key, context: claim.context, session })
     if (repair) {
       delete nextClaims[key]
@@ -198,27 +198,20 @@ export async function runSupervisorPreflight({
       actions.push({ kind: 'lease_cleared', context: claim.context, session, key })
     }
   }
-  if (claimsDirty) writeJson(claimsFile, nextClaims)
+  if (claimsDirty) writeJsonAtomic(claimsFile, nextClaims)
   else if (deadClaims.length && !repair) warnings.push({ kind: 'dead_claims', items: deadClaims })
   else if (!deadClaims.length) actions.push({ kind: 'claims_ok' })
 
   // 5) Stale state.json capacity / workerHealth / workers for dead PIDs
-  const state = readJsonSafe(stateFile, {})
+  const state = readJsonFile(stateFile, {})
   let stateDirty = false
   const nextState = { ...state }
 
   // 5a) Dead Control Journal lock — crashed supervisors leave journal.lock behind.
   //     Without this, initialize() emit() dies with "control journal lock timeout".
-  const journalLockPath = join(dirname(stateFile), 'journal.lock')
+  const journalLockPath = journalPaths(dirname(stateFile)).lock
   if (existsSync(journalLockPath)) {
-    let holderAlive = false
-    try {
-      const token = String(readFileSync(journalLockPath, 'utf8') || '').trim()
-      const pid = Number(String(token).split('.')[0])
-      holderAlive = processAlive(pid)
-    } catch {
-      holderAlive = false
-    }
+    const holderAlive = journalLockHolderAlive(journalLockPath)
     if (!holderAlive) {
       if (repair) {
         try {
@@ -317,7 +310,7 @@ export async function runSupervisorPreflight({
     nextState.supervisorPid = nextState.supervisorPid && processAlive(nextState.supervisorPid)
       ? nextState.supervisorPid
       : null
-    writeJson(stateFile, nextState)
+    writeJsonAtomic(stateFile, nextState)
   }
 
   // 6) Unregistered leftover worktree dirs (sibling *-wt-* ) — never remove a path
@@ -328,8 +321,8 @@ export async function runSupervisorPreflight({
   if (existsSync(runsDir)) {
     for (const name of readdirSync(runsDir)) {
       if (!name.endsWith('.json') || name.endsWith('.result.json')) continue
-      const run = readJsonSafe(join(runsDir, name), {})
-      if (processAlive(run.ownerPid) || processAlive(run.childPid)) {
+      const run = readJsonFile(join(runsDir, name), {})
+      if (isLiveRunOwner(run, processAlive)) {
         if (run.worktree) liveWorktrees.add(run.worktree)
         // worktree field is often .../core; also protect the checkout root
         if (run.worktree) liveWorktrees.add(dirname(run.worktree))

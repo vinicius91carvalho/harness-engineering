@@ -63,16 +63,14 @@ function withHerdrLayoutLock(lockDir, fn) {
 }
 
 export function getFocusedWorkspaceId() {
-  const parsed = JSON.parse(herdr(['pane', 'list']))
-  const panes = parsed.result?.panes || []
+  const panes = listPanes()
   const focused = panes.find((pane) => pane.focused) || panes[0]
   if (!focused?.workspace_id) throw new Error('no focused herdr workspace')
   return focused.workspace_id
 }
 
 export function getFocusedPaneId() {
-  const parsed = JSON.parse(herdr(['pane', 'list']))
-  const panes = parsed.result?.panes || []
+  const panes = listPanes()
   const focused = panes.find((pane) => pane.focused) || panes[0]
   if (!focused?.pane_id) throw new Error('no focused herdr pane')
   return focused.pane_id
@@ -148,9 +146,31 @@ export function resolveHarnessWorkerTab(workspaceId, { tabPrefix = HARNESS_TAB_P
   return { tabId: created.tabId, rootPaneId: created.rootPaneId, created: true }
 }
 
-export function listTabPanes(tabId) {
-  const parsed = JSON.parse(herdr(['pane', 'list']))
-  return (parsed.result?.panes || []).filter((pane) => pane.tab_id === tabId)
+export function listPanes() {
+  try {
+    const parsed = JSON.parse(herdr(['pane', 'list']))
+    return parsed.result?.panes || []
+  } catch {
+    return []
+  }
+}
+
+export function createPaneSnapshot() {
+  const panes = listPanes()
+  return {
+    panes,
+    byId: new Map(panes.map((pane) => [pane.pane_id, pane])),
+    tailCache: new Map(),
+  }
+}
+
+function snapshotPane(snapshot, paneId) {
+  return snapshot?.byId instanceof Map ? snapshot.byId.get(paneId) : null
+}
+
+export function listTabPanes(tabId, snapshot = null) {
+  const panes = snapshot ? snapshot.panes || [] : listPanes()
+  return panes.filter((pane) => pane.tab_id === tabId)
 }
 
 function isDanglingShell(pane) {
@@ -217,7 +237,8 @@ function argvToCommand(commandArgv, { cwd, env = {} } = {}) {
   return cwd ? `cd ${shellQuote(cwd)} && ${body}` : body
 }
 
-export function paneExists(paneId) {
+export function paneExists(paneId, snapshot = null) {
+  if (snapshot) return Boolean(snapshotPane(snapshot, paneId))
   try {
     const parsed = JSON.parse(herdr(['pane', 'get', paneId]))
     return Boolean(parsed.result?.pane?.pane_id)
@@ -288,8 +309,9 @@ export function closeWorkerDisplay(paneId, tabId) {
   if (tabId) closeWorkerTab(tabId)
 }
 
-export function getPaneAgentStatus(paneId) {
-  if (!paneExists(paneId)) return 'gone'
+export function getPaneAgentStatus(paneId, snapshot = null) {
+  const snapPane = snapshotPane(snapshot, paneId)
+  if (snapshot) return snapPane?.agent_status || 'gone'
   try {
     const parsed = JSON.parse(herdr(['pane', 'get', paneId]))
     return parsed.result?.pane?.agent_status || 'unknown'
@@ -307,19 +329,24 @@ export function isPaneBlocked(paneId) {
   return getPaneAgentStatus(paneId) === 'blocked'
 }
 
-export function readPaneTail(paneId, lines = 80) {
-  if (!paneExists(paneId)) return ''
-  const scroll = paneScrollOffset(paneId)
+export function readPaneTail(paneId, lines = 80, snapshot = null) {
+  if (!paneExists(paneId, snapshot)) return ''
+  const scroll = paneScrollOffset(paneId, snapshot)
   const source = scroll > 0 ? 'recent-unwrapped' : 'visible'
+  const cacheKey = `${paneId}\0${lines}\0${source}`
+  if (snapshot?.tailCache?.has(cacheKey)) return snapshot.tailCache.get(cacheKey)
   const result = spawnSync('herdr', ['pane', 'read', paneId, '--source', source, '--lines', String(lines), '--format', 'text'], { encoding: 'utf8' })
-  return result.stdout || ''
+  const tail = result.stdout || ''
+  if (snapshot?.tailCache) snapshot.tailCache.set(cacheKey, tail)
+  return tail
 }
 
 /** Current scroll.max_offset_from_bottom for a pane (0 if unknown). */
-export function paneScrollOffset(paneId) {
+export function paneScrollOffset(paneId, snapshot = null) {
+  const snapPane = snapshotPane(snapshot, paneId)
+  if (snapshot) return Number(snapPane?.scroll?.max_offset_from_bottom || 0)
   try {
-    const parsed = JSON.parse(herdr(['pane', 'list']))
-    const pane = (parsed.result?.panes || []).find((p) => p.pane_id === paneId)
+    const pane = listPanes().find((p) => p.pane_id === paneId)
     return Number(pane?.scroll?.max_offset_from_bottom || 0)
   } catch {
     return 0
@@ -327,11 +354,11 @@ export function paneScrollOffset(paneId) {
 }
 
 /** Map of paneId → scroll offset for all panes (one herdr call). */
-export function listPaneScroll() {
+export function listPaneScroll(snapshot = null) {
   try {
-    const parsed = JSON.parse(herdr(['pane', 'list']))
+    const panes = snapshot ? snapshot.panes || [] : listPanes()
     const out = new Map()
-    for (const pane of parsed.result?.panes || []) {
+    for (const pane of panes) {
       out.set(pane.pane_id, Number(pane.scroll?.max_offset_from_bottom || 0))
     }
     return out
@@ -403,8 +430,8 @@ export function contextFromWorkerAgent(agentName, projectId) {
   return agentName.slice(prefix.length) || null
 }
 
-export function reportHarnessAgent(paneId, agentName, state, message = '') {
-  if (!agentName || !paneExists(paneId)) return
+export function reportHarnessAgent(paneId, agentName, state, message = '', snapshot = null) {
+  if (!agentName || !paneExists(paneId, snapshot)) return
   const seq = (reportSeqByPane.get(paneId) || 0) + 1
   reportSeqByPane.set(paneId, seq)
   const args = [

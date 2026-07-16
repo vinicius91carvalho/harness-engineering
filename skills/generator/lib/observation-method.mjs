@@ -99,3 +99,49 @@ export function observationGateFailure(methods = [], kind = '', candidates = [],
     reason: `Observation Hard Gate: no eligible strong validation host for ${methodLabel} Work Item (configured: ${weakOnly.join(', ') || 'none'}; weak hosts excluded per ADR-0018)`,
   }
 }
+
+const ROLE_BY_KIND = {
+  QA: 'validation',
+  INTEGRATION_QA: 'validation',
+  GOAL_REVIEW: 'goalReview',
+}
+
+/** Map supervisor admission mode / orchestrator phase to a validation routing kind. */
+export function validationKindFromAdmission({ mode = '', phase = '' } = {}) {
+  if (mode === 'goal-review') return 'GOAL_REVIEW'
+  const normalized = String(phase || '').toLowerCase()
+  if (normalized === 'integration-qa') return 'INTEGRATION_QA'
+  if (normalized === 'qa' || normalized === 'qa-defect') return 'QA'
+  return null
+}
+
+/**
+ * Fail-closed Observation Hard Gate for supervisor admission (ADR-0018).
+ * CODING and other phases pass through with ok: true.
+ */
+export function observationAdmissionCheck({
+  kind = null,
+  roles = null,
+  observationMethods = [],
+  host = 'default',
+} = {}) {
+  if (!kind || !VALIDATION_KINDS.has(kind)) {
+    return { ok: true, reason: null }
+  }
+  const roleName = ROLE_BY_KIND[kind]
+  const rawPool = roles?.[roleName]?.length
+    ? roles[roleName]
+    : [{ harness: host }]
+  const filtered = filterCandidatesForObservation(rawPool, observationMethods, kind)
+  return observationGateFailure(observationMethods, kind, rawPool, filtered)
+}
+
+/** Aggregate observation methods across a Work Item queue (Goal Review admission). */
+export function observationMethodsForQueue(queue = []) {
+  const methods = new Set()
+  for (const item of queue) {
+    for (const method of workItemObservationMethods(item)) methods.add(method)
+  }
+  if (!methods.size) methods.add('grep')
+  return [...methods]
+}

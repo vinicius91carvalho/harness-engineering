@@ -2,6 +2,7 @@ import { existsSync, readFileSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { terminateProcessTree } from './worker-lifecycle.mjs'
+import { readOwnedRuntime } from './runtime-manifest.mjs'
 import {
   composeShareCount,
   isAppService,
@@ -183,10 +184,25 @@ export function cleanupWorktreeRuntime({
   forceComposeDown = false,
 } = {}) {
   if (process.platform === 'win32') {
-    return { appPid: { stopped: false }, killed: 0, compose: { ran: false, dir: null } }
+    return { appPid: { stopped: false }, killed: 0, manifestKilled: 0, containersRemoved: 0, compose: { ran: false, dir: null } }
   }
   if (!workdir && !port) {
-    return { appPid: { stopped: false }, killed: 0, compose: { ran: false, dir: null } }
+    return { appPid: { stopped: false }, killed: 0, manifestKilled: 0, containersRemoved: 0, compose: { ran: false, dir: null } }
+  }
+  const manifest = readOwnedRuntime(workdir)
+  let manifestKilled = 0
+  let containersRemoved = 0
+  for (const row of manifest) {
+    for (const pid of row.pids || []) {
+      if (pid) {
+        terminateProcessTree(pid, 'SIGTERM')
+        manifestKilled += 1
+      }
+    }
+    for (const name of row.containers || []) {
+      const result = spawnSync('docker', ['rm', '-f', String(name)], { stdio: 'ignore' })
+      if (result.status === 0) containersRemoved += 1
+    }
   }
   const appPid = stopAppPid(workdir)
   const killed = killPatterns(runtimeKillPatterns({ workdir, port }))
@@ -196,5 +212,5 @@ export function cleanupWorktreeRuntime({
     projectId,
     context,
   })
-  return { appPid, killed, compose }
+  return { appPid, killed, manifestKilled, containersRemoved, compose }
 }

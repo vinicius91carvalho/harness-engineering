@@ -76,6 +76,15 @@ fmt_tokens() {
   fi
 }
 
+dir_has_entries() {
+  [ -d "$1" ] || return 1
+  local entry
+  for entry in "$1"/* "$1"/.[!.]* "$1"/..?*; do
+    [ -e "$entry" ] && return 0
+  done
+  return 1
+}
+
 # ── Self-check: `statusline.sh --selftest` exercises the arithmetic helpers ───
 if [ "$1" = "--selftest" ]; then
   [ "$(fmt_dur 423)"  = "7m 3s" ]      || { echo "fmt_dur 423 -> $(fmt_dur 423)"; exit 1; }
@@ -83,27 +92,70 @@ if [ "$1" = "--selftest" ]; then
   [ "$(fmt_dur 0)"    = "now" ]        || { echo "fmt_dur 0 -> $(fmt_dur 0)"; exit 1; }
   [ "$(make_bar 42)"  = "████░░░░░░" ] || { echo "make_bar 42 -> $(make_bar 42)"; exit 1; }
   [ "$(make_bar 100)" = "██████████" ] || { echo "make_bar 100 -> $(make_bar 100)"; exit 1; }
+  tmp_selftest=$(mktemp -d)
+  trap 'rm -rf "$tmp_selftest"' EXIT
+  mkdir -p "$tmp_selftest/bin" "$tmp_selftest/repo/.git"
+  cat >"$tmp_selftest/bin/git" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >>"$HARNESS_STATUSLINE_GIT_LOG"
+case "$*" in
+  *"rev-parse --abbrev-ref HEAD --show-toplevel"*)
+    printf 'main\n%s\n' "$HARNESS_STATUSLINE_REPO"
+    ;;
+  *"rev-parse --git-common-dir"*)
+    printf '%s\n' "$HARNESS_STATUSLINE_REPO/.git"
+    ;;
+  *"worktree list"*)
+    echo 'unexpected worktree list' >&2
+    exit 9
+    ;;
+esac
+EOF
+  chmod +x "$tmp_selftest/bin/git"
+  reset_epoch=$(( $(date +%s) + 423 ))
+  payload=$(cat <<JSON
+{"model":{"display_name":"Test Model"},"workspace":{"current_dir":"$tmp_selftest/repo"},"context_window":{"used_percentage":42,"total_input_tokens":12000,"total_output_tokens":3400,"context_window_size":200000},"cost":{"total_cost_usd":1.23},"rate_limits":{"five_hour":{"resets_at":$reset_epoch,"used_percentage":70},"seven_day":{"used_percentage":20}}}
+JSON
+)
+  export HARNESS_STATUSLINE_REPO="$tmp_selftest/repo"
+  export HARNESS_STATUSLINE_GIT_LOG="$tmp_selftest/git.log"
+  rendered=$(PATH="$tmp_selftest/bin:$PATH" bash "$0" <<<"$payload")
+  printf '%s' "$rendered" | grep -q 'Test Model' || { echo "statusline missing model: $rendered"; exit 1; }
+  printf '%s' "$rendered" | grep -q '42%' || { echo "statusline missing context: $rendered"; exit 1; }
+  printf '%s' "$rendered" | grep -q '\$1.23' || { echo "statusline missing cost: $rendered"; exit 1; }
+  printf '%s' "$rendered" | grep -q 'main' || { echo "statusline missing branch: $rendered"; exit 1; }
+  ! grep -q 'worktree list' "$tmp_selftest/git.log" || { echo "statusline should skip worktree list for single-worktree repos"; exit 1; }
   echo "selftest ok"; exit 0
 fi
 
 input=$(cat)
 
+fields=$(printf '%s' "$input" | jq -r '[
+  .model.display_name // "",
+  .workspace.current_dir // .cwd // "",
+  .context_window.used_percentage // "",
+  .context_window.total_input_tokens // 0,
+  .context_window.total_output_tokens // 0,
+  .context_window.context_window_size // 0,
+  .cost.total_cost_usd // "",
+  .rate_limits.five_hour.resets_at // "",
+  .rate_limits.five_hour.used_percentage // "",
+  .rate_limits.seven_day.used_percentage // "",
+  .rate_limits.monthly.used_percentage // ""
+] | @tsv')
+IFS=$'\t' read -r model cwd used_pct total_in total_out ctx_size cost five_reset five_pct seven_pct monthly_pct <<EOF
+$fields
+EOF
+
 # ── Model badge ───────────────────────────────────────────────────────────────
-model=$(echo "$input" | jq -r '.model.display_name // empty')
 model_part=""
 [ -n "$model" ] && model_part="${BOLD}${C_CYAN}[${model}]${RESET}"
 
 # ── Directory ─────────────────────────────────────────────────────────────────
-cwd=$(echo "$input" | jq -r '.workspace.current_dir // .cwd // empty')
 dir_part=""
 [ -n "$cwd" ] && dir_part="📁 ${C_WHITE}$(basename "$cwd")${RESET}"
 
 # ── Context window (bar + % + tokens) ─────────────────────────────────────────
-used_pct=$(echo "$input"  | jq -r '.context_window.used_percentage      // empty')
-total_in=$(echo "$input"  | jq -r '.context_window.total_input_tokens   // 0')
-total_out=$(echo "$input" | jq -r '.context_window.total_output_tokens  // 0')
-ctx_size=$(echo "$input"  | jq -r '.context_window.context_window_size  // 0')
-
 ctx_part=""
 if [ -n "$used_pct" ]; then
   in_fmt=$(fmt_tokens "$total_in")
@@ -113,7 +165,6 @@ if [ -n "$used_pct" ]; then
 fi
 
 # ── Cost ──────────────────────────────────────────────────────────────────────
-cost=$(echo "$input" | jq -r '.cost.total_cost_usd // empty')
 cost_part=""
 if [ -n "$cost" ]; then
   cost_fmt=$(printf "%.2f" "$cost" 2>/dev/null) || cost_fmt="$cost"
@@ -121,40 +172,46 @@ if [ -n "$cost" ]; then
 fi
 
 # ── Time until the 5-hour rate-limit window resets ───────────────────────────
-five_reset=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')
 reset_part=""
 if [ -n "$five_reset" ]; then
   reset_part="⏱ $(fmt_dur "$(( five_reset - $(date +%s) ))")${DIM} to 5h${RESET}"
 fi
 
 # ── Rate-limit percentages ────────────────────────────────────────────────────
-five_pct=$(echo "$input"  | jq -r '.rate_limits.five_hour.used_percentage  // empty')
-seven_pct=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage  // empty')
 rate_part=""
 [ -n "$five_pct"  ] && rate_part="${rate_part}${C_MAGENTA}5h${RESET} $(color_pct "$five_pct") "
 [ -n "$seven_pct" ] && rate_part="${rate_part}${C_MAGENTA}7d${RESET} $(color_pct "$seven_pct") "
 # Monthly is not a native field — appears automatically if Anthropic adds it.
-monthly_pct=$(echo "$input" | jq -r '.rate_limits.monthly.used_percentage // empty')
 [ -n "$monthly_pct" ] && rate_part="${rate_part}${C_MAGENTA}mo${RESET} $(color_pct "$monthly_pct") "
 rate_part="${rate_part%% }"  # trim trailing space
 
 # ── Git branch + worktrees ────────────────────────────────────────────────────
 git_part=""
 if [ -n "$cwd" ]; then
-  branch=$(git -C "$cwd" --no-optional-locks rev-parse --abbrev-ref HEAD 2>/dev/null)
-  if [ -n "$branch" ]; then
-    cur_wt=$(basename "$(git -C "$cwd" --no-optional-locks rev-parse --show-toplevel 2>/dev/null)")
+  git_meta=$(git -C "$cwd" --no-optional-locks rev-parse --abbrev-ref HEAD --show-toplevel 2>/dev/null || true)
+  branch=${git_meta%%$'\n'*}
+  top=${git_meta#*$'\n'}
+  if [ -n "$branch" ] && [ -n "$top" ] && [ "$top" != "$git_meta" ]; then
+    cur_wt=$(basename "$top")
     git_part="🌿 ${C_WHITE}${branch}${RESET} ${DIM}@${cur_wt}${RESET}"
 
-    all_wt=$(git -C "$cwd" --no-optional-locks worktree list --porcelain 2>/dev/null \
-      | awk -v cur="$cur_wt" '
-          /^worktree / { name=$2; sub(".*/","",name) }
-          /^branch /   { br=$2; sub("refs/heads/","",br);
-                         printf "%s%s ", (name==cur?"*":""), br }
-          /^detached/  { printf "%s(detached) ", (name==cur?"*":"") }' \
-      | sed 's/ $//')
-    if [ -n "$all_wt" ] && [ "$(echo "$all_wt" | wc -w | tr -d ' ')" -gt 1 ]; then
-      git_part="${git_part} ${DIM}worktrees(${all_wt})${RESET}"
+    common_raw=$(git -C "$cwd" --no-optional-locks rev-parse --git-common-dir 2>/dev/null || true)
+    common_git=""
+    case "$common_raw" in
+      /*) common_git=$common_raw ;;
+      ?*) common_git=$(CDPATH= cd -- "$cwd/$common_raw" 2>/dev/null && pwd -P) || common_git="" ;;
+    esac
+    if [ -n "$common_git" ] && dir_has_entries "$common_git/worktrees"; then
+      all_wt=$(git -C "$cwd" --no-optional-locks worktree list --porcelain 2>/dev/null \
+        | awk -v cur="$cur_wt" '
+            /^worktree / { name=$2; sub(".*/","",name) }
+            /^branch /   { br=$2; sub("refs/heads/","",br);
+                           token=(name==cur?"*":"") br; out=out (out?" ":"") token; count++ }
+            /^detached/  { token=(name==cur?"*":"") "(detached)"; out=out (out?" ":"") token; count++ }
+            END { if (count > 1) print out }')
+      if [ -n "$all_wt" ]; then
+        git_part="${git_part} ${DIM}worktrees(${all_wt})${RESET}"
+      fi
     fi
   fi
 fi

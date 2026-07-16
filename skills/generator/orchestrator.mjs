@@ -7,10 +7,11 @@ import { hostname } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readJson, atomicJson } from './lib/fs-json.mjs'
-import { VERDICT_HINT, isProviderQuotaLimited, fallbackReason } from './lib/verdict.mjs'
-import { writeWorkerResult } from './lib/worker-result.mjs'
+import { VERDICT_HINT, isProviderQuotaLimited, fallbackReason } from './lib/worker-outcome.mjs'
+import { writeDurable } from './lib/worker-result.mjs'
 import { cleanupBrowserOrphans } from './lib/browser-cleanup.mjs'
 import { cleanupWorktreeRuntime } from './lib/worktree-teardown.mjs'
+import { appendOwnedRuntime } from './lib/runtime-manifest.mjs'
 import { buildHostCommand, hostCommands, roleNames, runHostAgentSession, terminateHostProcess, hostSpawnVisible } from './adapters/hosts.mjs'
 import { integrateCheckpoint } from './lib/integrate-checkpoint.mjs'
 import { featurePrompt as buildFeaturePrompt, RESOURCE_CLEANUP_RULE } from './prompts/feature.mjs'
@@ -120,6 +121,15 @@ const workflow = createWorkflowState({
   terminateChild,
 })
 
+appendOwnedRuntime(options.workdir, {
+  kind: 'orchestrator-runtime',
+  context,
+  port: Number(options.port) || null,
+  workdir: options.workdir,
+  pids: [],
+  shared: false,
+})
+
 const {
   writeState,
   writeInterruptedState,
@@ -151,6 +161,7 @@ async function ensureGovernorAdmission() {
     projectId: projectId || 'root',
     context,
     provider: options.host,
+    resourceClass: options.mode === 'goal-review' ? 'goal-review' : 'coding',
     quotaFile: join(topology.controlRoot, 'quota.json'),
     ...defaultGovernorOptions(),
   })
@@ -248,8 +259,40 @@ async function evidence(id, attempt, kind, detail, route = null) {
   return artifact.path
 }
 
+function createAgentOutputRecorder({ minIntervalMs = Number(process.env.HARNESS_AGENT_OUTPUT_WRITE_MS || 2000) } = {}) {
+  let lastWriteMs = 0
+  let pendingIso = null
+  let chain = Promise.resolve()
+  const writeAt = (iso) => {
+    chain = chain
+      .then(() => writeState({ lastAgentOutputAt: iso }))
+      .catch(() => {})
+    return chain
+  }
+  return {
+    note() {
+      const now = Date.now()
+      const iso = new Date(now).toISOString()
+      pendingIso = iso
+      if (!lastWriteMs || now - lastWriteMs >= minIntervalMs) {
+        lastWriteMs = now
+        pendingIso = null
+        writeAt(iso)
+      }
+    },
+    flush() {
+      if (!pendingIso) return chain
+      const iso = pendingIso
+      pendingIso = null
+      lastWriteMs = Date.now()
+      return writeAt(iso)
+    },
+  }
+}
+
 async function spawnAgent(program, args, cwd) {
   let registered = Promise.resolve()
+  const agentOutput = createAgentOutputRecorder()
   const result = await runHostAgentSession({
     program,
     args,
@@ -264,10 +307,11 @@ async function spawnAgent(program, args, cwd) {
       registered = writeState({ childPid: spawned?.pid || null }).catch((error) => { terminateChild(); fail(error.message) })
     },
     onAgentOutput: () => {
-      writeState({ lastAgentOutputAt: new Date().toISOString() }).catch(() => {})
+      agentOutput.note()
     },
   })
   await registered
+  await agentOutput.flush()
   child = null
   return result
 }
@@ -550,7 +594,12 @@ async function runGoalReviewLocked() {
     status: state.status || '',
   })
   if (gate.reason === 'already-reviewed-head') {
-    return { goal: true, reused: true, summary: state.lastResult, defects: [] }
+    return {
+      goal: true,
+      reused: true,
+      summary: state.lastResult || 'Goal Review already satisfied at reviewed head',
+      defects: [],
+    }
   }
   if (!gate.ok) {
     if (gate.reason === 'dirty-checkout') {
@@ -704,7 +753,7 @@ try {
 } finally {
   await releaseGovernorAdmission()
 }
-await writeWorkerResult(stateFile, {
+await writeDurable(stateFile, {
   exitCode: 0,
   leaseToken,
   invocationId: runId,

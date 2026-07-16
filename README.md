@@ -192,6 +192,7 @@ The script resolves the latest `vX.Y.Z` release tag (or your pin via `--version`
 A local checkout of this repository installs from the working tree instead (dev mode).
 
 Arrow-key checklist: keep `harness` checked; add MCP or extras if you want them.
+The optional status line reads the CLI payload once per render and only enumerates linked Git worktrees when the repo actually has a worktree registry.
 Windows: [`install.ps1`](install.ps1). Details: [installer docs](docs/installer/README.md).
 
 ## Start a project
@@ -392,14 +393,14 @@ bash "$GEN/claim.sh" list "$PROJECT"
 | --- | --- |
 | Build says `blocked` | Review journal + evidence; resume with guidance: `bash "$GEN/claim.sh" resume "$PROJECT" "$CONTEXT" $$ force` |
 | Looks done but won't complete | The supervisor is still draining its retry queue (up to 5 attempts per context) — check `status` or answer pending Input Requests |
-| Worker crashed / stale lease | Auto-resume after `HARNESS_LEASE_TIMEOUT_SECONDS` (default 60s); `force` only if the owner process is truly dead |
+| Worker crashed / stale lease | Auto-resume after `HARNESS_LEASE_TIMEOUT_SECONDS` (default 60s); `force` only if the owner process is truly dead. Permission-denied PID probes count as live, and Fleet Snapshot ignores worker rows whose recorded PID is dead. |
 | No progress / workers idle with pending inputs | Context-scoped `input_required` events auto-retry each supervisor tick; if still stuck, check `pendingInputs` and worker logs |
 | `status` lists workers but herdr has no tabs | Monorepo bug if cleanup is not project-scoped — each supervisor must only close `worker-<project>-*` tabs |
 | Finished tab still open after worker ended | Supervisor closes the worker tab when the shell exits or run state is terminal; reattach live tabs after supervisor restart via `rehydrateHerdrWorkers` |
 | Supervisors dead but panes still show workers | Restart all four subproject supervisors; orchestrators survive in panes and `rehydrateHerdrWorkers` reattaches them. Supervisor exit no longer closes herdr panes. |
 | `supervisor lease was lost` / supervisors exit mid-run | Lease is re-acquired on the next heartbeat instead of fatal-exiting; tick errors are logged and the loop continues |
-| pi `Session terminated…killed` / high swap | Host memory pressure — dockerd + mintlify + parallel docker builds. Restart supervisors with `--max-workers 2 --memory-per-worker-mb 2048 --reserve-memory-mb 2048` |
-| Orphan Docker after finished WIs | Coding/QA must tear down compose/containers they started before the verdict. Stop leftovers not owned by a live worker (`docker compose -p … down`, `docker rm -f wi-ac-*` / completed stacks). |
+| pi `Session terminated…killed` / high swap | Host memory pressure from dockerd, docs builds, or parallel browsers. Resource Governor now reports swap pressure and weighted reservations; restart with lower `--max-workers` or higher `--memory-per-worker-mb` only after checking `fleetSnapshot.projects[].hostResources` and `pressureAdvice`. |
+| Orphan Docker after finished WIs | Coding/QA must tear down compose/containers they started before the verdict. Shared infra containers stay behind a Shared Runtime Lease; private app containers and owned runtime manifest entries are safe to stop (`docker compose -p … down`, `docker rm -f wi-ac-*` / completed stacks). |
 
 Full symptom list: [site troubleshooting](https://vinicius91carvalho.github.io/harness-engineering/#troubleshoot).
 
@@ -411,13 +412,15 @@ Copy [`config/roles.example.json`](config/roles.example.json) to `.harness/roles
 Coding stays open-source-first (OpenCode / free models, then Composer, then Claude/Codex rescue).
 Validation and Goal Review prefer Composer / Codex / Claude first so http/browser ACs are not stuck on pi (no MCP path).
 `reconcile.mjs` stores `observation_method` on Work Items; the orchestrator filters weak harnesses to the end for http/browser QA.
-Supervisor `status` exposes `workerHealth` and `mergeLock` so 20-minute polls can see real progress vs merge-lock wait vs stuck.
+Supervisor `status` exposes `workerHealth`, `mergeLock`, and Fleet Snapshot resource bearings so 20-minute polls can see real progress vs merge-lock wait vs stuck vs resource pressure.
 Pi stays available as a transport for those expensive rescue models; it is not the everyday coding host.
 
 [herdr](https://herdr.dev/) is optional terminal visibility. It's auto-selected when the supervisor starts inside a herdr workspace (`HERDR_ENV=1`) with `herdr` installed; pass `--display background` to force background, or `--display herdr` to force herdr when available.
 See [Examples](#examples) for agent workers in a herdr workspace.
 
 In herdr mode each worker gets its own tab named `{taskId} - {role} - {project} - r{retry}` and streams the live agent session (thinking, tool calls, verdicts) via a flushed PTY (`script -f`). For `pi`, the orchestrator uses `--mode json` and formats thinking/tool events in real time. Finished workers close their tabs immediately — you should not see idle shells after a job ends.
+
+Cursor Task/Subagent mirror tabs use the bundled `skills/supervisor/herdr-cursor/herdr-subagent-logview.py` beside the hook script, with `~/.cursor` only as a local fallback for registry and legacy helper files.
 
 Optional [Collie](https://github.com/AltanS/collie) is a herdr plugin for mobile access over Tailscale — watch panes and reply from your phone when the supervisor needs input.
 

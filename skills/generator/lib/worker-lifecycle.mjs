@@ -2,8 +2,6 @@ import { spawnSync } from 'node:child_process'
 import { appendFile, mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-export { planWorkerClosedActions, shouldEnqueueStuckWorkerRetry } from './failure-policy.mjs'
-
 /**
  * Shared supervisor worker runtime plans.
  * harness-control applies side effects from these pure builders.
@@ -103,6 +101,14 @@ export function planWorkerStop(worker, { signal = 'SIGTERM' } = {}) {
   }
   if (pid) return { kind: 'terminate_tree', pid, signal }
   return { kind: 'noop' }
+}
+
+export function processGroupForWorker(worker = {}, runState = {}) {
+  const type = worker?.type || worker?.display || null
+  if (type === 'herdr') {
+    return runState.ownerPid || worker?.pid || runState.childPid || null
+  }
+  return worker?.pid || runState.ownerPid || runState.childPid || null
 }
 
 export function planWorkerCleanupTargets(worker) {

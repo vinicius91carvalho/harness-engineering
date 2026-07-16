@@ -11,42 +11,70 @@ export const VERDICT_END = '===HARNESS-VERDICT-END==='
 
 export const VERDICT_HINT = `Emit that JSON as the very last thing you print, on its own lines, wrapped exactly:\n${VERDICT_BEGIN}\n{...}\n${VERDICT_END}`
 
-/** True when a full BEGIN…END verdict block is present (agent may hang after printing it). */
-export function hasCompleteVerdict(text) {
-  const open = String(text || '').lastIndexOf(VERDICT_BEGIN)
-  if (open < 0) return false
-  const rest = text.slice(open + VERDICT_BEGIN.length)
-  const close = rest.indexOf(VERDICT_END)
-  if (close < 0) return false
-  const body = rest.slice(0, close).trim()
+function parseJsonObject(candidate) {
   try {
-    const v = JSON.parse(body)
-    return Boolean(v && typeof v === 'object')
+    const parsed = JSON.parse(candidate)
+    return parsed && typeof parsed === 'object' ? parsed : null
   } catch {
-    return false
+    return null
   }
 }
 
+function delimitedVerdictBody(text, { requireEnd = false } = {}) {
+  const source = String(text || '')
+  const open = source.lastIndexOf(VERDICT_BEGIN)
+  if (open < 0) return null
+  const rest = source.slice(open + VERDICT_BEGIN.length)
+  const close = rest.indexOf(VERDICT_END)
+  if (requireEnd && close < 0) return null
+  return (close >= 0 ? rest.slice(0, close) : rest).trim()
+}
+
+/** True when a full BEGIN…END verdict block is present (agent may hang after printing it). */
+export function hasCompleteVerdict(text) {
+  const body = delimitedVerdictBody(text, { requireEnd: true })
+  return Boolean(body && parseJsonObject(body))
+}
+
 export function parseVerdict(text) {
-  const trimmed = text.trim()
-  const open = trimmed.lastIndexOf(VERDICT_BEGIN)
-  if (open >= 0) {
-    const rest = trimmed.slice(open + VERDICT_BEGIN.length)
-    const close = rest.indexOf(VERDICT_END)
-    const body = (close >= 0 ? rest.slice(0, close) : rest).trim()
-    try { const v = JSON.parse(body); if (v && typeof v === 'object') return v } catch {}
+  const trimmed = String(text || '').trim()
+  const body = delimitedVerdictBody(trimmed)
+  if (body != null) {
+    const parsed = parseJsonObject(body)
+    if (parsed) return parsed
   }
   const candidates = [trimmed, ...trimmed.split('\n').reverse()]
   const start = trimmed.indexOf('{'), end = trimmed.lastIndexOf('}')
   if (start >= 0 && end > start) candidates.push(trimmed.slice(start, end + 1))
   for (const candidate of candidates) {
-    try { const parsed = JSON.parse(candidate); if (parsed && typeof parsed === 'object') return parsed } catch {}
+    const parsed = parseJsonObject(candidate)
+    if (parsed) return parsed
   }
   return null
 }
 
-/** @deprecated use parseVerdict */
-export const parseObject = parseVerdict
+/** True when Goal Review markers wrap empty/invalid JSON or prose pass lacks harness JSON. */
+export function isMalformedGoalReviewVerdict(text = '') {
+  const trimmed = String(text || '').trim()
+  if (!trimmed) return false
+  const parsed = parseVerdict(trimmed)
+  if (parsed && typeof parsed.goal === 'boolean') return false
+
+  const body = delimitedVerdictBody(trimmed)
+  if (body != null) {
+    if (!body) return true
+    const value = parseJsonObject(body)
+    if (!value || !('goal' in value)) return true
+    return false
+  }
+
+  if (/\b(goal review )?(passed|passes)\b/i.test(trimmed)
+    || /\bproject goal complete\b/i.test(trimmed)
+    || /\b"?goal"?\s*:\s*true\b/i.test(trimmed)) {
+    return true
+  }
+  return false
+}
 
 export function isProviderQuotaLimited(detail) {
   return /\b429\b|rate.?limit|usage limit|try again at|quota exceeded|too many requests/i.test(detail || '')
@@ -128,9 +156,6 @@ export function validateOutcome(value, { mode = null } = {}) {
   return { valid: errors.length === 0, mode: resolvedMode, errors, value }
 }
 
-/** @deprecated use validateOutcome */
-export const validateWorkerVerdict = validateOutcome
-
 export async function writeDurable(runStateFilePath, result) {
   const file = resultFileFromRunState(runStateFilePath)
   const payload = {
@@ -149,9 +174,6 @@ export async function writeDurable(runStateFilePath, result) {
   return file
 }
 
-/** @deprecated use writeDurable */
-export const writeWorkerResult = writeDurable
-
 export async function readDurable(runStateFilePath, { expectedInvocationId = null, expectedLeaseToken = null, expectedReviewedHead = null } = {}) {
   const file = resultFileFromRunState(runStateFilePath)
   const value = await readJson(file, null)
@@ -163,9 +185,6 @@ export async function readDurable(runStateFilePath, { expectedInvocationId = nul
   if (expectedLeaseToken && !value.leaseToken) return null
   return value
 }
-
-/** @deprecated use readDurable */
-export const readWorkerResult = readDurable
 
 export async function clearWorkerResult(runStateFilePath) {
   const file = resultFileFromRunState(runStateFilePath)
@@ -189,6 +208,14 @@ export function interpretClosed({
 } = {}) {
   let result = persisted ? { ...persisted, durable: true } : null
   if (!result) result = parseVerdict(tail)
+  if (!result && key === 'goal-review' && isMalformedGoalReviewVerdict(tail)) {
+    result = {
+      goal: false,
+      retryGoalReview: true,
+      summary: 'Goal Review returned empty or malformed verdict; retry',
+      malformedVerdict: true,
+    }
+  }
   if (!result) {
     // Never infer goal:true from a stale Run State alone — reviewedHead must
     // match the current integration HEAD (jobs-done detection).
@@ -226,9 +253,6 @@ export function interpretClosed({
   }
   return result
 }
-
-/** @deprecated use interpretClosed */
-export const interpretWorkerOutcome = interpretClosed
 
 // --- Live health (pane signals → verdict / recycle) ---
 
@@ -502,9 +526,6 @@ export function assessLive(signals = {}) {
   }
 }
 
-/** @deprecated use assessLive */
-export const assessWorkerHealth = assessLive
-
 /** Prefer visible pane source when scrollback is empty. */
 export function paneReadSource(scrollMaxOffset = 0) {
   return Number(scrollMaxOffset) > 0 ? 'recent' : 'visible'
@@ -544,9 +565,13 @@ export function isWorkerStuckByHealth(health) {
 }
 
 export function isInfraNoise(text = '') {
-  return /(?:^|\n)(?:orchestrator:|claim\.sh:|reconcile:|harness-control:)/.test(text)
-    || /\b(ENOENT|EACCES|syntax error|timed out waiting for merge lock|timed out waiting for state lock)\b/.test(text)
+  const blob = String(text || '')
+  return /(?:^|\n)(?:orchestrator:|claim\.sh:|reconcile:|harness-control:)/.test(blob)
+    || /\b(ENOENT|EACCES|syntax error|timed out waiting for merge lock|timed out waiting for state lock)\b/.test(blob)
+    || /\bSession terminated, killing shell\b/i.test(blob)
+    || /\bsession limit\b/i.test(blob)
+    || /\borphanShell\b/i.test(blob)
+    || /\bhost (?:kill|death|terminated)\b/i.test(blob)
+    || /\bkilling shell\b/i.test(blob)
+    || /\bpane ended before run state completed\b/i.test(blob)
 }
-
-/** @deprecated use isInfraNoise */
-export const isHarnessInfrastructureError = isInfraNoise

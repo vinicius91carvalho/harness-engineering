@@ -219,7 +219,7 @@ Coding soft-aligns its prompt to those methods but does not hard-exclude hosts.
 _Avoid_: soft reorder, pre-suite phase, host preference hint
 
 **Wake Triage**:
-A zero-token classifier over Control Journal deltas that absorbs or folds benign progress and wakes the Control Host LLM only for actionable events (Input Requests, stuck workers, fail-closed gaps).
+A zero-token classifier over Control Journal deltas that absorbs or folds benign progress, including empty-fleet progress already repaired by Hybrid Empty-Fleet Recovery, and wakes the Control Host LLM only for actionable events: unrepaired `empty_fleet_actionable` / `dead_runtime`, Input Requests, stuck workers, and other fail-closed gaps.
 _Avoid_: peer agent bus, supervisor tick replacement, event-driven coding↔QA channel
 
 **Evidence Corpus**:
@@ -228,12 +228,30 @@ _Avoid_: pane stream mining, auto-applied skill edits, mutable evidence rewrite
 
 **Control-host Beacon**:
 The stop policy that blocks blind Control Host exit while workers are live or required journal consumers are behind, with a turn-end backstop that drains finalizers before lease release.
+Herdr workers count as live only with a live pid and/or live Run State owner/child (and pane when applicable); never default-live without evidence.
 _Avoid_: second supervisor, auto-ack to unblock stop, lease fence
 
 **Fleet Snapshot**:
-A structured cross-project bearings contract (journal tips, capacity, stuck, pending inputs) that fleet-ops recovery and monorepo ops consume instead of reparsing raw control files.
+A structured cross-project bearings contract (journal tips, capacity, stuck, pending inputs, wake triage) that fleet-ops recovery and monorepo ops consume instead of reparsing raw control files.
+Additive ops fields include `supervisorLive`, `ghostClaims`, `emptyFleetActionable`, `needsGoalReviewRetry`, and `lastRunCompletedSummary`.
 Built by `skills/generator/lib/fleet-snapshot.mjs` (`harness-fleet-snapshot.v1`); exposed via `harness-control status` (`fleetSnapshot`) and `harness-control fleet-snapshot`.
 _Avoid_: monorepo skill dump into harness-control, ad-hoc sibling state scrapes
+
+**Ghost Claim**:
+A Claim Lease or Run State that looks active (building/running) but whose ownerPid/childPid are dead, so it must not consume Resource Governor slots or count as a live wait.
+_Avoid_: live Claim Lease, successful retry
+
+**Dead Runtime**:
+A worker or orchestrator process/pane that has exited while Control Journal or state still implies it is running; surfaced as a Control Event for hybrid recovery.
+_Avoid_: healthy herdr idle between turns, merge-lock wait
+
+**Empty Fleet Actionable**:
+The condition where workers={} (or equivalent) while remaining Work Items, pending Input Requests, or a stale Goal Review still need progress - fail-closed for the Supervisor tick.
+_Avoid_: idle complete run, benign progress fold
+
+**Hybrid Empty-Fleet Recovery**:
+Supervisor tick auto-clears Ghost Claims / dead locks / orphan PIDs and re-admits when capacity allows, emits `empty_fleet_actionable` / `dead_runtime` Control Events, and wakes the Control Host LLM only for quota, cross-project RAM contention, or judgment.
+_Avoid_: Control Host owns execution, skill-only 10-min scrapebook recovery
 
 **User**:
 The human who sets up the harness, requests features or refactors, answers escalations, and reads relayed progress.

@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { parseObject, VERDICT_BEGIN } from './verdict.mjs'
+import { parseVerdict, VERDICT_BEGIN } from './worker-outcome.mjs'
 
 const MAX_GUIDANCE_CHARS = 800
 const MAX_DEFECT_LINES = 3
@@ -75,7 +75,7 @@ export function evidenceGuidanceExcerpt(evidencePathOrDigest) {
   if (!text.trim()) return ''
 
   const { meta, body } = parseEvidenceHeader(text)
-  const verdict = parseObject(body)
+  const verdict = parseVerdict(body)
   if (verdict && typeof verdict === 'object') {
     const pairs = extractDefectPairs(verdict.defects || [])
     if (pairs.length) return formatDefectGuidance(pairs, { kind: meta.kind || null })

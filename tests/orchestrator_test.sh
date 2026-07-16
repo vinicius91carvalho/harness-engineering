@@ -36,7 +36,7 @@ case "$prompt" in
   *"orchestrator repair planner"*)
     printf '%s\n' '{"summary":"fix the health response","rootCause":"wrong response","actions":["return ready"],"validation":["request health"]}'
     ;;
-  *"Integrated Verification"*)
+  *"performing Integrated Verification"*)
     printf '%s\n' '{"id":"WI-AC-001","integration":true,"implementation":true,"defects":[]}'
     ;;
   *"independent Goal Review agent"*)
@@ -495,7 +495,7 @@ printf '%s' "$prompt" | grep -q 'verify that the repository contains every struc
 noise() { printf '{"note":"debug"}\n'; printf '}\n'; }
 verdict() { printf '===HARNESS-VERDICT-BEGIN===\n%s\n===HARNESS-VERDICT-END===\n' "$1"; }
 case "$prompt" in
-  *"Integrated Verification"*)
+  *"performing Integrated Verification"*)
     noise; verdict '{"id":"WI-AC-001","integration":true,"implementation":true,"defects":[]}'
     ;;
   *"You are the qa-agent"*)

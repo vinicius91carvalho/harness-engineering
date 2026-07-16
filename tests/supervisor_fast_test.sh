@@ -37,7 +37,7 @@ rm -f "$TMP/quota-limit/.git/harness-control/state.json" "$TMP/quota-limit/.git/
 PATH="$SUPERVISOR_PATH" HARNESS_TEST_SUPERVISOR_QUOTA=1 HARNESS_RATE_LIMIT_BACKOFF_MS=100 HARNESS_RATE_LIMIT_JITTER_MS=0 \
   "$NODE" "$CONTROL" run \
   --repo "$TMP/quota-limit" --host claude --poll-ms 50 --quota-cooldown-seconds 60 \
-  --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100 >"$TMP/quota-supervisor.log" 2>&1 &
+  --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100 --max-swap-used-ratio 1 >"$TMP/quota-supervisor.log" 2>&1 &
 quota_supervisor=$!
 # macOS CI cold-starts can exceed 20s before the first claim/spawn; keep polling until
 # quota_wait lands (jq -se fails on false, so we do not treat "not yet" as success).
@@ -73,7 +73,7 @@ printf '%s\n' '<project_specification />' >"$TMP/invalid/project_specs.xml"
 printf '%s\n' '[]' >"$TMP/invalid/feature_list.json"
 git -C "$TMP/invalid" add .
 git -C "$TMP/invalid" commit -qm init
-supervisor_common_run_once --repo "$TMP/invalid" --host claude --once true --max-load-ratio 100
+supervisor_common_run_once --repo "$TMP/invalid" --host claude --once true --max-load-ratio 100 --max-swap-used-ratio 1
 INVALID_STATE="$TMP/invalid/.git/harness-control/state.json"
 INVALID_EVENTS="$TMP/invalid/.git/harness-control/events.jsonl"
 jq -e '.status == "needs_input" and .supervisorPid == null' "$INVALID_STATE" >/dev/null
@@ -84,7 +84,7 @@ if "$NODE" "$CONTROL" respond --repo "$TMP/invalid" --event "$REQUEST" --action 
   echo 'not ok - conflicting duplicate Input Request response accepted' >&2; exit 1
 fi
 test -f "$TMP/invalid/.git/harness-control/responses/$REQUEST.json"
-PATH="$SUPERVISOR_PATH" supervisor_common_run_once --repo "$TMP/invalid" --host claude --poll-ms 50 --max-load-ratio 100
+PATH="$SUPERVISOR_PATH" supervisor_common_run_once --repo "$TMP/invalid" --host claude --poll-ms 50 --max-load-ratio 100 --max-swap-used-ratio 1
 "$NODE" "$CONTROL" status --repo "$TMP/invalid" | jq -e '.status == "paused" and .supervisorPid == null' >/dev/null
 "$NODE" "$CONTROL" start --repo "$TMP/invalid" --host claude | jq -e '.started == false and .status == "paused"' >/dev/null
 echo 'ok - invalid planning emits a durable goal Input Request and consumes its idempotent response after restart'
@@ -95,7 +95,7 @@ mkdir -p "$TMP/retry/.git/harness-control"
 printf '%s\n' '{"retryQueue":{"ghost":{"guidance":"","attempts":4}}}' >"$TMP/retry/.git/harness-control/state.json"
 supervisor_common_run_once --repo "$TMP/retry" --host claude --once true --poll-ms 50 \
   --max-workers 2 --quota-workers 2 --cpu-per-worker 0.25 \
-  --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100
+  --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100 --max-swap-used-ratio 1
 RETRY_STATE="$TMP/retry/.git/harness-control/state.json"
 RETRY_EVENTS="$TMP/retry/.git/harness-control/events.jsonl"
 if ! jq -e '.retryQueue == {}' "$RETRY_STATE" >/dev/null \
@@ -123,7 +123,7 @@ cat >"$TMP/prune/.git/harness-control/state.json" <<'JSON'
 JSON
 supervisor_common_run_once --repo "$TMP/prune" --host claude --once true --poll-ms 50 \
   --max-workers 2 --quota-workers 2 --cpu-per-worker 0.25 \
-  --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100
+  --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100 --max-swap-used-ratio 1
 PRUNE_STATE="$TMP/prune/.git/harness-control/state.json"
 jq -e '(.pendingInputs | has("100") | not) and (.pendingInputs | has("101")) and (.pendingInputs | has("102"))' "$PRUNE_STATE" >/dev/null \
   || { jq '.pendingInputs | keys' "$PRUNE_STATE"; echo 'not ok - orphaned pending was not pruned, or a real blocked/goal event was wrongly dropped' >&2; exit 1; }
@@ -140,7 +140,7 @@ git -C "$TMP/mono2" commit -qm init
 mkdir -p "$TMP/mono2/.git"
 printf '%s\n' '{"appB--ghost":{"context":"ghost","status":"blocked"}}' >"$TMP/mono2/.git/generator-claims.json"
 supervisor_common_run_once --repo "$TMP/mono2/appA" --host claude --once true --poll-ms 50 \
-  --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100
+  --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100 --max-swap-used-ratio 1
 jq -e '.progress.blocked == 0' "$TMP/mono2/.git/harness-control/appA/state.json" >/dev/null \
   || { cat "$TMP/mono2/.git/harness-control/appA/state.json"; echo 'not ok - sibling subproject appB'"'"'s blocked claim leaked into appA'"'"'s own blocked count' >&2; exit 1; }
 if jq -s -e 'any(.[]; .context == "ghost")' "$TMP/mono2/.git/harness-control/appA/events.jsonl" >/dev/null 2>&1; then
@@ -153,6 +153,7 @@ cp "$CONTROL" "$TMP/installed/skills/harness-supervisor/scripts/harness-control.
 cp "$ROOT/skills/supervisor/lib/herdr-spawn.mjs" "$TMP/installed/skills/harness-supervisor/lib/herdr-spawn.mjs"
 cp "$ROOT/skills/supervisor/lib/supervisor-preflight.mjs" "$TMP/installed/skills/harness-supervisor/lib/supervisor-preflight.mjs"
 cp -R "$ROOT/skills/generator" "$TMP/installed/skills/harness-generator"
+ln -sf harness-generator "$TMP/installed/skills/generator"
 git clone -q "$TMP/repo" "$TMP/namespaced"
 git -C "$TMP/namespaced" config user.name test
 git -C "$TMP/namespaced" config user.email test@example.invalid
@@ -179,7 +180,7 @@ supervisor_common_write_feature_queue "$TMP/background/feature_list.json" false
 git -C "$TMP/background" add feature_list.json && git -C "$TMP/background" commit -qm reset
 PATH="$SUPERVISOR_PATH" HERDR_ENV=1 supervisor_common_run_once \
   --repo "$TMP/background" --host claude --poll-ms 50 --display background \
-  --quota-workers 1 --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100
+  --quota-workers 1 --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100 --max-swap-used-ratio 1
 jq -e '.status == "complete"' "$TMP/background/.git/harness-control/state.json" >/dev/null
 echo 'ok - explicit --display background always forces background workers, even when HERDR_ENV=1'
 
@@ -214,7 +215,7 @@ printf '%s\n' '{"crashCounts":{"flaky":5}}' >"$TMP/circuit/.git/harness-control/
 supervisor_common_run_timeout 15 env PATH="$SUPERVISOR_PATH" "$NODE" "$CONTROL" run \
   --repo "$TMP/circuit" --host claude --once true --poll-ms 50 \
   --max-workers 2 --quota-workers 2 --cpu-per-worker 0.25 \
-  --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100
+  --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100 --max-swap-used-ratio 1
 CIRCUIT_EVENTS="$TMP/circuit/.git/harness-control/events.jsonl"
 jq -e '.crashCounts.flaky == 5' "$TMP/circuit/.git/harness-control/state.json" >/dev/null
 if jq -s -e 'any(.[]; .context == "flaky")' "$CIRCUIT_EVENTS" >/dev/null 2>&1; then
@@ -264,11 +265,30 @@ printf '%s\n' '{
 supervisor_common_run_timeout 20 env PATH="$SUPERVISOR_PATH" "$NODE" "$CONTROL" run \
   --repo "$TMP/emptyfleet" --host claude --once true --poll-ms 50 \
   --max-workers 2 --quota-workers 2 --cpu-per-worker 0.25 \
-  --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100
+  --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100 --max-swap-used-ratio 1
 test ! -f "$TMP/emptyfleet/.git/harness-locks/generator-merge/owner"
 jq -e '(.crashCounts.stuckctx // 0) != 5 or (.crashCounts|length==0) or (.retryQueue.stuckctx != null) or (.pendingInputs["42"].status == "responded")' \
   "$TMP/emptyfleet/.git/harness-control/state.json" >/dev/null
+if ! jq -s -e 'any(.[]; .kind == "empty_fleet_actionable" or .kind == "dead_runtime")' \
+  "$TMP/emptyfleet/.git/harness-control/events.jsonl" >/dev/null 2>&1; then
+  echo 'not ok - empty fleet tick did not emit empty_fleet_actionable or dead_runtime' >&2
+  cat "$TMP/emptyfleet/.git/harness-control/events.jsonl" >&2 || true
+  exit 1
+fi
 echo 'ok - empty fleet tick clears dead merge lock and recovers past crash-bound'
+
+# --- already-reviewed-head short-circuit emits run_completed (Phase C) ---
+mkdir -p "$TMP/reviewed-head"
+supervisor_common_init_git_repo "$TMP/reviewed-head" true
+HEAD="$(git -C "$TMP/reviewed-head" rev-parse HEAD)"
+mkdir -p "$TMP/reviewed-head/.git/harness-control" "$TMP/reviewed-head/.git/harness-runs"
+printf '%s\n' '{"status":"complete","reviewedHead":"'"$HEAD"'"}' >"$TMP/reviewed-head/.git/harness-runs/goal-review.json"
+printf '%s\n' '{"status":"running","workers":{},"retryQueue":{}}' >"$TMP/reviewed-head/.git/harness-control/state.json"
+supervisor_common_run_once --repo "$TMP/reviewed-head" --host claude --once true --poll-ms 50 \
+  --max-workers 1 --quota-workers 1 --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100 --max-swap-used-ratio 1
+jq -e '.status == "complete"' "$TMP/reviewed-head/.git/harness-control/state.json" >/dev/null
+jq -s -e 'any(.[]; .kind == "run_completed")' "$TMP/reviewed-head/.git/harness-control/events.jsonl" >/dev/null
+echo 'ok - already-reviewed-head completes without spawning Goal Review worker'
 
 # --- preflight: ghost run + dead claim + stale capacity ---
 git clone -q "$TMP/repo" "$TMP/preflight"
