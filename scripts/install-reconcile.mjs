@@ -26,6 +26,22 @@ import { fileURLToPath } from 'node:url'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const catalogPath = join(root, 'config/installable-catalog.json')
 
+/** Match CLI entry even when argv uses /var/... and import.meta.url uses /private/var/... on macOS. */
+function canonicalPath(pathLike) {
+  const abs = resolve(pathLike)
+  if (!existsSync(abs)) return abs
+  try {
+    return realpathSync(abs)
+  } catch {
+    return abs
+  }
+}
+
+function isCliEntry(argvPath, modulePath) {
+  if (!argvPath) return false
+  return canonicalPath(argvPath) === canonicalPath(modulePath)
+}
+
 const MARKETPLACE_HOSTS = {
   claude: {
     file: '.claude-plugin/marketplace.json',
@@ -781,7 +797,7 @@ async function main() {
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isCliEntry(process.argv[1], fileURLToPath(import.meta.url))) {
   main().catch((err) => {
     console.error(err.message || err)
     process.exit(1)

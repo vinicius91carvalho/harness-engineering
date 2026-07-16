@@ -183,6 +183,21 @@ node "$ROOT/scripts/install-reconcile.mjs" skills-add-args hallmark | jq -e '
 ' >/dev/null || fail 'skills-add-args should project hallmark acquisition from catalog'
 pass 'install-reconcile resolves scope bases and module scopes'
 
+# Regression: macOS TMPDIR is /var/folders/... while Node resolves import.meta.url
+# to /private/var/...; install-reconcile must still execute as a CLI.
+var_sim=$TMP/var-path-sim
+mkdir -p "$var_sim/private/var/repo/config" "$var_sim/private/var/repo/scripts"
+ln -sfn "$var_sim/private/var" "$var_sim/var"
+cp "$ROOT/config/installable-catalog.json" "$var_sim/private/var/repo/config/"
+cp "$ROOT/scripts/install-reconcile.mjs" "$var_sim/private/var/repo/scripts/"
+script=$var_sim/var/repo/scripts/install-reconcile.mjs
+test -f "$script" || fail 'install-reconcile regression fixture is missing'
+hallmark_args=$("$SYSTEM_NODE" "$script" skills-add-args hallmark) \
+  || fail 'install-reconcile CLI must run when argv crosses /var -> /private/var symlinks'
+printf '%s' "$hallmark_args" | jq -e '.repo == "nutlope/hallmark" and .skill == "hallmark"' >/dev/null \
+  || fail 'install-reconcile CLI must return hallmark skills-add-args via symlinked /var paths'
+pass 'install-reconcile CLI entry survives macOS-style symlinked temp paths'
+
 : >"$HARNESS_TEST_LOG"
 "$ROOT/install.sh" --cli claude --no </dev/null >"$TMP/out"
 grep -q '^claude plugin marketplace' "$HARNESS_TEST_LOG" || fail 'Claude marketplace command missing'
