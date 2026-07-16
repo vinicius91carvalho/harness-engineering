@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install the harness plugin and optional integrations for Claude Code, Codex, OpenCode, Pi, and Cursor Agent.
+# Install the harness plugin and optional integrations for Claude Code, Codex, OpenCode, Pi, and Cursor (agent/cursor).
 set -eu
 
 MARKETPLACE_REPO="vinicius91carvalho/harness-engineering"
@@ -41,6 +41,7 @@ Usage: install.sh [--yes|--no] [--dry-run]
                   [--user|--project|--local]
 
 --yes/--no choose checklist contents; --cli chooses target hosts.
+--cli agent is shown as agent/cursor and installs for both Cursor IDE and Agent CLI.
 --version pins the GitHub release tag to stage (e.g. v2.0.0); default is latest.
 --scope user installs to per-user host directories; project installs under
 --project-dir (default: current directory); local is Claude-only.
@@ -123,7 +124,7 @@ for cli in claude codex opencode pi agent; do
   cli_installed "$cli" && detected_clis="$detected_clis $cli"
 done
 detected_clis=${detected_clis# }
-[ -n "$detected_clis" ] || die 'no supported CLI found (install Claude Code, Codex, OpenCode, Pi, or Cursor Agent)'
+[ -n "$detected_clis" ] || die 'no supported CLI found (install Claude Code, Codex, OpenCode, Pi, or Cursor agent)'
 
 tty_available() { [ -r /dev/tty ] && [ -w /dev/tty ] && (set +e; : </dev/tty) >/dev/null 2>&1; }
 word_count() { set -- $1; echo "$#"; }
@@ -138,7 +139,7 @@ menu_item_blurb() {
     host:codex) printf '%s' "OpenAI Codex CLI with plugins and MCP support." ;;
     host:opencode) printf '%s' "Open-source AI coding agent with skills, agents, and MCP." ;;
     host:pi) printf '%s' "Pi CLI for headless agent workflows." ;;
-    host:agent) printf '%s' "Cursor Agent CLI for headless workflows in Cursor." ;;
+    host:agent) printf '%s' "Cursor IDE + Agent CLI (plugins under .cursor/plugins/local, skills under .cursor/skills)." ;;
     host:all) printf '%s' "Install to every detected host above." ;;
     scope:user) printf '%s' "Install into per-user host directories (global for this account)." ;;
     scope:project) printf '%s' "Install into a specific project folder (skills, plugins, MCP under that repo)." ;;
@@ -154,14 +155,22 @@ menu_item_blurb() {
   esac
 }
 
+menu_item_label() {
+  case "${MENU_LABEL_KIND:-}:$1" in
+    host:agent) printf '%s' 'agent/cursor' ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
 menu_print_item() {
   item=$1 pointer=$2 box=${3:-}
+  label=$(menu_item_label "$item")
   blurb=$(menu_item_blurb "$item")
   if [ -n "$box" ]; then
-    printf '%s%s %s\n' "$pointer" "$box" "$item" >/dev/tty
+    printf '%s%s %s\n' "$pointer" "$box" "$label" >/dev/tty
     indent='      '
   else
-    printf '%s%s\n' "$pointer" "$item" >/dev/tty
+    printf '%s%s\n' "$pointer" "$label" >/dev/tty
     indent='    '
   fi
   if [ -n "$blurb" ]; then
@@ -580,11 +589,16 @@ clean_stale_agent_plugin_pollution() {
 install_agent_plugin() {
   name=$1
   dest=$(cursor_plugin_dir "$name")
-  if [ -n "$DRY" ]; then echo "DRY RUN — install Cursor Agent plugin at $dest"; return; fi
-  command -v agent >/dev/null 2>&1 || cli_installed agent || die 'agent is required to install the harness Cursor Agent plugin'
+  skills=$(cursor_skills_root)
+  if [ -n "$DRY" ]; then
+    echo "DRY RUN — install agent/cursor plugin at $dest"
+    echo "DRY RUN — link $name skills into $skills for Agent CLI discovery"
+    return
+  fi
+  command -v agent >/dev/null 2>&1 || cli_installed agent || die 'agent is required to install the harness agent/cursor plugin'
   ensure_repo
   node "$TEMP_REPO/scripts/install-reconcile.mjs" project-agent "$name" "$TEMP_REPO" "$dest" \
-    || die "Cursor Agent projection failed for $name"
+    || die "agent/cursor projection failed for $name"
 }
 
 install_plugin() {
@@ -791,10 +805,8 @@ install_crawl4ai() {
         else install_crawl4ai_skill "$dest"
         fi ;;
       agent)
-        dest="$(cursor_skills_root)/crawl4ai"
-        if [ -n "$DRY" ]; then echo "DRY RUN — install crawl4ai skill to $dest"
-        else install_crawl4ai_skill "$dest"
-        fi ;;
+        # Dual-path: local plugin (IDE) + linked .cursor/skills (Agent CLI).
+        install_agent_plugin crawl4ai ;;
     esac
   done
 }
@@ -968,4 +980,9 @@ esac
 
 scope_label=$SCOPE
 [ -n "$PROJECT_DIR" ] && scope_label="$SCOPE ($PROJECT_DIR)"
-echo "Harness installation complete for:$CLI [scope: $scope_label]"
+cli_label=""
+for cli in $CLI; do
+  [ -n "$cli_label" ] && cli_label="$cli_label "
+  case "$cli" in agent) cli_label="${cli_label}agent/cursor" ;; *) cli_label="${cli_label}$cli" ;; esac
+done
+echo "Harness installation complete for:$cli_label [scope: $scope_label]"

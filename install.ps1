@@ -1,4 +1,4 @@
-# Native Windows installer for Claude Code, Codex, OpenCode, Pi, and Cursor Agent.
+# Native Windows installer for Claude Code, Codex, OpenCode, Pi, and Cursor (agent/cursor).
 <#
 .SYNOPSIS
   Install the harness plugin and optional integrations for supported AI CLIs.
@@ -11,6 +11,7 @@
                      [-User|-Project|-Local]
 
   -Yes/-No choose checklist contents; -Cli chooses target hosts.
+  -Cli agent is shown as agent/cursor and installs for both Cursor IDE and Agent CLI.
   -Version pins the GitHub release tag to stage; default is latest.
   -Scope user installs to host user directories; project installs under -ProjectDir
   (default: current directory); local is Claude-only (plugin scope under the project).
@@ -46,6 +47,7 @@ Usage: install.ps1 [-Yes|-No] [-DryRun]
                    [-User|-Project|-Local]
 
 -Yes/-No choose checklist contents; -Cli chooses target hosts.
+-Cli agent is shown as agent/cursor and installs for both Cursor IDE and Agent CLI.
 -Version pins the GitHub release tag to stage; default is latest.
 -Scope user installs to per-user host directories; project installs under -ProjectDir
 (or the current directory); local is valid only when Claude is the sole selected host.
@@ -121,7 +123,7 @@ function Test-CliInstalled([string]$Name) {
 }
 
 $Detected = @("claude", "codex", "opencode", "pi", "agent") | Where-Object { Test-CliInstalled $_ }
-if ($Detected.Count -eq 0) { throw "No supported CLI found. Install Claude Code, Codex, OpenCode, Pi, or Cursor Agent." }
+if ($Detected.Count -eq 0) { throw "No supported CLI found. Install Claude Code, Codex, OpenCode, Pi, or Cursor agent." }
 
 $script:MenuDim = [char]27 + "[2m"
 $script:MenuReset = [char]27 + "[0m"
@@ -132,7 +134,7 @@ function Get-MenuBlurb([string]$Kind, [string]$Item) {
     "host:codex" { return "OpenAI Codex CLI with plugins and MCP support." }
     "host:opencode" { return "Open-source AI coding agent with skills, agents, and MCP." }
     "host:pi" { return "Pi CLI for headless agent workflows." }
-    "host:agent" { return "Cursor Agent CLI for headless workflows in Cursor." }
+    "host:agent" { return "Cursor IDE + Agent CLI (plugins under .cursor/plugins/local, skills under .cursor/skills)." }
     "host:all" { return "Install to every detected host above." }
     "install:harness" { return "Spec→build→QA pipeline with planner, generator, evaluator, supervisor, learning loop, and project backup." }
     "install:hallmark" { return "Anti-AI-slop design skill via npx skills (-g for user/global scope; project dir without -g)." }
@@ -146,8 +148,14 @@ function Get-MenuBlurb([string]$Kind, [string]$Item) {
   }
 }
 
+function Get-MenuItemLabel([string]$LabelKind, [string]$Item) {
+  if ($LabelKind -eq "host" -and $Item -eq "agent") { return "agent/cursor" }
+  return $Item
+}
+
 function Write-MenuItem([string]$Pointer, [string]$Item, [string]$Box, [string]$LabelKind) {
-  if ($Box) { Write-Host " $Pointer $Box $Item" } else { Write-Host " $Pointer $Item" }
+  $label = Get-MenuItemLabel $LabelKind $Item
+  if ($Box) { Write-Host " $Pointer $Box $label" } else { Write-Host " $Pointer $label" }
   $blurb = Get-MenuBlurb $LabelKind $Item
   if (-not $blurb) { return }
   $indent = if ($Box) { "      " } else { "    " }
@@ -396,8 +404,13 @@ function Remove-StaleAgentPluginPollution([string]$Name) {
 
 function Install-AgentPlugin([string]$Name) {
   $dest = Get-CursorPluginDir $Name
-  if ($DryRun) { Write-Host "DRY RUN - install Cursor Agent plugin at $dest"; return }
-  if (-not (Test-CliInstalled agent)) { throw "agent is required to install the harness Cursor Agent plugin" }
+  $skills = Get-CursorSkillsRoot
+  if ($DryRun) {
+    Write-Host "DRY RUN - install agent/cursor plugin at $dest"
+    Write-Host "DRY RUN - link $Name skills into $skills for Agent CLI discovery"
+    return
+  }
+  if (-not (Test-CliInstalled agent)) { throw "agent is required to install the harness agent/cursor plugin" }
   $source = Get-Repository
   Invoke-Reconcile @("project-agent", $Name, $source, $dest)
 }
@@ -620,9 +633,8 @@ function Install-Crawl4Ai {
         Install-Crawl4AiSkill $dest
       }
       agent {
-        $dest = Join-Path (Get-CursorSkillsRoot) "crawl4ai"
-        if ($DryRun) { Write-Host "DRY RUN - install crawl4ai skill to $dest"; continue }
-        Install-Crawl4AiSkill $dest
+        # Dual-path: local plugin (IDE) + linked .cursor/skills (Agent CLI).
+        Install-AgentPlugin "crawl4ai"
       }
     }
   }
@@ -879,4 +891,5 @@ if ($Selected -contains "harness") {
 
 $scopeLabel = $script:Scope
 if ($script:ProjectDir) { $scopeLabel = "$scopeLabel ($script:ProjectDir)" }
-Write-Host "Harness installation complete for: $($Targets -join ', ') [scope: $scopeLabel]"
+$cliLabel = ($Targets | ForEach-Object { if ($_ -eq "agent") { "agent/cursor" } else { $_ } }) -join ", "
+Write-Host "Harness installation complete for: $cliLabel [scope: $scopeLabel]"

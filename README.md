@@ -85,7 +85,7 @@ The installer then clones the **latest GitHub Release tag** (or a pin — see [I
 
 ### Skills (what you invoke)
 
-| Task | Claude Code / Codex | OpenCode | Cursor Agent |
+| Task | Claude Code / Codex | OpenCode | Cursor (agent/cursor) |
 | --- | --- | --- | --- |
 | Set up existing code | `/harness:setup` | `/harness-setup` | `/harness-setup` |
 | Plan new work | `/harness:planner` | `/harness-planner` | `/harness-planner` |
@@ -207,7 +207,8 @@ curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineeri
 The script resolves the latest `vX.Y.Z` release tag (or your pin via `--version`, `VERSION`, or `HARNESS_INSTALL_REF`) and clones that tag - not the moving `main` tip.
 A local checkout of this repository installs from the working tree instead (dev mode).
 
-Interactively the installer asks for host (Claude, Codex, OpenCode, Pi, Cursor Agent), then install scope (`user` global vs `project` folder; Claude also offers `local`), then the checklist.
+Interactively the installer asks for host (Claude, Codex, OpenCode, Pi, agent/cursor), then install scope (`user` global vs `project` folder; Claude also offers `local`), then the checklist.
+For Cursor, harness lands as a local plugin under `.cursor/plugins/local/harness/` (IDE) and links each skill into `.cursor/skills/` so the `agent` CLI slash menu can see `/supervisor` and the rest.
 `--scope` / `--project-dir` (PowerShell: `-Scope` / `-ProjectDir`) skip the scope menu.
 Arrow-key checklist: keep `harness` checked; add MCP or extras if you want them.
 User-only modules (`status-line`, `shared-config`, `treehouse`) are skipped for project scope.

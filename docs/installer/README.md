@@ -1,7 +1,7 @@
 # Installer behavior
 
 The shell and PowerShell installers target Claude Code, Codex, OpenCode, Cursor
-Agent, and Pi (shell). Both require Node.js 18 or newer and `jq`, and stop
+(`agent` / agent/cursor), and Pi (shell). Both require Node.js 18 or newer and `jq`, and stop
 before making changes when Node is missing or too old. `jq` is not auto-installed.
 
 Remote installs (for example `curl …/main/install.sh | sh`) fetch the installer
@@ -48,7 +48,7 @@ where assets land. Default is `user` when scope is omitted on a non-interactive
 run (`--yes`/`-Yes`, `--no`/`-No`, or no TTY). Interactively, a scope menu runs
 after host selection. `project` writes under `--project-dir` (default: current
 directory) for OpenCode (`.opencode/`), Pi (`.agents/skills/`), Cursor
-(`.cursor/`), Claude skills (`.claude/skills/`), and Claude plugins
+(`.cursor/plugins/local/` plus linked `.cursor/skills/`), Claude skills (`.claude/skills/`), and Claude plugins
 (`--scope project`). `local` is valid only when Claude is the sole selected host.
 User-only modules (`status-line`, `shared-config`, `treehouse`) are hidden from
 the checklist and skipped under `project` scope. `hallmark` uses `npx skills add`
@@ -79,7 +79,10 @@ projects marketplace manifests). OpenCode receives namespaced skills, agents, an
 commands under `~/.config/opencode` (user) or `$PROJECT/.opencode` (project).
 Pi copies harness skills into `~/.agents/skills/` or `$PROJECT/.agents/skills/`
 and, for user scope, removes any prior package clone of this repo under
-`~/.pi/agent/git/...`. A piped PowerShell run stages the repository before it
+`~/.pi/agent/git/...`. Cursor (`--cli agent`, shown as agent/cursor) projects the
+harness local plugin under `.cursor/plugins/local/harness/` and links each skill
+into `.cursor/skills/` so both the IDE and the Agent CLI discover `/supervisor`
+and related skills. A piped PowerShell run stages the repository before it
 needs assets, because `$PSScriptRoot` is empty.
 
 Playwright and Crawl4AI are optional integrations on all hosts.

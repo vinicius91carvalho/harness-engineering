@@ -20,7 +20,7 @@
  */
 import { readFile, writeFile, mkdir, cp, readdir, rm, stat, symlink } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { canonicalPath, isCliEntry } from '../skills/generator/lib/canonical-path.mjs'
 
@@ -519,7 +519,59 @@ async function listHarnessSkillNames(repo) {
   for (const entry of await readdir(skillsDir, { withFileTypes: true })) {
     if (entry.isDirectory()) names.push(entry.name)
   }
-  return names
+  return names.sort()
+}
+
+/** Resolve `.cursor` from a plugin dest under `.cursor/plugins/local/<name>`. */
+export function cursorDirFromPluginDest(dest) {
+  const local = dirname(dest)
+  const plugins = dirname(local)
+  const cursorDir = dirname(plugins)
+  if (basename(local) !== 'local' || basename(plugins) !== 'plugins') {
+    throw new Error(`agent plugin dest must be under .cursor/plugins/local: ${dest}`)
+  }
+  return cursorDir
+}
+
+/**
+ * Link plugin skills into `.cursor/skills/` so Cursor Agent CLI slash discovery
+ * finds them (IDE loads `.cursor/plugins/local/<plugin>/skills/`).
+ */
+export async function syncCursorSkillLinks(pluginDest, skillNames, { moduleId = 'harness', dryRun = false } = {}) {
+  const cursorDir = cursorDirFromPluginDest(pluginDest)
+  const skillsRoot = join(cursorDir, 'skills')
+  const marker = join(skillsRoot, `.harness-owned-${moduleId}-skills.json`)
+  const previous = await readOwned(marker)
+  const current = [...skillNames].sort()
+
+  if (dryRun) {
+    return {
+      skillsRoot,
+      links: current,
+      remove: previous.filter((name) => !current.includes(name)),
+    }
+  }
+
+  await mkdir(skillsRoot, { recursive: true })
+  const linkType = process.platform === 'win32' ? 'junction' : 'dir'
+  for (const name of current) {
+    const linkPath = join(skillsRoot, name)
+    const targetAbs = join(pluginDest, 'skills', name)
+    if (!existsSync(targetAbs)) continue
+    const linkTarget = linkType === 'junction' ? targetAbs : relative(skillsRoot, targetAbs)
+    try { await rm(linkPath, { force: true, recursive: true }) } catch {}
+    await symlink(linkTarget, linkPath, linkType)
+  }
+  for (const stale of previous.filter((name) => !current.includes(name))) {
+    try { await rm(join(skillsRoot, stale), { force: true, recursive: true }) } catch {}
+  }
+  await writeOwned(marker, { moduleId, files: current })
+  return { skillsRoot, links: current }
+}
+
+/** @deprecated Prefer syncCursorSkillLinks */
+export async function syncHarnessCursorSkillLinks(pluginDest, skillNames, opts = {}) {
+  return syncCursorSkillLinks(pluginDest, skillNames, { ...opts, moduleId: 'harness' })
 }
 
 async function cleanOptionalBundleAgentDest(dest, moduleId, harnessSkillNames, { dryRun = false } = {}) {
@@ -566,9 +618,10 @@ export async function projectAgent(repo, moduleId, dest, { dryRun = false } = {}
   if (mod.kind === 'optional-bundle') {
     const harnessSkillNames = await listHarnessSkillNames(repo)
     const remove = await cleanOptionalBundleAgentDest(dest, moduleId, harnessSkillNames, { dryRun: true })
+    const skillLinks = await syncCursorSkillLinks(dest, [moduleId], { moduleId, dryRun: true })
     if (dryRun) {
       const bundle = await projectBundle(repo, moduleId, join(dest, 'skills', moduleId), { dryRun: true })
-      return { moduleId, kind: 'optional-bundle', remove, bundle }
+      return { moduleId, kind: 'optional-bundle', remove, bundle, skillLinks }
     }
 
     await cleanOptionalBundleAgentDest(dest, moduleId, harnessSkillNames, { dryRun: false })
@@ -582,7 +635,8 @@ export async function projectAgent(repo, moduleId, dest, { dryRun = false } = {}
     await writeFile(join(dest, '.cursor-plugin/plugin.json'), `${JSON.stringify(manifest, null, 2)}\n`)
     const skillDest = join(dest, 'skills', moduleId)
     const bundle = await projectBundle(repo, moduleId, skillDest, { dryRun: false })
-    return { projected: moduleId, kind: 'optional-bundle', files: bundle.files }
+    const linked = await syncCursorSkillLinks(dest, [moduleId], { moduleId, dryRun: false })
+    return { projected: moduleId, kind: 'optional-bundle', files: bundle.files, skillLinks: linked }
   }
 
   throw new Error(`unsupported agent module ${moduleId} (${mod.kind}); harness install does not project this module for Cursor Agent`)
@@ -597,13 +651,13 @@ async function projectHarnessAgent(repo, dest, { dryRun = false } = {}) {
   if (existsSync(join(repo, '.mcp.json'))) add(join(repo, '.mcp.json'), '.mcp.json')
   if (existsSync(join(repo, 'AGENTS.md'))) add(join(repo, 'AGENTS.md'), 'AGENTS.md')
 
+  const skillNames = await listHarnessSkillNames(repo)
   const skillsDir = join(repo, 'skills')
   if (existsSync(skillsDir)) {
-    for (const entry of await readdir(skillsDir, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue
-      add(join(skillsDir, entry.name), `skills/${entry.name}`)
-      const skillMd = join(skillsDir, entry.name, 'SKILL.md')
-      if (existsSync(skillMd)) add(skillMd, `commands/harness-${entry.name}.md`)
+    for (const name of skillNames) {
+      add(join(skillsDir, name), `skills/${name}`)
+      const skillMd = join(skillsDir, name, 'SKILL.md')
+      if (existsSync(skillMd)) add(skillMd, `commands/harness-${name}.md`)
     }
   }
   const agentsDir = join(repo, 'agents')
@@ -617,9 +671,16 @@ async function projectHarnessAgent(repo, dest, { dryRun = false } = {}) {
   const marker = join(dest, '.harness-owned.json')
   const previous = await readOwned(marker)
   const current = planned.map((row) => row.to)
+  const skillLinks = await syncCursorSkillLinks(dest, skillNames, { moduleId: 'harness', dryRun: true })
 
   if (dryRun) {
-    return { moduleId: 'harness', kind: 'core', planned: current, remove: previous.filter((f) => !current.includes(f)) }
+    return {
+      moduleId: 'harness',
+      kind: 'core',
+      planned: current,
+      remove: previous.filter((f) => !current.includes(f)),
+      skillLinks,
+    }
   }
 
   for (const row of planned) {
@@ -632,7 +693,8 @@ async function projectHarnessAgent(repo, dest, { dryRun = false } = {}) {
     try { await rm(join(dest, stale), { force: true, recursive: true }) } catch {}
   }
   await writeOwned(marker, { moduleId: 'harness', files: current })
-  return { projected: 'harness', kind: 'core', files: current.length }
+  const linked = await syncCursorSkillLinks(dest, skillNames, { moduleId: 'harness', dryRun: false })
+  return { projected: 'harness', kind: 'core', files: current.length, skillLinks: linked }
 }
 
 export async function recordReceipt(receiptDir, moduleId, payload) {
