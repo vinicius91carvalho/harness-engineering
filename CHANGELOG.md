@@ -11,6 +11,14 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [3.2.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v3.1.0...v3.2.0) (2026-07-16)
+
+
+### Features
+
+* **installer:** copy Cursor Agent skills with harness-prefixed names ([e6f5707](https://github.com/vinicius91carvalho/harness-engineering/commit/e6f57076e03b3187d1b94aa63c9f4cfdd82a2787))
+* **installer:** dual-path agent/cursor install for IDE and Agent CLI ([5f6c805](https://github.com/vinicius91carvalho/harness-engineering/commit/5f6c8051ed72fef1199e571c09780c4e13f11735))
+
 ## [3.1.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v3.0.0...v3.1.0) (2026-07-16)
 
 
