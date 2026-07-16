@@ -260,7 +260,12 @@ select_cli
 resolve_project_dir() {
   candidate=${PROJECT_DIR:-$(pwd)}
   [ -d "$candidate" ] || die "project scope requires an existing directory (use --project-dir or run from the project root)"
-  PROJECT_DIR=$(CDPATH= cd -- "$candidate" && pwd) || die "could not resolve project directory: $candidate"
+  # pwd -P matches Node realpathSync on macOS (/var -> /private/var); plain pwd is the fallback.
+  if PROJECT_DIR=$(CDPATH= cd -- "$candidate" && pwd -P 2>/dev/null); then
+    :
+  else
+    PROJECT_DIR=$(CDPATH= cd -- "$candidate" && pwd) || die "could not resolve project directory: $candidate"
+  fi
 }
 
 select_scope() {
@@ -412,11 +417,23 @@ resolve_install_ref() {
     printf '%s\n' "$VERSION"
     return 0
   fi
+  # BSD/macOS sort lacks -V; Node is already required for the installer.
   ref=$(git ls-remote --tags --refs "$REPO_URL" 2>/dev/null \
     | awk -F/ '{print $NF}' \
     | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-    | sort -V \
-    | tail -1) || true
+    | node -e '
+const lines = require("fs").readFileSync(0, "utf8").trim().split("\n").filter(Boolean);
+const parse = (tag) => tag.replace(/^v/, "").split(".").map((part) => parseInt(part, 10));
+lines.sort((a, b) => {
+  const left = parse(a);
+  const right = parse(b);
+  for (let i = 0; i < 3; i++) {
+    if (left[i] !== right[i]) return left[i] - right[i];
+  }
+  return 0;
+});
+if (lines.length) process.stdout.write(lines[lines.length - 1]);
+' ) || true
   [ -n "$ref" ] || return 1
   printf '%s\n' "$ref"
 }

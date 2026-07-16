@@ -19,7 +19,7 @@
  *   node scripts/install-reconcile.mjs record-receipt <receiptDir> <moduleId> <json>
  */
 import { readFile, writeFile, mkdir, cp, readdir, rm, stat, symlink } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -83,6 +83,16 @@ export function skillsAddArgs(catalog, id) {
   }
 }
 
+function canonicalProjectDir(projectDir) {
+  const abs = resolve(projectDir)
+  if (!existsSync(abs)) return abs
+  try {
+    return realpathSync(abs)
+  } catch {
+    return abs
+  }
+}
+
 export function resolveInstallBases(scope, projectDir = '', home = process.env.HOME || '', xdgConfigHome = process.env.XDG_CONFIG_HOME || '') {
   if (scope !== 'user' && scope !== 'project' && scope !== 'local') {
     throw new Error(`invalid scope: ${scope}`)
@@ -90,17 +100,18 @@ export function resolveInstallBases(scope, projectDir = '', home = process.env.H
   const project = scope === 'project'
   if (project && !projectDir) throw new Error('project scope requires projectDir')
   const configHome = xdgConfigHome || join(home, '.config')
+  const projectRoot = project ? canonicalProjectDir(projectDir) : ''
   return {
     scope,
-    projectDir: project ? resolve(projectDir) : '',
-    opencode: project ? join(resolve(projectDir), '.opencode') : join(configHome, 'opencode'),
-    agentsSkills: project ? join(resolve(projectDir), '.agents', 'skills') : join(home, '.agents', 'skills'),
-    claudeSkills: project ? join(resolve(projectDir), '.claude', 'skills') : join(home, '.claude', 'skills'),
-    cursorSkills: project ? join(resolve(projectDir), '.cursor', 'skills') : join(home, '.cursor', 'skills'),
+    projectDir: projectRoot,
+    opencode: project ? join(projectRoot, '.opencode') : join(configHome, 'opencode'),
+    agentsSkills: project ? join(projectRoot, '.agents', 'skills') : join(home, '.agents', 'skills'),
+    claudeSkills: project ? join(projectRoot, '.claude', 'skills') : join(home, '.claude', 'skills'),
+    cursorSkills: project ? join(projectRoot, '.cursor', 'skills') : join(home, '.cursor', 'skills'),
     cursorPluginsLocal: project
-      ? join(resolve(projectDir), '.cursor', 'plugins', 'local')
+      ? join(projectRoot, '.cursor', 'plugins', 'local')
       : join(home, '.cursor', 'plugins', 'local'),
-    cursorMcp: project ? join(resolve(projectDir), '.cursor', 'mcp.json') : join(home, '.cursor', 'mcp.json'),
+    cursorMcp: project ? join(projectRoot, '.cursor', 'mcp.json') : join(home, '.cursor', 'mcp.json'),
   }
 }
 

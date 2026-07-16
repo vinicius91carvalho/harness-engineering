@@ -99,6 +99,12 @@ pass 'dry-run performs no writes or host commands'
 
 PROJECT=$TMP/project
 mkdir -p "$PROJECT"
+# Match install.sh resolve_project_dir (pwd -P on macOS avoids /var vs /private/var drift).
+if PROJECT=$(CDPATH= cd -- "$PROJECT" && pwd -P 2>/dev/null); then
+  :
+else
+  PROJECT=$(CDPATH= cd -- "$PROJECT" && pwd)
+fi
 rm -rf "$HOME/.config/opencode" "$HOME/.cursor/plugins/local" "$HOME/.agents/skills"
 : >"$HARNESS_TEST_LOG"
 before=$(find "$HOME" -mindepth 1 -print | sort)
