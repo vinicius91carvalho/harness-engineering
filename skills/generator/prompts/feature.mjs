@@ -92,7 +92,7 @@ export function featurePrompt(kind, feature, attempt, repairPlan = null, workdir
     return head +
       `${NO_REDELEGATE_RULE} ` +
       `${repairPlan ? `Follow this Repair Plan from the orchestrator:\n${JSON.stringify(repairPlan)}\n` : ''}` +
-      `Read the exact queue entry and Workflow Journal. ${verifyAlign} Do NOT edit feature_list.json, Execution Ledger flags, or Workflow Journal files — return product commits and a verdict only; the orchestrator owns workflow transitions. ${RESOURCE_CLEANUP_RULE} Return one JSON object: {"id":"...","implementation":true|false,"notes":"..."}. ${VERDICT_HINT}`
+      `Read the exact queue entry and Workflow Journal. ${verifyAlign} Commit every product and harness-probe change on this gen branch before claiming implementation=true — Integrated Verification merges into the plan branch and will fail on worktree-only WIP or untracked .harness/wi-ac-* files that block merge. Do NOT edit feature_list.json, Execution Ledger flags, or Workflow Journal files — return product commits and a verdict only; the orchestrator owns workflow transitions. ${RESOURCE_CLEANUP_RULE} Return one JSON object: {"id":"...","implementation":true|false,"notes":"..."}. ${VERDICT_HINT}`
   }
   if (kind === 'QA') return `You are the qa-agent. Independently test exactly this Work Item in its isolated worktree.\n${base}` +
     `${NO_REDELEGATE_RULE} ` +

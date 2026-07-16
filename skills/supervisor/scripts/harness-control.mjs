@@ -16,7 +16,7 @@ for (let i = 0; i < rawArgs.length; i += 2) {
   if (!key?.startsWith('--') || value === undefined) fatal(`invalid argument: ${key || ''}`)
   options[key.slice(2)] = value
 }
-if (!commandName) fatal('usage: harness-control.mjs {start|run|status|fleet-snapshot|capacity|events|ack|respond|quota|pause|resume|stop|kill-supervisor|release-supervisor-lock|kill-worker|release-lease|clear-dead-lock|preflight} --repo <path> ...')
+if (!commandName) fatal('usage: harness-control.mjs {start|run|status|fleet-snapshot|capacity|events|ack|respond|quota|pause|resume|stop|kill-supervisor|release-supervisor-lock|kill-worker|release-lease|clear-dead-lock|preflight|reap-cursor-subagents} --repo <path> ...')
 
 const scriptFile = fileURLToPath(import.meta.url)
 const supervisorLib = resolve(dirname(scriptFile), '..', 'lib')
@@ -80,7 +80,7 @@ const {
   reportHarnessAgent, detectPaneWaiting, detectPaneOrchestratorExited, detectPaneMergeLockWait,
   paneShowsIdleShell, listProjectWorkerAgents, contextFromWorkerAgent, getFocusedWorkspaceId,
   listHarnessWorkerTabs, closeDanglingShellPanes, closeStaleHarnessPanesForProject,
-  closeAllDanglingHarnessShells, listPaneScroll, createPaneSnapshot,
+  closeAllDanglingHarnessShells, listPaneScroll, createPaneSnapshot, listPanes,
 } = await import(pathToFileURL(join(supervisorLib, 'herdr-spawn.mjs')).href)
 const { runSupervisorPreflight } = await import(pathToFileURL(join(supervisorLib, 'supervisor-preflight.mjs')).href)
 const orchestrator = join(generatorDir, 'orchestrator.mjs')
@@ -969,7 +969,12 @@ class Supervisor {
       lastReapAt: this.lastFinishedTabReap || 0,
       force,
     })
-    if (!plan.shouldReap) return plan
+    if (!plan.shouldReap) {
+      // Still sweep Cursor Task mirror tabs — they are not worker-* panes and
+      // otherwise stick as agent_status=working after the Task finishes.
+      await this.reapCursorSubagentTabs({ force })
+      return plan
+    }
     try {
       const workspaceId = getFocusedWorkspaceId()
       closeAllDanglingHarnessShells(workspaceId)
@@ -979,7 +984,60 @@ class Supervisor {
       }
       this.lastFinishedTabReap = Date.now()
     } catch {}
+    await this.reapCursorSubagentTabs({ force: true })
     return plan
+  }
+
+  async reapCursorSubagentTabs({ force = false } = {}) {
+    try {
+      const {
+        planCursorSubagentTabReap,
+        applyCursorSubagentTabReap,
+        loadCursorSubagentRegistry,
+        logviewAliveForMeta,
+        DEFAULT_ORPHAN_GRACE_MS,
+      } = await importLib('cursor-subagent-tab-reaper.mjs')
+      const now = Date.now()
+      if (!force && this.lastCursorSubagentReap
+        && now - this.lastCursorSubagentReap < 15_000) {
+        return { shouldReap: false, reason: 'rate_limited' }
+      }
+      const registry = loadCursorSubagentRegistry()
+      const panes = listPanes()
+      let tabs = []
+      try {
+        const proc = spawnSync('herdr', ['tab', 'list'], { encoding: 'utf8', timeout: 5000 })
+        if (proc.status === 0 && proc.stdout) {
+          const parsed = JSON.parse(proc.stdout)
+          tabs = parsed.result?.tabs || []
+        }
+      } catch {
+        tabs = []
+      }
+      const plan = planCursorSubagentTabReap({
+        registry,
+        panes,
+        tabs,
+        now,
+        orphanGraceMs: DEFAULT_ORPHAN_GRACE_MS,
+        isLogviewAlive: (metaPath) => logviewAliveForMeta(metaPath),
+      })
+      if (!plan.shouldReap) {
+        this.lastCursorSubagentReap = now
+        return plan
+      }
+      const result = applyCursorSubagentTabReap(plan, { registry })
+      this.lastCursorSubagentReap = now
+      if (result.closed > 0) {
+        await this.emit('cursor_subagent_tabs_reaped', {
+          closed: result.closed,
+          reasons: plan.closes.map((c) => ({ tabId: c.tabId, reason: c.reason })),
+        }, false)
+      }
+      return { ...plan, ...result }
+    } catch (error) {
+      return { shouldReap: false, reason: 'error', error: String(error?.message || error) }
+    }
   }
 
   async inspectHerdrAgentPresence() {
@@ -2139,6 +2197,12 @@ async function fleetSnapshotCmd() {
   process.stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`)
 }
 
+async function reapCursorSubagentsCmd() {
+  const supervisor = new Supervisor(baseConfig())
+  const result = await supervisor.reapCursorSubagentTabs({ force: true })
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
+}
+
 async function main() {
   if (commandName === 'start') return start()
   if (commandName === 'status') {
@@ -2205,6 +2269,7 @@ async function main() {
   if (commandName === 'release-lease') return releaseLease()
   if (commandName === 'clear-dead-lock') return clearDeadLockCmd()
   if (commandName === 'preflight') return preflightCmd()
+  if (commandName === 'reap-cursor-subagents') return reapCursorSubagentsCmd()
   if (commandName === 'run') {
     const supervisor = new Supervisor(baseConfig())
     process.on('SIGINT', () => supervisor.stop('SIGINT'))

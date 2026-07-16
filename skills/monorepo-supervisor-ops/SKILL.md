@@ -201,6 +201,31 @@ judgment cases above the same turn.
 Narrating "foundation idle / one worker healthy" without admitting the next
 context is a supervisor defect.
 
+**Post-goal-complete with new ACs (2026-07-15 web):** after Goal Review
+`goal:true`, a later `planner`/`reconcile` can append Work Items (e.g. AC-077+)
+while Control state stays `status=complete` with stale progress (76/76) and
+`supervisorLive=false`. `fleetSnapshot.wakeTriage.shouldWake` becomes true, but
+`harness-control start` may refuse while `complete` + clean + matching
+`reviewedHead`, or the operator may only see "complete" and leave the queue idle.
+Same-turn fix:
+1. `node "$CONTROL" resume --repo "$REPO"` (flips `complete` → `running`).
+2. Start/run the supervisor (`--host agent`, CauseFlow ops) with Resource
+   Governor env if swap/load still elevated (`HARNESS_MAX_SWAP_USED_RATIO`,
+   `HARNESS_MAX_LOAD_RATIO`).
+3. Confirm `progress.total` matches reconciled `feature_list` and workers admit
+   Ready contexts (leave live Claim Leases / generator orchestrators alone).
+Do not narrate "web complete" when `shouldWake` is true and ledger has
+non-integrated WIs.
+
+**Operator-approved governor overrides (swap/load):** when Resource Governor
+returns `no-capacity` with `pressureReason` `load` or `swap` (or both) and the
+operator explicitly approves raising limits for this host, export the same
+env for **both** direct `/generator` orchestrators and `harness-control run` /
+`start`:
+`HARNESS_MAX_LOAD_RATIO` (e.g. `1.5`) and `HARNESS_MAX_SWAP_USED_RATIO`
+(e.g. `0.6`). Defaults remain `0.85` / `0.2` — never raise silently.
+Confirm `capacity.available>=1` after export before claiming or admitting.
+
 **Idle after full integrate ≠ Goal Review:** when `fleetSnapshot.needsGoalReviewRetry`
 or progress is N/N/N with claims empty, capacity `available>=1`, and the Goal
 Review gate is admissible, but `workers={}` and no `goal_review_started` event
@@ -310,6 +335,20 @@ The supervisor runs `finished-tab-reaper.mjs` on each tick (rate-limited) and im
 2. Close the **whole tab** (`herdr tab close <tab_id>`), not only the pane.
 3. If status still lists a dead worker after close, clear that entry on the next supervisor tick / restart — do not leave orphan tabs for the operator.
 4. If you find finished tabs open, treat it as a workflow defect: fix spawn/close paths in harness and update this skill the same turn (fail-closed).
+
+**Cursor Task/subagent mirror tabs:** Cursor `Task` / `Subagent` hooks open
+herdr tabs (`cursor-sub-*`, labels like `🧮 generalPurpose: …`) with
+`herdr-subagent-logview.py`. They are **not** harness `worker-<project>-*`
+panes; the finished-tab reaper ignores them.
+Automatic cleanup (supervisor tick, rate-limited):
+`cursor-subagent-tab-reaper.mjs` via `reapCursorSubagentTabs` in
+`harness-control.mjs` (120s orphan grace, dead logview, stale cwd).
+Logview self-closes on `turn_ended` or 45s idle after transcript growth; stop
+hook uses the same 120s orphan grace for entries with no transcript.
+Manual fallback when zombies remain:
+`node harness-control.mjs reap-cursor-subagents --repo <path>` (force reap), or
+`herdr tab close <tab_id>` per finished `cursor-sub-*` tab after confirming
+the live main agent tab is not targeted.
 
 **Fleet Snapshot** (`skills/generator/lib/fleet-snapshot.mjs`, schema `harness-fleet-snapshot.v1`):
 cross-project bearings for monorepo recovery — journal tips, capacity/slots,

@@ -38,6 +38,16 @@ specifies (grep/file audit, CLI exit code, real HTTP, or real browser).
 Do not start a server or browser for a static audit.
 Emit the harness verdict as soon as the check passes or fails.
 
+**Commit before checkpoint / IV (no worktree-only greens):** coding must commit
+all product and harness probe changes on the `gen/<project>-<context>` branch
+before emitting `implementation:true`. Isolated QA that passes on uncommitted
+WIP is a false green - Integrated Verification runs on the merged plan branch.
+Never leave untracked `.harness/wi-ac-*` (or similar probe) files that collide
+with merges into the plan checkout (`untracked working tree files would be
+overwritten by merge`). If a probe script is required for IV, commit it on the
+gen branch (or delete it from the plan checkout before merge) - do not rely on
+dirty worktrees.
+
 **Resource cleanup (every Work Item, pass or fail):** emit the harness verdict
 FIRST, then tear down every resource this task started — `docker compose down
 --remove-orphans` (or project-scoped `-p`) for stacks you brought up, remove
@@ -48,6 +58,14 @@ Do not leave containers or servers running for a later task.
 Do not tear down stacks you did not start (other subprojects or live sibling contexts).
 When a reusable infra stack is intentionally shared, rely on the harness Shared Runtime Lease; still record and remove private app containers, ports, and PIDs through the owned runtime manifest or `.harness/app.pid`.
 Coding, isolated QA, and Integrated Verification prompts all carry this rule.
+
+**Resource Governor under host pressure:** if `orchestrator` fails with
+`resource governor denied admission (no-capacity)` and capacity shows
+`pressureReason` `load` or `swap`, do not thrash claims. Report the numbers;
+with explicit operator approval, export `HARNESS_MAX_LOAD_RATIO` /
+`HARNESS_MAX_SWAP_USED_RATIO` for the orchestrator process (same values as
+`monorepo-supervisor-ops`). Prefer a durable Cursor Shell background job over
+`nohup` that can orphan the coding child when the parent exits.
 
 **No nested Task/subagent re-delegation:** coding and QA workers ARE the assigned
 harness worker for that Work Item. They must execute it with their own tools and
