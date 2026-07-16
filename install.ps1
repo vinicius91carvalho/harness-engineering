@@ -19,7 +19,7 @@ $TreehouseInstaller = "https://kunchenguid.github.io/treehouse/install.ps1"
 $FirstmateRepo = "https://github.com/kunchenguid/firstmate.git"
 $FirstmateHome = if ($env:FIRSTMATE_HOME) { $env:FIRSTMATE_HOME } else { Join-Path $HOME ".local/share/firstmate" }
 $RepoRoot = if ($PSScriptRoot) { $PSScriptRoot } else { $null }
-$DefaultOptional = @("ponytail", "lavish-axi", "no-mistakes", "treehouse", "firstmate", "skill-creator", "codebase-memory-mcp", "context7", "playwright", "crawl4ai", "status-line", "shared-config", "mcp-servers")
+$DefaultOptional = @("ponytail", "lavish-axi", "hallmark", "no-mistakes", "treehouse", "firstmate", "skill-creator", "codebase-memory-mcp", "context7", "playwright", "crawl4ai", "status-line", "shared-config", "mcp-servers")
 $Optional = $DefaultOptional
 if ($RepoRoot -and (Test-Path (Join-Path $RepoRoot "config/installable-catalog.json")) -and (Get-Command node -ErrorAction SilentlyContinue)) {
   $catalogOptional = & node (Join-Path $RepoRoot "scripts/install-reconcile.mjs") optional-ids 2>$null
@@ -84,6 +84,7 @@ function Get-MenuBlurb([string]$Kind, [string]$Item) {
     "install:harness" { return "Spec→build→QA pipeline with planner, generator, evaluator, supervisor, learning loop, and project backup." }
     "install:ponytail" { return "Lazy senior-dev mode: YAGNI, stdlib first, no unrequested abstractions." }
     "install:lavish-axi" { return "Lavish Editor for agent HTML artifacts. Installs the lavish skill globally via npx skills." }
+    "install:hallmark" { return "Anti-AI-slop design skill. Installs the hallmark skill globally via npx skills." }
     "install:no-mistakes" { return "Git push gate with AI validation. Installs the upstream binary; run no-mistakes init per repository afterward." }
     "install:treehouse" { return "Reusable git worktree pool for agents. Installs the upstream treehouse CLI." }
     "install:firstmate" { return "Orchestrator agent crew home. Clones firstmate to ~/.local/share/firstmate for harness launch." }
@@ -672,6 +673,16 @@ function Install-LavishAxi {
   Write-InstallReceipt lavish-axi @{ skills = "kunchenguid/lavish-axi"; skill = "lavish"; global = $true }
 }
 
+function Install-Hallmark {
+  if ($DryRun) {
+    Write-Host "DRY RUN - npx skills add nutlope/hallmark --skill hallmark -g"
+    return
+  }
+  if (-not (Get-Command npx -ErrorAction SilentlyContinue)) { throw "npx is required to install the hallmark skill" }
+  Invoke-Native npx @("skills", "add", "nutlope/hallmark", "--skill", "hallmark", "-g")
+  Write-InstallReceipt hallmark @{ skills = "nutlope/hallmark"; skill = "hallmark"; global = $true }
+}
+
 function Install-NoMistakes {
   if ($DryRun) {
     Write-Host "DRY RUN - irm $NoMistakesInstaller | iex"
@@ -783,6 +794,7 @@ foreach ($item in $Selected) {
   if ($item -eq "codebase-memory-mcp") { Install-Memory; continue }
   if ($item -eq "crawl4ai") { Install-Crawl4Ai; continue }
   if ($item -eq "lavish-axi") { Install-LavishAxi; continue }
+  if ($item -eq "hallmark") { Install-Hallmark; continue }
   if ($item -eq "no-mistakes") { Install-NoMistakes; continue }
   if ($item -eq "treehouse") { Install-Treehouse; continue }
   if ($item -eq "firstmate") { Install-Firstmate; continue }

@@ -6,3 +6,7 @@
 
 # Python bytecode from packages/skill-creator scripts
 **/__pycache__/
+
+# Project-local npx skills installs (global installs use ~/.agents/skills instead)
+.agents/skills/
+skills-lock.json

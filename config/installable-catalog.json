@@ -45,6 +45,16 @@
       }
     },
     {
+      "id": "hallmark",
+      "kind": "external",
+      "optional": true,
+      "hosts": ["claude", "codex", "opencode", "agent"],
+      "description": "Anti-AI-slop design skill",
+      "acquisition": {
+        "skills": { "repo": "nutlope/hallmark", "name": "hallmark", "global": true }
+      }
+    },
+    {
       "id": "no-mistakes",
       "kind": "external",
       "optional": true,

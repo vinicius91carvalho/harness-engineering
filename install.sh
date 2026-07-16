@@ -12,7 +12,7 @@ TREEHOUSE_INSTALLER="https://kunchenguid.github.io/treehouse/install.sh"
 FIRSTMATE_REPO="https://github.com/kunchenguid/firstmate.git"
 FIRSTMATE_HOME=${FIRSTMATE_HOME:-$HOME/.local/share/firstmate}
 REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd || true)
-DEFAULT_OPTIONAL="ponytail lavish-axi no-mistakes treehouse firstmate skill-creator codebase-memory-mcp context7 playwright crawl4ai status-line shared-config mcp-servers"
+DEFAULT_OPTIONAL="ponytail lavish-axi hallmark no-mistakes treehouse firstmate skill-creator codebase-memory-mcp context7 playwright crawl4ai status-line shared-config mcp-servers"
 OPTIONAL=$DEFAULT_OPTIONAL
 if [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/config/installable-catalog.json" ] && command -v node >/dev/null 2>&1; then
   OPTIONAL=$(node "$REPO_ROOT/scripts/install-reconcile.mjs" optional-ids 2>/dev/null) || OPTIONAL=$DEFAULT_OPTIONAL
@@ -126,6 +126,7 @@ menu_item_blurb() {
     install:harness) printf '%s' "Spec→build→QA pipeline with planner, generator, evaluator, supervisor, learning loop, and project backup." ;;
     install:ponytail) printf '%s' "Lazy senior-dev mode: YAGNI, stdlib first, no unrequested abstractions." ;;
     install:lavish-axi) printf '%s' "Lavish Editor for agent HTML artifacts. Installs the lavish skill globally via npx skills." ;;
+    install:hallmark) printf '%s' "Anti-AI-slop design skill. Installs the hallmark skill globally via npx skills." ;;
     install:no-mistakes) printf '%s' "Git push gate with AI validation. Installs the upstream binary; run no-mistakes init per repository afterward." ;;
     install:treehouse) printf '%s' "Reusable git worktree pool for agents. Installs the upstream treehouse CLI." ;;
     install:firstmate) printf '%s' "Orchestrator agent crew home. Clones firstmate to ~/.local/share/firstmate for harness launch." ;;
@@ -796,6 +797,16 @@ install_lavish_axi() {
   record_receipt lavish-axi '{"skills":"kunchenguid/lavish-axi","skill":"lavish","global":true}'
 }
 
+install_hallmark() {
+  if [ -n "$DRY" ]; then
+    echo 'DRY RUN - npx skills add nutlope/hallmark --skill hallmark -g'
+    return
+  fi
+  command -v npx >/dev/null 2>&1 || die 'npx is required to install the hallmark skill'
+  npx skills add nutlope/hallmark --skill hallmark -g || die 'hallmark skill install failed'
+  record_receipt hallmark '{"skills":"nutlope/hallmark","skill":"hallmark","global":true}'
+}
+
 install_no_mistakes() {
   if [ -n "$DRY" ]; then
     echo "DRY RUN — curl -fsSL $NO_MISTAKES_INSTALLER | sh"
@@ -891,6 +902,7 @@ for item in $SELECTED; do
     codebase-memory-mcp) install_memory ;;
     crawl4ai) install_crawl4ai ;;
     lavish-axi) install_lavish_axi ;;
+    hallmark) install_hallmark ;;
     no-mistakes) install_no_mistakes ;;
     treehouse) install_treehouse ;;
     firstmate) install_firstmate ;;

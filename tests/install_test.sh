@@ -96,6 +96,7 @@ grep -q 'MCP inventory for:claude codex opencode pi agent' "$TMP/out" || fail 'M
 grep -q 'marketplace upgrade ponytail' "$TMP/out" || fail 'Codex Ponytail marketplace should be idempotent'
 grep -q 'plugin add ponytail@ponytail' "$TMP/out" || fail 'Codex Ponytail should use its upstream marketplace'
 grep -q 'npx skills add kunchenguid/lavish-axi --skill lavish -g' "$TMP/out" || fail 'lavish-axi skill install should appear in dry-run'
+grep -q 'npx skills add nutlope/hallmark --skill hallmark -g' "$TMP/out" || fail 'hallmark skill install should appear in dry-run'
 grep -q 'curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh' "$TMP/out" || fail 'no-mistakes installer should appear in dry-run'
 grep -q 'no-mistakes init in each repository' "$TMP/out" || fail 'no-mistakes init follow-up should appear in dry-run'
 grep -q 'curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh' "$TMP/out" || fail 'treehouse installer should appear in dry-run'
@@ -209,7 +210,7 @@ fi
 if grep -q 'codebase-memory-mcp' "$ROOT/.claude-plugin/marketplace.json"; then
   fail 'memory MCP must not be represented as a marketplace plugin'
 fi
-if grep -Eq '"name": "(lavish-axi|no-mistakes|treehouse|firstmate)"' "$ROOT/.claude-plugin/marketplace.json"; then
+if grep -Eq '"name": "(lavish-axi|hallmark|no-mistakes|treehouse|firstmate)"' "$ROOT/.claude-plugin/marketplace.json"; then
   fail 'non-marketplace externals must not be listed in the Claude marketplace'
 fi
 if grep -Eq 'skill-creator|hookify|claude-md-management|claude-code-setup|ralph-loop|typescript-lsp|pyright-lsp|rust-analyzer-lsp|"name": "remember"|"name": "codex"' "$ROOT/.claude-plugin/marketplace.json"; then

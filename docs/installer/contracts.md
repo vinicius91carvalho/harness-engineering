@@ -25,10 +25,10 @@ Maintained decisions:
 
 - Ponytail is compatible with all three hosts. Other third-party plugins appear
   only where their upstream packaging is documented.
-- `lavish-axi`, `no-mistakes`, `treehouse`, and `firstmate` are not Claude
+- `lavish-axi`, `hallmark`, `no-mistakes`, `treehouse`, and `firstmate` are not Claude
   marketplace plugins. The catalog records their real acquisition policy:
   - `skills` — `npx skills add <repo> --skill <name>` with optional `global`
-    for user-wide install (lavish-axi).
+    for user-wide install (lavish-axi, hallmark).
   - `installer` / `installerWindows` — upstream shell or PowerShell one-liner
     (no-mistakes, treehouse, codebase-memory-mcp). `no-mistakes init` is a
     per-repository follow-up the harness installer does not run.
