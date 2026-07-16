@@ -30,7 +30,7 @@ if [ "${HARNESS_TEST_USAGE_LIMIT:-}" = 1 ]; then
   exit 1
 fi
 case "$prompt" in
-  *"Integrated Verification"*)
+  *"performing Integrated Verification"*)
     printf '%s\n' '{"id":"WI-AC-001","implementation":true,"integration":true,"defects":[]}'
     ;;
   *"independent Goal Review agent"*)
