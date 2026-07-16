@@ -36,7 +36,7 @@ case "$prompt" in
   *"orchestrator repair planner"*)
     printf '%s\n' '{"summary":"fix the health response","rootCause":"wrong response","actions":["return ready"],"validation":["request health"]}'
     ;;
-  *"Integrated Verification"*)
+  *"performing Integrated Verification"*)
     printf '%s\n' '{"id":"WI-AC-001","integration":true,"implementation":true,"defects":[]}'
     ;;
   *"independent Goal Review agent"*)
