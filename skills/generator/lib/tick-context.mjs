@@ -1,5 +1,8 @@
 /** Event-driven supervisor tick helpers with polling fallback. */
 
+/** Floor when a watch fires so self-writes under watched paths cannot busy-loop. */
+const DIRTY_MIN_MS = 50
+
 export function nextTickDelay({
   pollMs = 2000,
   eventDriven = true,
@@ -9,7 +12,7 @@ export function nextTickDelay({
 } = {}) {
   const base = Math.max(250, Number(pollMs) || 2000)
   if (!eventDriven) return base
-  if (dirty) return 0
+  if (dirty) return DIRTY_MIN_MS
   if (dueAt) return Math.max(0, Math.min(base, Number(dueAt) - now))
   return base
 }

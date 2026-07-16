@@ -13,7 +13,8 @@ export const RESOURCE_CLEANUP_RULE =
   'RESOURCE CLEANUP: emit the harness verdict FIRST, then tear down resources you started. ' +
   'Never run `pkill -f` / `killall` with WORKDIR, PORT, or other substrings that appear in ' +
   'this agent\'s own command line (that suicides the worker and drops the verdict). ' +
-  'Stop the worktree server only via the exact PID in `.harness/app.pid` ' +
+  'Stop the worktree server with `./init.sh stop` when present; only if that subcommand ' +
+  'is missing, fall back to the exact PID in `.harness/app.pid` ' +
   '(`kill "$(cat .harness/app.pid)"` — nothing broader). ' +
   'SHARED COMPOSE INFRA: if postgres/redis/hindsight (or other documented infra) are already ' +
   'healthy on their published ports, REUSE them — do not bring up a second full stack and do ' +

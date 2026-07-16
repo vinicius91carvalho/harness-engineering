@@ -82,7 +82,8 @@ not create the registry.
 5. Run only section 1, **Scaffold and reconcile the completion contract**, from
    the sibling `generator` skill. This step *initializes* the project: the
    initializer maps every Acceptance Check into `feature_list.json`, scaffolds the
-   PORT-parameterized `init.sh` and any missing structure, and makes the first
+   PORT-parameterized `init.sh` (`start|stop|restart|status|help`) and any missing
+   structure, and makes the first
    harness commit — all while preserving existing source, configuration, tests,
    documentation, and Git history. Do not finish setup until `feature_list.json`
    exists in `PROJECT` and reconciliation passes; an uninitialized project cannot

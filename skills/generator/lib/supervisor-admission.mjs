@@ -1,7 +1,7 @@
 /**
  * Pure tick-admission planner extracted from harness-control's Supervisor.tick()
  * (ADR-0007 / ADR-0009). harness-control remains the I/O adapter: spawn, Claim
- * Lease resume/release, Control Events, Input Requests, herdr, and save all stay
+ * Lease resume/release, Control Events, Input Requests, and save all stay
  * there. This module decides *what to do next*, not how to do it.
  *
  * Scope: the retry-queue drain loop (resume a Claim Lease, apply its outcome)

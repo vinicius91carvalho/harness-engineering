@@ -150,7 +150,6 @@ echo 'ok - a subproject'"'"'s status/claims inspection never sees a sibling subp
 
 mkdir -p "$TMP/installed/skills/harness-supervisor/scripts" "$TMP/installed/skills/harness-supervisor/lib"
 cp "$CONTROL" "$TMP/installed/skills/harness-supervisor/scripts/harness-control.mjs"
-cp "$ROOT/skills/supervisor/lib/herdr-spawn.mjs" "$TMP/installed/skills/harness-supervisor/lib/herdr-spawn.mjs"
 cp "$ROOT/skills/supervisor/lib/supervisor-preflight.mjs" "$TMP/installed/skills/harness-supervisor/lib/supervisor-preflight.mjs"
 cp -R "$ROOT/skills/generator" "$TMP/installed/skills/harness-generator"
 ln -sf harness-generator "$TMP/installed/skills/generator"
@@ -178,29 +177,13 @@ git -C "$TMP/background" config user.name test
 git -C "$TMP/background" config user.email test@example.invalid
 supervisor_common_write_feature_queue "$TMP/background/feature_list.json" false
 git -C "$TMP/background" add feature_list.json && git -C "$TMP/background" commit -qm reset
-PATH="$SUPERVISOR_PATH" HERDR_ENV=1 supervisor_common_run_once \
-  --repo "$TMP/background" --host claude --poll-ms 50 --display background \
+PATH="$SUPERVISOR_PATH" supervisor_common_run_once \
+  --repo "$TMP/background" --host claude --poll-ms 50 \
   --quota-workers 1 --memory-per-worker-mb 1 --reserve-memory-mb 0 --max-load-ratio 100 --max-swap-used-ratio 1
 jq -e '.status == "complete"' "$TMP/background/.git/harness-control/state.json" >/dev/null
-echo 'ok - explicit --display background always forces background workers, even when HERDR_ENV=1'
-
-mkdir -p "$TMP/herdr-bin"
-cp "$ROOT/tests/fixtures/herdr-mock.sh" "$TMP/herdr-bin/herdr"
-cp "$ROOT/tests/fixtures/herdr-mock-helper.mjs" "$TMP/herdr-mock-helper.mjs"
-chmod +x "$TMP/herdr-bin/herdr"
-printf '%s\n' '{"tabs":[{"tab_id":"1-1","label":"1","pane_count":1,"workspace_id":"1","number":1}],"panes":[{"pane_id":"1-1","tab_id":"1-1","workspace_id":"1","focused":true,"agent_status":"unknown"}],"seq":0}' \
-  >"$TMP/herdr-state.json"
-HERDR_ENV=1 PATH="$TMP/herdr-bin:$SUPERVISOR_PATH" \
-  HARNESS_TEST_HERDR_STATE="$TMP/herdr-state.json" \
-  HARNESS_TEST_HERDR_HELPER="$TMP/herdr-mock-helper.mjs" \
-  HARNESS_TEST_HERDR_LOG="$TMP/herdr.log" \
-  "$NODE" -e "
-import('$ROOT/skills/supervisor/lib/herdr-spawn.mjs').then(({ resolveDisplayMode }) => {
-  if (resolveDisplayMode({}) !== 'herdr') throw new Error('HERDR_ENV=1 with herdr on PATH should auto-select herdr')
-  if (resolveDisplayMode({ display: 'background' }) !== 'background') throw new Error('--display background must still override auto herdr')
-}).catch((error) => { console.error(String(error)); process.exit(1) })
-"
-echo 'ok - HERDR_ENV=1 with herdr on PATH auto-selects herdr panes, and --display background still overrides it'
+jq -e '[.workers // {} | to_entries[] | .value | select(.type != null and .type != "background")] | length == 0' \
+  "$TMP/background/.git/harness-control/state.json" >/dev/null
+echo 'ok - supervisor completes with background-only workers'
 
 mkdir -p "$TMP/circuit"
 supervisor_common_init_git_repo "$TMP/circuit" false

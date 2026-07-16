@@ -16,11 +16,9 @@ function activeWorkerRows(state = {}, { processAlive = defaultProcessAlive } = {
     })
     .map(([context, worker]) => ({
       context,
-      type: worker?.type || null,
-      paneId: worker?.paneId || null,
+      type: worker?.type || 'background',
       pid: worker?.pid || null,
       childPid: worker?.childPid || null,
-      tabId: worker?.tabId || null,
     }))
 }
 

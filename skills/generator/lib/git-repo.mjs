@@ -26,13 +26,25 @@ export function projectPrefix(repo) {
   return git(repo, ['rev-parse', '--show-prefix']).stdout.trim()
 }
 
+const featureListCache = new Map()
+
 export function readFeatureListFromIntegration(repo) {
   const prefix = projectPrefix(repo)
   const branch = integrationBranchName(repo)
+  const tipResult = git(repo, ['rev-parse', branch], { allowFailure: true })
+  const tip = tipResult.status === 0 ? tipResult.stdout.trim() : ''
+  const cacheKey = `${resolve(repo)}\0${branch}\0${prefix}`
+  const hit = featureListCache.get(cacheKey)
+  if (hit && tip && hit.tip === tip) return hit.data
   const spec = prefix ? `${branch}:${prefix}feature_list.json` : `${branch}:feature_list.json`
   const result = git(repo, ['show', spec], { allowFailure: true })
-  if (result.status !== 0) return null
-  return JSON.parse(result.stdout)
+  if (result.status !== 0) {
+    featureListCache.delete(cacheKey)
+    return null
+  }
+  const data = JSON.parse(result.stdout)
+  if (tip) featureListCache.set(cacheKey, { tip, data })
+  return data
 }
 
 export function portInUse(port) {

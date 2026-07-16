@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { terminateProcessTree } from './worker-lifecycle.mjs'
+import { killMatchingPatterns, terminateProcessTree } from './worker-lifecycle.mjs'
 import { readOwnedRuntime } from './runtime-manifest.mjs'
 import {
   composeShareCount,
@@ -54,18 +54,6 @@ export function composeProjectDir(workdir) {
   return null
 }
 
-function killPatterns(patterns) {
-  let killed = 0
-  for (const pattern of patterns) {
-    if (!pattern) continue
-    const probe = spawnSync('pgrep', ['-f', pattern], { encoding: 'utf8' })
-    if (probe.status !== 0 || !probe.stdout.trim()) continue
-    const pkill = spawnSync('pkill', ['-f', pattern], { encoding: 'utf8' })
-    if (pkill.status === 0) killed += 1
-  }
-  return killed
-}
-
 function stopAppPid(workdir) {
   if (!workdir) return { stopped: false }
   const pidFile = join(workdir, '.harness', 'app.pid')
@@ -81,6 +69,24 @@ function stopAppPid(workdir) {
   try { process.kill(pid, 0); terminateProcessTree(pid, 'SIGKILL') } catch {}
   try { unlinkSync(pidFile) } catch {}
   return { stopped: true, pid }
+}
+
+/** Prefer `./init.sh stop` when present; fall back to `.harness/app.pid`. */
+export function stopWorktreeApp(workdir) {
+  if (!workdir) return { stopped: false, via: null }
+  const initSh = join(workdir, 'init.sh')
+  if (existsSync(initSh)) {
+    const result = spawnSync('bash', [initSh, 'stop'], {
+      cwd: workdir,
+      encoding: 'utf8',
+      timeout: 30_000,
+    })
+    if (result.status === 0) {
+      return { stopped: true, via: 'init.sh', status: result.status }
+    }
+  }
+  const fallback = stopAppPid(workdir)
+  return { ...fallback, via: fallback.stopped ? 'app.pid' : null }
 }
 
 function listComposeServices(dir) {
@@ -120,6 +126,18 @@ export function composeDown(workdir, {
   } else if (remaining == null && commonGit) {
     remaining = composeShareCount(commonGit, projectId)
   } else if (remaining == null) {
+    // Fail closed: unknown share state must not drop shared infra.
+    if (!force) {
+      return {
+        ran: false,
+        dir,
+        mode: 'refused',
+        reason: 'unknown_share_state',
+        status: 0,
+        skippedFullDown: true,
+        error: 'composeDown requires commonGit+context, shareCount, or force',
+      }
+    }
     remaining = 0
   }
 
@@ -204,8 +222,10 @@ export function cleanupWorktreeRuntime({
       if (result.status === 0) containersRemoved += 1
     }
   }
-  const appPid = stopAppPid(workdir)
-  const killed = killPatterns(runtimeKillPatterns({ workdir, port }))
+  const appPid = stopWorktreeApp(workdir)
+  // Safety net if init.sh stop left a live PID file behind.
+  if (appPid.via === 'init.sh') stopAppPid(workdir)
+  const killed = killMatchingPatterns(runtimeKillPatterns({ workdir, port }))
   const compose = composeDown(workdir, {
     force: forceComposeDown,
     commonGit,

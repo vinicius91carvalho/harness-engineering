@@ -93,6 +93,9 @@ const finalize = run(['finalize', tmp])
 assert(finalize.status === 0, 'finalize succeeds')
 assert(existsSync(join(tmp, 'project_specs.xml')), 'project_specs.xml written')
 assert(!existsSync(join(harness, 'project_specs.draft.json')), 'draft removed after finalize')
+assert(!finalize.stdout.includes('registered project'), 'non-git finalize skips project registration')
+assert(!finalize.stdout.includes('pinned integration branch'), 'non-git finalize skips integration-branch pin')
+assert(!existsSync(join(tmp, '.harness', 'projects.json')), 'non-git finalize writes no registry')
 
 const invalidHarness = join(tmp, 'invalid')
 mkdirSync(join(invalidHarness, '.harness'), { recursive: true })
@@ -109,6 +112,60 @@ writeFileSync(join(invalidHarness, '.harness', 'spec-review-feedback.json'), `${
 const invalidFinalize = run(['finalize', invalidHarness])
 assert(invalidFinalize.status !== 0, 'finalize rejects invalid specification')
 assert(invalidFinalize.stderr.includes('invalid project specification'), 'finalize reports validation error')
+
+// Finalize inside a git repo registers the project and pins the integration branch
+function git(dir, args) {
+  return spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' })
+}
+
+function seedConfirmedDraft(projectDir) {
+  const dir = join(projectDir, '.harness')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'project_specs.draft.json'), `${JSON.stringify(draft, null, 2)}\n`)
+  writeFileSync(join(dir, 'spec-review-feedback.json'), `${JSON.stringify({
+    revision: 1,
+    items: [
+      { id: 'project_goal', confirmed: true, comment: '' },
+      { id: 'AC-001', confirmed: true, comment: '' },
+    ],
+  }, null, 2)}\n`)
+}
+
+const gitTmp = mkdtempSync(join(tmpdir(), 'spec-review-git-'))
+git(gitTmp, ['init', '-b', 'main'])
+git(gitTmp, ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'])
+mkdirSync(join(gitTmp, '.harness'), { recursive: true })
+writeFileSync(join(gitTmp, '.harness', 'projects.json'), `${JSON.stringify({
+  projects: [{ id: 'frontend', path: 'apps/frontend', description: 'Customer web application' }],
+  note: 'keep me',
+}, null, 2)}\n`)
+const gitProject = join(gitTmp, 'apps', 'web')
+seedConfirmedDraft(gitProject)
+const gitFinalize = run(['finalize', gitProject])
+assert(gitFinalize.status === 0, `git finalize succeeds\n${gitFinalize.stderr}`)
+assert(existsSync(join(gitProject, 'project_specs.xml')), 'git finalize writes project_specs.xml')
+const registry = JSON.parse(readFileSync(join(gitTmp, '.harness', 'projects.json'), 'utf8'))
+assert(registry.note === 'keep me', 'registry preserves unknown fields')
+assert(registry.projects.some((p) => p.id === 'frontend' && p.description === 'Customer web application'), 'registry preserves existing entries')
+assert(registry.projects.some((p) => p.id === 'apps_web' && p.path === 'apps/web'), 'registry upserts finalized project entry')
+assert(gitFinalize.stdout.includes('registered project apps_web'), 'finalize prints registration')
+const pin = readFileSync(join(gitTmp, '.harness', 'integration-branch'), 'utf8')
+assert(pin === 'plan/demo\n', `integration-branch pin written, got ${JSON.stringify(pin)}`)
+assert(git(gitTmp, ['rev-parse', '--verify', 'refs/heads/plan/demo']).status === 0, 'plan/demo branch created at HEAD')
+assert(gitFinalize.stdout.includes('pinned integration branch plan/demo'), 'finalize prints pin')
+
+const pinnedTmp = mkdtempSync(join(tmpdir(), 'spec-review-pinned-'))
+git(pinnedTmp, ['init', '-b', 'main'])
+git(pinnedTmp, ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'])
+mkdirSync(join(pinnedTmp, '.harness'), { recursive: true })
+writeFileSync(join(pinnedTmp, '.harness', 'integration-branch'), 'integration\n')
+seedConfirmedDraft(pinnedTmp)
+const pinnedFinalize = run(['finalize', pinnedTmp])
+assert(pinnedFinalize.status === 0, `pinned finalize succeeds\n${pinnedFinalize.stderr}`)
+assert(readFileSync(join(pinnedTmp, '.harness', 'integration-branch'), 'utf8') === 'integration\n', 'existing pin left untouched')
+assert(!pinnedFinalize.stdout.includes('pinned integration branch'), 'finalize does not re-pin')
+const rootRegistry = JSON.parse(readFileSync(join(pinnedTmp, '.harness', 'projects.json'), 'utf8'))
+assert(rootRegistry.projects.some((p) => p.id === 'root' && p.path === ''), 'git-root finalize registers root project')
 
 // Localhost submit: open blocks until POST /feedback, then exits with status code
 const openTmp = mkdtempSync(join(tmpdir(), 'spec-review-open-'))

@@ -28,18 +28,15 @@ Use the current host's native planning surface and configured model. Do not forc
 a vendor model ID. Do not write application code or scaffold anything; only
 produce `project_specs.xml` in the user's current working directory.
 
-In a monorepo, first read the Git-root `.harness/projects.json`. If it is missing
-but more than one independently runnable project boundary is detectable (same
-detection as `setup`: workspace manifests, nested package/build manifests, Compose
-services, deployment units), reconstruct the registry at the Git root before
-routing — never ask blindly merely because the registry is absent. If cwd is the
-Git root, list the registered projects and ask which one owns the goal; do not
-create an aggregate root specification. If cwd is inside a registered path, use the
-nearest registered ancestor as the project root and write its `project_specs.xml`.
-The specification may require changes in shared packages or sibling services, but
-one project owns its Acceptance Checks and Work Item catalog. Cross-project queue
-dependencies are not supported; express an externally required behavior as an
-Acceptance Check in the owning project instead.
+In a monorepo, first read the Git-root `.harness/projects.json` to see what is already registered.
+Single-project routing is unchanged: if cwd is the Git root, list the registered projects (or, when none are registered yet, the independently runnable project boundaries detectable the same way `setup` does: workspace manifests, nested package/build manifests, Compose services, deployment units) and ask which one owns the goal.
+Do not create an aggregate root specification for a single-project goal.
+If cwd is inside a registered path, use the nearest registered ancestor as the project root and write its `project_specs.xml`.
+There is no registry to reconstruct by hand: `spec-review.mjs finalize` registers the resolved project in `.harness/projects.json` automatically.
+If the goal spans multiple registered projects, anchor `PROJECT` at the Git root instead (the `root` project).
+Give every Acceptance Check a `context` and description that names the subproject it actually changes.
+The specification may still require changes in shared packages or sibling services, but each Acceptance Check names one subproject.
+Cross-project queue dependencies are still not supported; express an externally required behavior as an Acceptance Check in the owning subproject instead.
 
 ## Pick the mode
 
@@ -292,11 +289,16 @@ passes and `finalize` writes `project_specs.xml`.
 
 - After `finalize`, `project_specs.xml` exists in the resolved project root.
   Do not hand-edit the file to bypass review.
+  Finalize also registers the project in `.harness/projects.json` and, when no `.harness/integration-branch` pin exists yet, creates and pins `plan/<slug>` (derived from the project name).
+  Commit `project_specs.xml`, `.harness/projects.json`, and `.harness/integration-branch` together so a fresh session can discover and build on the plan.
 - Confirm the Ready Gate still holds: ambiguities, trade-offs, and edge cases are
   recorded under `<planning_decisions>` and proved by Acceptance Checks that
   reconcile into `feature_list.json`.
-- **New Project**: tell the user to review the file, then open a NEW session and
-  run **`/generator`** — it scaffolds the project (via the initializer agent) on
+- **New Project**: tell the user to review the file, then run **`/generator`** in a
+  NEW session from anywhere inside the repository.
+  Generator finds the plan by walking up from the working directory for the nearest
+  `project_specs.xml`, then falling back to the `.harness/projects.json` registry.
+  It scaffolds the project (via the initializer agent) on
   first run, then implements and QA's features. Multiple `/generator` sessions can
   run in parallel, each claiming a different `context`.
 - **Existing Codebase**: report that mapping is complete. Do not recommend a full

@@ -105,7 +105,8 @@ JSONL
 }
 
 supervisor_common_run_once() {
-  PATH="$SUPERVISOR_PATH" "$NODE" "$CONTROL" run "$@"
+  supervisor_common_run_timeout "${SUPERVISOR_RUN_ONCE_TIMEOUT:-300}" \
+    env PATH="$SUPERVISOR_PATH" "$NODE" "$CONTROL" run "$@"
 }
 
 supervisor_common_run_timeout() {

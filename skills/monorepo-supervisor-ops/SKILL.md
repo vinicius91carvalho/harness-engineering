@@ -1,6 +1,6 @@
 ---
 name: monorepo-supervisor-ops
-description: Operate multiple harness supervisors in one monorepo (herdr tabs, finished-tab cleanup, stream smoke checks, leases, merge lock, empty-fleet recovery, composer-2.5 ops). Use when restarting supervisors, diagnosing empty/zombie panes, clearing dead locks/quota pauses, or syncing harness skills to ~/.agents.
+description: Operate multiple harness supervisors in one monorepo (background workers, log tail, harness-control status, fleet-snapshot, leases, merge lock, empty-fleet recovery, composer-2.5 ops). Use when restarting supervisors, diagnosing empty/stuck workers, clearing dead locks/quota pauses, or syncing harness skills to ~/.agents.
 ---
 
 # Monorepo supervisor ops
@@ -13,15 +13,16 @@ Use this when several subprojects share one Git top-level (e.g. `core`, `web`,
 1. Edit harness code / installed skills only unless the operator says otherwise.
 2. Do not commit unless asked. While a plan is in flight, land harness commits on
    the plan branch (side jobs branch from it) — never directly onto `main`/`master`.
-3. Pane/tab cleanup is **per project** (`worker-<project>-*`). Never close sibling supervisors' workers.
-4. Supervisor exit must **not** close live herdr tabs — orchestrators outlive the supervisor; `rehydrateHerdrWorkers` reattaches them.
+3. Each subproject has its own supervisor state and worker logs — never confuse
+   sibling contexts when reading `status` or tailing logs.
+4. Workers always run in the background. Monitor with `status`, logs, and `fleet-snapshot`.
 5. Shared merge lock (`.git/harness-locks/generator-merge`) is normal — one integrator at a time.
 6. **CauseFlow 10-min ops model:** always recycle/retry with `--host agent` and **composer-2.5** (never `composer-2.5-fast`, never `pi`/deepseek for this monitoring loop).
 7. **Coding route ≠ ops host:** Work Item coding stays OSS-first via `.harness/roles.json`. Do not reorder coding to put Claude/Codex/Composer first. Ops recycles use composer-2.5; that is not the coding ladder.
-8. **Fail-closed:** empty fleet, finished tabs still open, or `workerHealth=stuck` → fix now and update this skill / harness code in the same turn. Do not only report.
+8. **Fail-closed:** empty fleet or `workerHealth=stuck` → fix now and update this skill / harness code in the same turn. Do not only report.
 9. **Always check final verification logs** (supervisor Hard rules): evidence
    artifacts under `.git/harness-evidence/` are pass/fail truth. Do not rely only
-   on `status` / progress counters / pane tails.
+   on `status` / progress counters / log tails.
 10. **Learning stays in workflow skills:** durable ops lessons update `skills/*` in
    harness-engineering (and sync to `~/.agents`), not `AGENTS.md` / `CLAUDE.md`.
 11. **Any fix must land in the workflow too — that is how the harness
@@ -32,7 +33,7 @@ Use this when several subprojects share one Git top-level (e.g. `core`, `web`,
     incident with only a live command and no skill/code change is a workflow
     defect: the next run will pay the same cost again.
 12. **Plan success requires evidence.** Never declare the Project Goal complete
-    from status counters or pane chatter alone.
+    from status counters or log chatter alone.
     Cite persisted `run_completed`, `fleetSnapshot.lastRunCompletedSummary`, and
     Goal Review evidence logs.
 13. **Blocker project wins host RAM.** Root/blocker empty fleet +
@@ -47,11 +48,15 @@ Use this when several subprojects share one Git top-level (e.g. `core`, `web`,
 After editing in the harness-engineering repo:
 
 ```bash
-cp skills/generator/lib/{agent-spawn,agent-stream,supervisor-auto-respond,orphan-claims,fleet-snapshot,control-beacon,wake-triage,observation-method,repair-router,control-journal,resource-governor,worktree-teardown,worker-lifecycle,browser-cleanup,claim-lease,evidence-guidance}.mjs ~/.agents/skills/generator/lib/
+# Copy the whole lib tree so importLib deps stay complete (cherry-picking drifts).
+mkdir -p ~/.agents/skills/generator/lib ~/.agents/skills/generator/prompts \
+  ~/.agents/skills/supervisor/scripts ~/.agents/skills/supervisor/lib \
+  ~/.agents/skills/monorepo-supervisor-ops
+cp -R skills/generator/lib/. ~/.agents/skills/generator/lib/
 cp skills/generator/prompts/feature.mjs ~/.agents/skills/generator/prompts/
 cp skills/generator/orchestrator.mjs ~/.agents/skills/generator/
 cp skills/supervisor/scripts/harness-control.mjs ~/.agents/skills/supervisor/scripts/
-cp skills/supervisor/lib/{herdr-spawn,supervisor-preflight}.mjs ~/.agents/skills/supervisor/lib/
+cp skills/supervisor/lib/supervisor-preflight.mjs ~/.agents/skills/supervisor/lib/
 cp skills/supervisor/SKILL.md ~/.agents/skills/supervisor/SKILL.md
 cp skills/monorepo-supervisor-ops/SKILL.md ~/.agents/skills/monorepo-supervisor-ops/SKILL.md
 ```
@@ -63,7 +68,7 @@ slots and gates on `reconcile --check` before admission.
 Also document: Control Journal must keep monotonic ids (`journal-meta.json`); Resource Governor must prune dead-pid reservations and reuse same-context admissions so orchestrators do not double-book slots.
 
 Recycle orchestrators (`SIGTERM`) so new spawn/stream/prompt code loads.
-kill -9 on old supervisors so their `stop()` path does not close tabs.
+kill -9 on old supervisors so their `stop()` path does not interrupt live workers.
 Use guarded harness-control fleet commands instead of raw `kill`/`rm`:
 
 ```bash
@@ -95,14 +100,17 @@ node "$CONTROL" release-supervisor-lock --repo "$REPO" --force true
 # Prefer `run` + setsid/nohup for long-lived supervisors; `start` may exit after spawn.
 # CauseFlow ops: --host agent (composer-2.5). Use pi only when the operator asks.
 # harness-control parses argv as `--key value` pairs — use `--force true`, not bare `--force`.
-setsid -f env HERDR_ENV=1 node "$CONTROL" run --repo "$REPO" --host agent --display herdr \
+setsid -f node "$CONTROL" run --repo "$REPO" --host agent \
   --max-workers 3 --quota-workers 3 --cpu-per-worker 1 \
   --memory-per-worker-mb 640 --reserve-memory-mb 1024 --max-load-ratio 0.9 \
   --summary-minutes 20 \
   >>/tmp/<subproject>-supervisor.log 2>&1
 ```
 
-## Empty fleet recovery (workers={}, no herdr panes)
+Background orchestrators survive supervisor restart; `status` and worker logs
+reattach on the next tick.
+
+## Empty fleet recovery (workers={}, no live progress)
 
 Hybrid Empty-Fleet Recovery runs on every supervisor tick: Ghost Claims, dead
 same-host merge/state locks, orphan PIDs, crash-bound reset, and re-admit when
@@ -122,8 +130,7 @@ node "$CONTROL" fleet-snapshot --repo /path/to/monorepo/<any-subproject-or-root>
 Manual recovery remains for remote locks, quota pauses, RAM pressure, and other
 operator judgment cases the tick cannot resolve.
 
-When `fleetSnapshot.emptyFleetActionable`, herdr has only the default tab, or
-`capacity.limit=0` with no spawns:
+When `fleetSnapshot.emptyFleetActionable` or `capacity.limit=0` with no spawns:
 
 1. **Dead merge/state lock (remote or tick missed)** — use CLI with `--force true`:
    ```bash
@@ -139,9 +146,9 @@ When `fleetSnapshot.emptyFleetActionable`, herdr has only the default tab, or
    `maxLoadRatio`; wait for build to finish. Free RAM: kill orphan `tsx`/`node`
    APIs left in finished worktrees (not the active AC worktree). Prefer
    `kill-worker --force true` / operator `stop` — both now run programmatic
-   worktree teardown (`.harness/app.pid`, worktree-scoped `next`/`tsx`,
-   `docker compose down --remove-orphans`) via `worktree-teardown.mjs`, not
-   browser cleanup alone.
+   worktree teardown (`./init.sh stop` when present, then `.harness/app.pid`,
+   worktree-scoped `next`/`tsx`, `docker compose down --remove-orphans`) via
+   `worktree-teardown.mjs`, not browser cleanup alone.
 4. **Sibling holds host-wide Resource Governor slots** — `capacity.available=0`
    while this project's `workers={}` but `capacity.state.reservations` shows other
    subprojects (or a zombie idle-shell worker still reserved). Check
@@ -159,10 +166,11 @@ When `fleetSnapshot.emptyFleetActionable`, herdr has only the default tab, or
    **Concrete CauseFlow pattern (2026-07-11):** core Run State `resuming` /
    `phase: qa` for WI-AC-060 with `workers={}` while web dashboard held two
    `next-server` processes (~GB each) → `capacity.memory.slots=0`. Fix: 
-   `kill-worker --repo …/web --context dashboard --force true` (teardown kills
-   `.harness/app.pid` / next), seed core `retryQueue` with evidence-backed QA
-   guidance, confirm core admits, leave web OSS worker if capacity allows, let
-   dashboard re-admit after core progresses. Narrating "web healthy, core idle"
+   `kill-worker --repo …/web --context dashboard --force true` (teardown runs
+   `./init.sh stop` then `.harness/app.pid` / next), seed core `retryQueue` with
+   evidence-backed QA guidance, confirm core admits, leave web OSS worker if
+   capacity allows, let dashboard re-admit after core progresses. Narrating
+   "web healthy, core idle"
    without this step is a supervisor defect.
 
    **Goal Review leftovers (2026-07-11 web):** after `goal:false` reopens WIs,
@@ -191,8 +199,6 @@ When `fleetSnapshot.emptyFleetActionable`, herdr has only the default tab, or
    ```
 7. **Paused supervisor** — `respond --action pause` flips status; `resume` and
    force `state.status=running` if needed.
-8. Confirm panes return; rename tabs if labels are null:
-   `herdr tab rename <tab_id> "{taskId} - {role} - {project} - r{retry}"`.
 
 **Idle after finish is not done:** when `fleetSnapshot.emptyFleetActionable` or
 every live context exits but the project is not `complete` (remaining ACs,
@@ -253,9 +259,9 @@ Only when the operator asks and host memory allows. Cap by free RAM:
 `slots ≈ floor((MemAvailableMB - reserve) / memory-per-worker-mb)`.
 
 ```bash
-node "$CONTROL" kill-supervisor --repo "$REPO" --force true   # preserve herdr tabs
+node "$CONTROL" kill-supervisor --repo "$REPO" --force true
 node "$CONTROL" release-supervisor-lock --repo "$REPO" --force true
-setsid -f env HERDR_ENV=1 node "$CONTROL" run --repo "$REPO" --host agent --display herdr \
+setsid -f node "$CONTROL" run --repo "$REPO" --host agent \
   --max-workers 4 --quota-workers 4 --cpu-per-worker 1 \
   --memory-per-worker-mb 768 --reserve-memory-mb 1024 --max-load-ratio 0.9 \
   --summary-minutes 20 >>/tmp/<subproject>-supervisor.log 2>&1
@@ -276,7 +282,7 @@ Never remove worktrees that still have a live `orchestrator.mjs` for that contex
 
 ## Coding exhaustion — do not auto-burn
 
-`coding agent failed three times` is **not** auto-retried (supervisor-auto-respond).
+`coding agent failed three times` is **not** auto-retried (failure-policy).
 Respond with verify-first guidance when the AC is already satisfied on main, or
 stop/pause the dependent project until a dependency-root finishes.
 
@@ -307,48 +313,27 @@ compose `build.args`, and gates on curl against the **compose image** (not
 
 | Symptom | Check |
 |---|---|
-| Progress near done, one WI looping | Run state `phase` / `currentFeatureId`; pane shows endless `thinking:` |
+| Progress near done, one WI looping | Run state `phase` / `currentFeatureId`; tail worker log for endless `thinking:` |
 | WI "never finishes" on integrate/resume / `Checkpoint was not integrated…` with no product change | **Flag drift:** compare plan-branch `feature_list` / ledger `integration=true` vs worktree flags. If plan already integrated, sync worktree flags / skip re-integrate — do **not** recycle coding. Fixed path: `integrate-checkpoint.mjs` skips when plan already has `integration=true`. |
 | Dependent E2E fails on Core/API 5xx or contract break | Escalate to root project repair (Supervisor → Core Orchestrator); pause dependent coding retries until API is fixed |
 | Static AC but Mintlify/browser up | QA prompt must follow AC observation method — kill mint, restart with audit guidance |
-| `status` has workers, herdr empty | Zombie pane IDs — restart supervisors; confirm project-scoped cleanup |
-| `fleetSnapshot.emptyFleetActionable`, no panes, status running | Empty-fleet judgment above (quota / load / **sibling governor reservations** / Goal Review) |
+| `status` lists workers but PIDs are dead | Ghost worker row — restart supervisor; check `fleetSnapshot` and `workerHealth` |
+| `fleetSnapshot.emptyFleetActionable`, status running | Empty-fleet judgment above (quota / load / **sibling governor reservations** / Goal Review) |
 | Goal review exits with code 1 | Often merge lock wait — not a product failure |
 | Memory pressure / `Session terminated` | Lower `--max-workers` / `--memory-per-worker-mb`; kill heavy mint/docker leftovers |
 | `capacity.limit=0` + high load | Docker build or CPU spike — wait; do not thrash recycles |
 | Many `docker ps` leftovers after WIs finish | Workers must tear down what they started (generator RESOURCE_CLEANUP_RULE). Shared infra (postgres/redis/hindsight) is ref-counted via `compose-shared.mjs` — last holder may `compose down`; siblings only stop/rm app services. Supervisor `kill-worker` / `workerClosed` / operator `stop` run `cleanupWorktreeRuntime`. Stop orphans not owned by a live holder; keep stacks a running context still needs. Harden prompts/skills same turn. |
-| RAM exhausted while many compose stacks up | Prefer reuse: one shared infra stack per project, rebuild only api/worker/dashboard under test. Do not admit more workers until `capacity.available>=1` and `docker stats` shows headroom. Pause lower-priority siblings (Hard rule 6). |
-| Blocker idle, sibling `next-server` huge RSS | Hard rule 12: kill/pause lower-priority sibling (web dashboard before core QA), admit blocker, update workflow if the playbook was missing. |
+| RAM exhausted while many compose stacks up | Prefer reuse: one shared infra stack per project, rebuild only api/worker/dashboard under test. Do not admit more workers until `capacity.available>=1` and `docker stats` shows headroom. Pause lower-priority siblings (Hard rule 13). |
+| Blocker idle, sibling `next-server` huge RSS | Hard rule 13: kill/pause lower-priority sibling (web dashboard before core QA), admit blocker, update workflow if the playbook was missing. |
 
-## Herdr layout
+## Worker monitoring (background-only)
 
-One tab per worker. Label: `{taskId} - {role} - {project} - r{retry}`.
-Agent sidebar name remains `worker-<project>-<context>`.
-If `herdr tab list` shows null labels, rename immediately so the operator can see work.
+Workers always run in the background. Monitor through:
 
-### Finished-worker tab cleanup (automatic reaper)
-
-Never leave finished work visible.
-The supervisor runs `finished-tab-reaper.mjs` on each tick (rate-limited) and immediately after `workerClosed` / `workerHealth=done`, calling `closeStaleHarnessPanesForProject` with live-worker pane ids kept safe.
-
-1. From `harness-control status` or `fleet-snapshot`, collect workers with `workerHealth=done` or terminal Run State (`completed` / `failed` / `cancelled`).
-2. Close the **whole tab** (`herdr tab close <tab_id>`), not only the pane.
-3. If status still lists a dead worker after close, clear that entry on the next supervisor tick / restart — do not leave orphan tabs for the operator.
-4. If you find finished tabs open, treat it as a workflow defect: fix spawn/close paths in harness and update this skill the same turn (fail-closed).
-
-**Cursor Task/subagent mirror tabs:** Cursor `Task` / `Subagent` hooks open
-herdr tabs (`cursor-sub-*`, labels like `🧮 generalPurpose: …`) with
-`herdr-subagent-logview.py`. They are **not** harness `worker-<project>-*`
-panes; the finished-tab reaper ignores them.
-Automatic cleanup (supervisor tick, rate-limited):
-`cursor-subagent-tab-reaper.mjs` via `reapCursorSubagentTabs` in
-`harness-control.mjs` (120s orphan grace, dead logview, stale cwd).
-Logview self-closes on `turn_ended` or 45s idle after transcript growth; stop
-hook uses the same 120s orphan grace for entries with no transcript.
-Manual fallback when zombies remain:
-`node harness-control.mjs reap-cursor-subagents --repo <path>` (force reap), or
-`herdr tab close <tab_id>` per finished `cursor-sub-*` tab after confirming
-the live main agent tab is not targeted.
+- `harness-control fleet-snapshot` — cross-project bearings (preferred)
+- `harness-control status` — `workerHealth`, `workers`, `mergeLock`, capacity
+- Worker logs under `.git/harness-control/<project>/logs/`
+- Evidence Artifacts under `.git/harness-evidence/` (pass/fail truth)
 
 **Fleet Snapshot** (`skills/generator/lib/fleet-snapshot.mjs`, schema `harness-fleet-snapshot.v1`):
 cross-project bearings for monorepo recovery — journal tips, capacity/slots,
@@ -366,9 +351,9 @@ Multi-project: pass a monorepo subproject path or root with `.harness/projects.j
 registered, or `--projects core,web,relay` — prefer one fleet-snapshot call over
 per-sibling status scrape loops.
 
-## Status poll (fleet snapshot + targeted pane checks)
+## Status poll (fleet snapshot + log tail)
 
-**Every ~10 minutes — prefer fleet snapshot, then targeted pane reads:**
+**Every ~10 minutes — prefer fleet snapshot, then targeted log tails:**
 
 ```bash
 node "$CONTROL" fleet-snapshot --repo /path/to/monorepo/<subproject-or-root>
@@ -378,20 +363,16 @@ node "$CONTROL" fleet-snapshot --repo /path/to/monorepo/<subproject-or-root>
 
 Hybrid Empty-Fleet Recovery on each supervisor tick owns ghost claims, dead locks,
 and re-admit.
-Use herdr pane tails only for `workerHealth=stuck` judgment or stream smoke
-checks — not as the primary empty-fleet detector.
+Tail worker logs only for `workerHealth=stuck` judgment or stream smoke checks —
+not as the primary empty-fleet detector.
 
-When a pane needs inspection:
+When a worker needs inspection, tail its log:
 
 ```bash
-export HERDR_ENV=1
-herdr pane list | jq -r '.result.panes[] | select(.pane_id != "w1:p1") |
-  "\(.pane_id) \(.agent) scroll=\(.scroll.max_offset_from_bottom) status=\(.agent_status)"'
-# sample scroll twice ~12s apart; if unchanged + tail is only heartbeats → stuck
-# If scroll=0, use --source visible (recent scrollback is empty on wait-only panes)
-SCROLL=$(herdr pane list | jq -r --arg p "$PANE" '.result.panes[]|select(.pane_id==$p)|.scroll.max_offset_from_bottom')
-SRC=recent; [ "${SCROLL:-0}" = "0" ] && SRC=visible
-herdr pane read "$PANE" --source "$SRC" --lines 40 --format text
+LOG_DIR=/path/to/monorepo/.git/harness-control/<subproject>/logs
+ls -lt "$LOG_DIR" | head
+tail -n 40 "$LOG_DIR/<context>-<pid>.log"
+# sample twice ~12s apart; if unchanged + tail is only heartbeats → stuck
 ```
 
 Per-project `harness-control status` → `workerHealth` / `mergeLock` when
@@ -399,17 +380,17 @@ fleet-snapshot is unavailable:
 
 | `workerHealth[].verdict` | Meaning |
 |---|---|
-| `healthy` | thinking/tools or scroll advancing |
+| `healthy` | thinking/tools or log advancing |
 | `waiting_expected` | merge lock (holder alive) or MCP warmup under budget |
 | `stuck` | recycle candidate — no agent output / verdict hang / dead lock holder |
-| `done` | terminal run state — **close the tab now** |
+| `done` | terminal run state — clear worker row on next tick |
 
 **Never recycle** `waiting_expected` merge_lock when `mergeLock.holderAlive=true`,
-or MCP warmup still under budget. Act on `stuck` only. Close tabs for `done`.
+or MCP warmup still under budget. Act on `stuck` only.
 
 ### Check final verification evidence logs (mandatory)
 
-Do **not** trust pane chatter, `exitCode: 0` on the Input Request alone, or a
+Do **not** trust log chatter, `exitCode: 0` on the Input Request alone, or a
 QA verdict with empty `defects` when INTEGRATION_QA later disagrees.
 
 On every QA / INTEGRATION_QA / Goal Review completion or failure:
@@ -429,7 +410,7 @@ On every QA / INTEGRATION_QA / Goal Review completion or failure:
    `input_required` events also attach `detail.guidanceExcerpt` when an evidence
    path is present).
 
-Pane tails are for liveness; evidence logs are for pass/fail truth.
+Worker log tails are for liveness; evidence logs are for pass/fail truth.
 
 ### Known false orphan: verdict early-exit (owner still applying ledger)
 
@@ -460,28 +441,26 @@ Mitigations (must stay in code):
 - Resource Governor prunes dead-pid reservations and reuses same
   project/context admissions so orchestrators do not double-book slots.
 - Supervisor passes `HARNESS_*` capacity env + `HARNESS_GOVERNOR_RESERVATION`
-  into herdr worker panes. Fleet recovery flags are `--force true` (key/value).
+  into background workers. Fleet recovery flags are `--force true` (key/value).
 
-### Pane stream smoke check (after spawn / on 10-min pass)
+### Log stream smoke check (after spawn / on 10-min pass)
 
-Within ~60s of `CODING → …` / `agent: started`, the pane must show agent activity
-(`thinking:` / `tool →` / host stream), not only orchestrator banners.
+Within ~60s of `CODING → …` / `agent: started`, the worker log must show agent
+activity (`thinking:` / `tool →` / host stream), not only orchestrator banners.
 
-| Pane tail | Action |
+| Log tail | Action |
 |---|---|
 | `thinking:` / `tool →` advancing | Healthy — leave alone |
-| Only `orchestrator: …` / `CODING → …` for >60s, no agent stream | Stream/spawn broken — check `agent-stream` + roles; recycle with `--host agent` + composer-2.5 |
+| Only `orchestrator: …` / `CODING → …` for >60s, no agent stream | Stream/spawn broken — check roles + worker log under `.git/harness-control/`; recycle with `--host agent` + composer-2.5 |
 | `HARNESS-VERDICT` then only `agent: still working` | Hung after verdict — SIGTERM agent/orchestrator; recycle with host agent + composer-2.5 |
 | Empty after `CODING → agent` (no `agent: started`) | Stream/spawn broken — check roles + stream-json; recycle |
-| `waiting for merge lock (holder pid=…)` | Expected idle — watch holder pane |
+| `waiting for merge lock (holder pid=…)` | Expected idle — watch holder log |
 | Rate/usage limit spam | Clear quota pause after cooldown; keep host agent + composer-2.5 |
 
 **Every ~20 minutes — fleet status:** run `fleet-snapshot` (or per-subproject
-`status` when needed), open goal-scoped inputs only, `herdr agent list`, free
-memory.
+`status` when needed), open goal-scoped inputs only, free memory.
 Act on unrepaired `empty_fleet_actionable` / `dead_runtime`, dead supervisors,
-`stuck` health, finished tabs still open, or goal-scoped `input_required` that
-auto-retry cannot handle.
+`stuck` health, or goal-scoped `input_required` that auto-retry cannot handle.
 Never treat `status=working` alone as proof of progress.
 
 When reporting plan or monorepo completion, cite persisted `run_completed` and

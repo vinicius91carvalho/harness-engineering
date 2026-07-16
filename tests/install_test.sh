@@ -14,7 +14,7 @@ printf '%s %s\n' "$(basename "$0")" "$*" >>"$HARNESS_TEST_LOG"
 EOF
   chmod +x "$TMP/bin/$cli"
 done
-for cli in omni codebase-memory-mcp; do
+for cli in omni; do
   cat >"$TMP/bin/$cli" <<'EOF'
 #!/bin/sh
 printf '%s %s\n' "$(basename "$0")" "$*" >>"$HARNESS_TEST_LOG"
@@ -87,20 +87,13 @@ before=$(find "$HOME" -mindepth 1 -print | sort)
 after=$(find "$HOME" -mindepth 1 -print | sort)
 [ "$before" = "$after" ] || fail 'dry-run wrote into HOME'
 [ ! -s "$HARNESS_TEST_LOG" ] || fail 'dry-run executed a host command'
-grep -q 'codebase-memory-mcp' "$TMP/out" || fail 'dry-run should describe memory integration'
-grep -q 'configure context7 MCP for:claude codex opencode pi agent' "$TMP/out" || fail 'Context7 should target every host'
 grep -q 'configure playwright MCP for:claude codex opencode pi agent' "$TMP/out" || fail 'Playwright should target every host'
 grep -q 'pip install -U crawl4ai' "$TMP/out" || fail 'Crawl4AI pip install should appear in dry-run'
 grep -q 'install crawl4ai skill to ~/.claude/skills/crawl4ai' "$TMP/out" || fail 'Crawl4AI Claude skill install should appear in dry-run'
-grep -q 'MCP inventory for:claude codex opencode pi agent' "$TMP/out" || fail 'MCP inventory should target every selected host'
-grep -q 'marketplace upgrade ponytail' "$TMP/out" || fail 'Codex Ponytail marketplace should be idempotent'
-grep -q 'plugin add ponytail@ponytail' "$TMP/out" || fail 'Codex Ponytail should use its upstream marketplace'
-grep -q 'npx skills add kunchenguid/lavish-axi --skill lavish -g' "$TMP/out" || fail 'lavish-axi skill install should appear in dry-run'
 grep -q 'npx skills add nutlope/hallmark --skill hallmark -g' "$TMP/out" || fail 'hallmark skill install should appear in dry-run'
 grep -q 'curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh' "$TMP/out" || fail 'no-mistakes installer should appear in dry-run'
 grep -q 'no-mistakes init in each repository' "$TMP/out" || fail 'no-mistakes init follow-up should appear in dry-run'
 grep -q 'curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh' "$TMP/out" || fail 'treehouse installer should appear in dry-run'
-grep -q 'git clone --depth 1 https://github.com/kunchenguid/firstmate.git' "$TMP/out" || fail 'firstmate clone should appear in dry-run'
 pass 'dry-run performs no writes or host commands'
 
 : >"$HARNESS_TEST_LOG"
@@ -157,27 +150,22 @@ pass 'Cursor Agent assets are local-plugin installed and idempotent'
 rm -rf "$HOME/.cursor/plugins/local"
 # Simulate prior harness pollution under optional plugin dirs.
 mkdir -p "$HOME/.cursor/plugins/local/skill-creator/.cursor-plugin" \
-  "$HOME/.cursor/plugins/local/skill-creator/skills/supervisor" \
-  "$HOME/.cursor/plugins/local/ponytail/.cursor-plugin" \
-  "$HOME/.cursor/plugins/local/ponytail/skills/supervisor"
+  "$HOME/.cursor/plugins/local/skill-creator/skills/supervisor"
 printf '%s\n' '{"name":"harness"}' >"$HOME/.cursor/plugins/local/skill-creator/.cursor-plugin/plugin.json"
-printf '%s\n' '{"name":"harness"}' >"$HOME/.cursor/plugins/local/ponytail/.cursor-plugin/plugin.json"
 "$ROOT/install.sh" --cli agent --yes </dev/null >"$TMP/out"
 test -f "$HOME/.cursor/plugins/local/harness/skills/supervisor/SKILL.md" \
   || fail 'harness supervisor skill missing after agent install'
-test ! -e "$HOME/.cursor/plugins/local/ponytail/skills/supervisor" \
-  || fail 'ponytail must not retain harness supervisor skill'
 test ! -e "$HOME/.cursor/plugins/local/skill-creator/skills/supervisor" \
   || fail 'skill-creator must not retain harness supervisor skill'
 test -f "$HOME/.cursor/plugins/local/skill-creator/skills/skill-creator/SKILL.md" \
   || fail 'skill-creator skill missing after agent install'
 sc_name=$(jq -r .name "$HOME/.cursor/plugins/local/skill-creator/.cursor-plugin/plugin.json")
 [ "$sc_name" = skill-creator ] || fail "skill-creator manifest must be skill-creator, got $sc_name"
-if node "$ROOT/scripts/install-reconcile.mjs" project-agent ponytail "$ROOT" "$HOME/.cursor/plugins/local/ponytail" 2>"$TMP/err"; then
-  fail 'project-agent must fail closed for external ponytail'
+if node "$ROOT/scripts/install-reconcile.mjs" project-agent hallmark "$ROOT" "$HOME/.cursor/plugins/local/hallmark" 2>"$TMP/err"; then
+  fail 'project-agent must fail closed for external hallmark'
 fi
-grep -q 'unsupported agent module ponytail' "$TMP/err" \
-  || fail 'project-agent ponytail error should explain unsupported module'
+grep -q 'unsupported agent module hallmark' "$TMP/err" \
+  || fail 'project-agent hallmark error should explain unsupported module'
 pass 'Cursor Agent optional plugins exclude harness skill duplicates'
 
 : >"$HARNESS_TEST_LOG"
@@ -210,13 +198,31 @@ fi
 if grep -q 'codebase-memory-mcp' "$ROOT/.claude-plugin/marketplace.json"; then
   fail 'memory MCP must not be represented as a marketplace plugin'
 fi
-if grep -Eq '"name": "(lavish-axi|hallmark|no-mistakes|treehouse|firstmate)"' "$ROOT/.claude-plugin/marketplace.json"; then
+if grep -Eq '"name": "(hallmark|no-mistakes|treehouse)"' "$ROOT/.claude-plugin/marketplace.json"; then
   fail 'non-marketplace externals must not be listed in the Claude marketplace'
 fi
 if grep -Eq 'skill-creator|hookify|claude-md-management|claude-code-setup|ralph-loop|typescript-lsp|pyright-lsp|rust-analyzer-lsp|"name": "remember"|"name": "codex"' "$ROOT/.claude-plugin/marketplace.json"; then
   fail 'Claude-only plugins must not remain in the marketplace'
 fi
-pass 'plugin catalogs keep memory and Claude-only integrations out of marketplaces'
+pass 'plugin catalogs keep externals and Claude-only integrations out of marketplaces'
+
+node -e '
+const fs = require("fs");
+const catalog = JSON.parse(fs.readFileSync("config/installable-catalog.json", "utf8"));
+const md = fs.readFileSync("docs/plugins.md", "utf8");
+const ids = ["harness", "hallmark", "no-mistakes", "treehouse", "skill-creator", "playwright", "crawl4ai"];
+for (const id of ids) {
+  const mod = catalog.modules.find((row) => row.id === id);
+  if (!mod) throw new Error("catalog missing " + id);
+  const needle = "| `" + id + "` |";
+  const row = md.split("\n").find((line) => line.includes(needle));
+  if (!row) throw new Error("docs/plugins.md missing table row for " + id);
+  for (const host of mod.hosts || []) {
+    if (!row.includes(host)) throw new Error(id + " docs row missing host " + host);
+  }
+}
+' || fail 'docs/plugins.md host columns must match config/installable-catalog.json'
+pass 'docs/plugins.md host columns match installable catalog'
 
 if grep -qi 'brightdata' "$ROOT/.mcp.json" "$ROOT/.codex-plugin/mcp.json"; then
   fail 'active MCP manifests must not ship Bright Data'

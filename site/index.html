@@ -81,7 +81,6 @@
           <nav>
             <a href="#advanced">Overview</a>
             <a href="#routing">Tool routing</a>
-            <a href="#herdr">Herdr visibility</a>
             <a href="#help">More docs</a>
           </nav>
         </div>
@@ -121,7 +120,6 @@
           <div class="card-grid">
             <article><strong>Harness</strong><span>Specification, scheduler, QA loop, integration policy, durable state, and Goal Review.</span></article>
             <article><strong><a href="https://code.claude.com/docs/en/overview">Claude Code</a> / <a href="https://developers.openai.com/codex/">Codex</a> / <a href="https://opencode.ai/">OpenCode</a> / <a href="https://cursor.com/docs/cli/overview">Cursor Agent</a> / <a href="https://pi.dev/">Pi</a></strong><span>Hosts that plan, code, test, and review through the same workflow.</span></article>
-            <article><strong><a href="https://herdr.dev/">herdr</a></strong><span>Optional terminal multiplexer for visible worker panes and remote access.</span></article>
           </div>
 
           <h3>Context map</h3>
@@ -157,9 +155,6 @@ flowchart TB
   subgraph RT["Optional routing"]
     ROLES[roles.json]
   end
-  subgraph VIS["Optional visibility"]
-    HERDR[herdr panes]
-  end
   INS --> PIPE
   DRAFT --> REVIEW
   REVIEW --> SPEC
@@ -168,7 +163,6 @@ flowchart TB
   ORCH --> CLAIM
   HC --> CLAIM
   ROLES -.-> ORCH
-  HC -.-> HERDR
             </pre>
           </div>
 
@@ -244,7 +238,7 @@ flowchart LR
 bash --version
 node --version
 claude --version  # or: codex --version / opencode --version / pi --version</code></pre>
-          <p class="files"><strong>Optional:</strong> project-local <code>.harness/roles.json</code> for tool/model routing; <a href="https://herdr.dev/">herdr</a> for visible worker panes and remote access. The installer adds <code>jq</code> when needed.</p>
+          <p class="files"><strong>Optional:</strong> project-local <code>.harness/roles.json</code> for tool/model routing. Workers always run in the background. The installer adds <code>jq</code> when needed.</p>
         </section>
 
         <section class="topic" id="install">
@@ -350,7 +344,7 @@ claude --version  # or: codex --version / opencode --version / pi --version</cod
             <li>
               <strong>Start the build</strong>
               <p><span class="you">You</span> type <code>/harness:generator</code> and choose <strong>All</strong> contexts.</p>
-              <p><span class="agent">Initializer agent</span> maps checks → <code>feature_list.json</code>, creates <code>init.sh</code>, scaffolds the repo, and makes the first commit. It never implements features.</p>
+              <p><span class="agent">Initializer agent</span> maps checks → <code>feature_list.json</code>, creates <code>init.sh</code> (<code>start|stop|restart|status|help</code>), scaffolds the repo, and makes the first commit. It never implements features.</p>
             </li>
             <li>
               <strong>Claim isolated workspaces</strong>
@@ -491,7 +485,7 @@ sequenceDiagram
           <p><code>reconcile.mjs</code> verifies every Acceptance Check maps to at least one Work Item, copies linked <code>planning_decision_ids</code> from the spec onto each catalog entry, and checks dependency order is acyclic. Reconciliation runs before every orchestrator start - a missing mapping blocks execution immediately.</p>
 
           <h3>3. Scaffold (initializer, once)</h3>
-          <p>If <code>feature_list.json</code> is empty, the initializer creates the Work Item catalog, <code>init.sh</code> (PORT-parameterized dev server), and project structure, then commits. Idempotent: a second run skips scaffolding.</p>
+          <p>If <code>feature_list.json</code> is empty, the initializer creates the Work Item catalog, <code>init.sh</code> (PORT-parameterized lifecycle: <code>start|stop|restart|status|help</code>), and project structure, then commits. Idempotent: a second run skips scaffolding.</p>
 
           <h3>4. Claim lease</h3>
           <p><code>claim-lease.mjs</code> atomically assigns a context: dedicated branch (<code>gen/&lt;context&gt;</code>), git worktree, free port, heartbeat, and <code>.git/harness-runs/&lt;context&gt;.json</code>. Only one live owner per context.</p>
@@ -541,14 +535,14 @@ flowchart LR
               <tr><td><code>.harness-technology-inventory.json</code></td><td>Setup evidence for material technologies and contradictions.</td><td>Setup</td></tr>
               <tr><td><code>feature_list.json</code></td><td>Immutable Work Item catalog reconciled from Acceptance Checks.</td><td>Initializer + reconcile.mjs</td></tr>
               <tr><td><code>.git/harness-ledger/</code></td><td>Execution Ledger: mutable implementation, QA, integration, Attempt, Blocking Scope.</td><td>Orchestrator (workflow transition module)</td></tr>
-              <tr><td><code>init.sh</code></td><td>PORT-parameterized dev server startup for QA.</td><td>Initializer</td></tr>
+              <tr><td><code>init.sh</code></td><td>PORT-parameterized app lifecycle (<code>start|stop|restart|status|help</code>); owns <code>.harness/app.pid</code> and <code>dev.log</code>.</td><td>Initializer</td></tr>
               <tr><td><code>harness-progress/</code></td><td>Human-readable Workflow Journals by work context.</td><td>Orchestrator</td></tr>
               <tr><td><code>.git/harness-runs/</code></td><td>Run State and worker results per context.</td><td>Orchestrator</td></tr>
               <tr><td><code>.git/harness-evidence/</code></td><td>Create-only Evidence Artifacts (screenshots, HTTP, logs).</td><td>Workers + orchestrator references</td></tr>
               <tr><td><code>.git/generator-claims.json</code></td><td>Live Claim Leases for all contexts.</td><td>claim-lease.mjs</td></tr>
               <tr><td><code>.git/harness-control/</code></td><td>Control Journal, supervisor lease, Resource Governor quota.</td><td>harness-control.mjs</td></tr>
               <tr><td><code>.harness/roles.json</code></td><td>Optional per-role tool/model routing.</td><td>You (optional)</td></tr>
-              <tr><td><code>.harness/projects.json</code></td><td>Optional monorepo project registry.</td><td>Setup</td></tr>
+              <tr><td><code>.harness/projects.json</code></td><td>Optional monorepo project registry.</td><td>Setup / planner finalize</td></tr>
             </tbody>
           </table>
           <p>The queue flags are separate proofs:</p>
@@ -557,7 +551,7 @@ flowchart LR
             <li><code>qa</code> means isolated QA passed.</li>
             <li><code>integration</code> means the behavior passed after merging.</li>
           </ul>
-          <p class="files">This table is state written inside a project you ran the harness on. Running <code>/harness:update-project</code> on <em>this</em> repository instead writes <code>config/settings.json</code>, <code>config/mcp.json</code>, and <code>config/home/</code> — see <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/docs/backup-sync.md">Backup</a> for their format.</p>
+          <p class="files">This table is state written inside a project you ran the harness on. Running <code>/harness:update-project</code> on <em>this</em> repository instead writes <code>config/settings.json</code> and <code>config/home/</code> — see <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/docs/backup-sync.md">Backup</a> for their format.</p>
         </section>
 
         <section class="topic" id="spec-format">
@@ -824,6 +818,7 @@ node "$CONTROL" pause    --repo "$PROJECT"
 node "$CONTROL" resume   --repo "$PROJECT"
 node "$CONTROL" stop     --repo "$PROJECT"
 node "$CONTROL" events   --repo "$PROJECT" --consumer manual-check</code></pre>
+          <p>Workers always run in the background. Tail logs under <code>.git/harness-control/&lt;project&gt;/logs/</code> or use <code>fleet-snapshot</code> for monorepo-wide bearings. Event relay via <code>herdr-notify</code> (or any named consumer) is unchanged.</p>
           <p>If work blocks, answer the exact Input Request through the supervisor's <code>respond</code> path or any durable event consumer. Branches, worktrees, evidence, and Repair Plans remain available.</p>
           <div class="checks">
             <article><span>1</span><div><strong>Supervisor finished</strong><p><code>status: complete</code> and <code>supervisorPid: null</code>.</p></div></article>
@@ -850,9 +845,8 @@ bash "$GEN/claim.sh" list "$PROJECT"</code></pre>
               <tr><td>Build says <code>blocked</code></td><td>Three failed coding → QA → integration Attempts always stop for input — the harness never guesses past that point, and a <code>blocked</code> context never resumes on its own. Review the journal and evidence above, then explicitly resume with guidance: <code>bash "$GEN/claim.sh" resume "$PROJECT" "$CONTEXT" $$ force</code>, then rerun the orchestrator with a concise <code>--guidance "..."</code> describing how to proceed.</td></tr>
               <tr><td>Looks done but won't complete</td><td>The supervisor is still draining its retry queue (up to 5 attempts per context) before it can declare the goal complete. Check <code>node "$CONTROL" status --repo "$PROJECT"</code> and wait, or answer any pending Input Request.</td></tr>
               <tr><td>Worker crashed / stale lease</td><td>Recovery reclaims a <code>stale</code> context automatically once its heartbeat passes the lease timeout (<code>HARNESS_LEASE_TIMEOUT_SECONDS</code>, default 60s) — including one owned by a different host. Force only once you're sure the owning process is actually dead: <code>bash "$GEN/claim.sh" resume "$PROJECT" "$CONTEXT" $$ force</code></td></tr>
-              <tr><td>No progress / pending inputs pile up</td><td>Context-scoped <code>input_required</code> events auto-retry each supervisor tick. If still stuck, inspect <code>pendingInputs</code> in <code>status</code> and the worker log under <code>.git/harness-control/&lt;project&gt;/logs/</code>.</td></tr>
-              <tr><td><code>status</code> lists workers but herdr has no tabs</td><td>In a monorepo, cleanup must be scoped per subproject (<code>worker-&lt;project&gt;-*</code>). Cross-closing sibling tabs leaves zombie pane IDs. Restart supervisors after upgrading harness; check <code>herdr agent list</code>.</td></tr>
-              <tr><td>Cursor Task/Subagent tab stays <code>working</code></td><td>Cursor mirror tabs are <code>cursor-sub-*</code>, not harness worker tabs. The supervisor reaps finished mirrors automatically; if a stale tab remains, run <code>node "$CONTROL" reap-cursor-subagents --repo "$PROJECT"</code> or close only the specific <code>cursor-sub-*</code> tab after confirming the main agent tab is live.</td></tr>
+              <tr><td>No progress / pending inputs pile up</td><td>Context-scoped <code>input_required</code> events auto-retry each supervisor tick. If still stuck, inspect <code>pendingInputs</code> in <code>status</code>, <code>workerHealth</code>, and worker logs under <code>.git/harness-control/&lt;project&gt;/logs/</code>.</td></tr>
+              <tr><td><code>status</code> lists workers but PIDs are dead</td><td>Ghost worker row — restart supervisor; check <code>fleetSnapshot</code> and <code>workerHealth</code>.</td></tr>
             </tbody>
           </table>
           <p>To abandon a context instead of resuming it:</p>
@@ -861,8 +855,8 @@ bash "$GEN/claim.sh" list "$PROJECT"</code></pre>
 
         <section class="topic" id="advanced">
           <p class="step">Advanced</p>
-          <h2>Optional routing and visibility</h2>
-          <p>Nothing below is required to plan, generate, validate, integrate, or review work. The harness runs completely with a single host CLI. The following sections cover per-role tool/model routing and optional herdr visibility for long runs.</p>
+          <h2>Optional routing</h2>
+          <p>Nothing below is required to plan, generate, validate, integrate, or review work. The harness runs completely with a single host CLI. Workers always run in the background; monitor via <code>status</code>, <code>fleet-snapshot</code>, and worker logs.</p>
         </section>
 
         <section class="topic" id="routing">
@@ -940,32 +934,6 @@ bash "$GEN/claim.sh" list "$PROJECT"</code></pre>
           <pre><code>mkdir -p .harness
 cp config/roles.example.json .harness/roles.json</code></pre>
           <p class="files">Copy from the repository's <code>config/roles.example.json</code> (or your plugin install path). Configure or remove every listed provider/model before execution. Without this file, the orchestrator uses the active host CLI directly.</p>
-        </section>
-
-        <section class="topic" id="herdr">
-          <p class="step"><span style="color:#e5c07b">Optional</span> visibility</p>
-          <h2>Watch workers in <a href="https://herdr.dev/">herdr</a></h2>
-          <p>Herdr is optional and auto-detected: run inside a herdr workspace (<code>HERDR_ENV=1</code>) with the <code>herdr</code> CLI installed and the supervisor lists each admitted worker in the herdr agent sidebar automatically — no flag required. Force one mode explicitly with <code>--display background</code> or <code>--display herdr</code>. Every worker gets its own dedicated tab named <code>{taskId} - {role} - {project} - r{retry}</code> (for example <code>WI-AC-025 - qa - public-docs - r1</code>). The tab renames when the phase changes and closes when the worker finishes.</p>
-          <pre><code># inside a herdr workspace: auto-selects herdr, no flag needed
-CONTROL=skills/supervisor   # or your installed plugin path
-node "$CONTROL/scripts/harness-control.mjs" start --repo "$PROJECT" --host codex
-
-# force background workers, even inside a herdr workspace
-node "$CONTROL/scripts/harness-control.mjs" start --repo "$PROJECT" --host codex --display background
-
-# force herdr panes outside a herdr workspace's auto-detection
-node "$CONTROL/scripts/harness-control.mjs" start --repo "$PROJECT" --host codex --display herdr</code></pre>
-          <p>Use <code>herdr agent list</code>, <code>herdr pane read</code>, and <code>herdr wait agent-status</code> to coordinate from the supervisor pane. Each tab streams the live agent session (thinking, tool calls, verdicts) via a flushed PTY. Finished workers close their tabs immediately. Event relay (<code>events</code>, <code>ack</code>, <code>respond</code>) is unchanged for phone or plugin consumers.</p>
-          <p>Cursor Task/Subagent mirrors use <code>cursor-sub-*</code> tabs and the bundled <code>skills/supervisor/herdr-cursor/herdr-subagent-logview.py</code>. They are separate from harness <code>worker-&lt;project&gt;-*</code> tabs; the supervisor reaps finished mirrors automatically, with <code>reap-cursor-subagents</code> available as a manual cleanup command.</p>
-          <p><strong>Monorepo:</strong> multiple supervisors (e.g. four subprojects) each open named worker tabs. Finished tabs are closed per subproject only (<code>worker-&lt;project&gt;-*</code>) so one supervisor never kills another's live workers.</p>
-          <p>For remote access, use herdr's SSH and plugin transports — see the <a href="https://herdr.dev/docs/">herdr documentation</a>.</p>
-
-          <h3>Mobile access with <a href="https://github.com/AltanS/collie">Collie</a></h3>
-          <p>Optional <a href="https://github.com/AltanS/collie">Collie</a> is a herdr plugin and PWA for watching agents and replying from your phone over a <a href="https://tailscale.com/">Tailscale</a> tailnet. Install on the host, start the bridge, then open the tailnet URL on your phone — useful when the supervisor raises <code>input_required</code> or you want pane mirrors without SSH.</p>
-          <pre><code>herdr plugin install AltanS/collie
-herdr plugin action invoke start --plugin herdr.collie
-# open the printed https://&lt;host&gt;.tail*.ts.net URL on your phone (Tailscale app connected)</code></pre>
-          <p>Supervisor event relay (<code>events</code>, <code>ack</code>, <code>respond</code>) is unchanged for phone consumers. Collie is remote shell access to your machine — use <code>tailscale serve</code> on your tailnet only (never <code>tailscale funnel</code>) and read the <a href="https://github.com/AltanS/collie#%EF%B8%8F-security--read-before-you-run-it">security notes</a> before enabling it.</p>
         </section>
 
         <section class="topic" id="maintenance">

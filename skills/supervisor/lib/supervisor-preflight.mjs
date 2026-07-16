@@ -272,7 +272,6 @@ export async function runSupervisorPreflight({
     for (const [ctx, worker] of Object.entries(nextState.workers)) {
       const pid = worker?.pid || worker?.childPid
       if (pid && processAlive(pid)) keptWorkers[ctx] = worker
-      else if (!pid && worker?.type === 'herdr' && worker?.paneId) keptWorkers[ctx] = worker
       else stateDirty = true
     }
     if (Object.keys(keptWorkers).length !== Object.keys(nextState.workers).length) {

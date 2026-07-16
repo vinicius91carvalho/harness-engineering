@@ -18,7 +18,7 @@ jq -e '
       ["claude","codex","opencode","pi","agent"] | index($h)))
 ' "$ROLES" >/dev/null
 
-for id in why architecture language journey delegate workflow phases prerequisites install commands start worked-example add-feature files spec-format queue-format runtime-state monorepo operate troubleshoot advanced routing herdr maintenance help; do
+for id in why architecture language journey delegate workflow phases prerequisites install commands start worked-example add-feature files spec-format queue-format runtime-state monorepo operate troubleshoot advanced routing maintenance help; do
   grep -q "id=\"$id\"" "$HTML"
 done
 while IFS= read -r id; do
@@ -55,28 +55,28 @@ grep -Fq '* `integration` means the behavior passed after merging.' "$README"
 grep -Fq 'https://pi.dev/' "$README" "$HTML"
 grep -Fq 'Context map' "$HTML"
 grep -Fq 'harness-design-long-running-apps' "$HTML"
-grep -Fq 'https://herdr.dev/' "$README" "$HTML"
-grep -Fq 'https://github.com/AltanS/collie' "$README" "$HTML"
-grep -Fq 'herdr.collie' "$HTML"
-grep -Fq 'tailscale serve' "$HTML"
+grep -Fq 'Workers always run in the background' "$README" "$HTML"
+grep -Fq 'herdr-notify' "$HTML"
 grep -Fq 'https://developers.openai.com/codex/' "$README" "$HTML"
 grep -Fq 'Grilling is a planner capability' "$ROOT/skills/planner/SKILL.md"
 grep -Fq 'Do not tell them to validate every mapped' "$ROOT/skills/setup/SKILL.md"
 grep -Fq 'not required to plan' "$README"
-grep -Fq -- '--display herdr' "$HTML"
-grep -Fq -- '--display background' "$HTML"
-grep -Fq 'HERDR_ENV=1' "$HTML"
+! grep -Fq 'config/mcp.json' "$HTML"
+! grep -Fq 'mcp-servers' "$HTML"
 ! grep -Fq 'https://omnigent.ai/' "$README" "$HTML"
 ! grep -Fq 'omnigent' "$HTML"
+! grep -Fq 'id="herdr"' "$HTML"
+! grep -Fq -- '--display' "$HTML"
+! grep -Fq -- 'HERDR_ENV' "$HTML"
 
 diff -u <(jq -S . "$ROLES") <(
-  sed -n '/id="routing"/,/id="herdr"/p' "$HTML" |
+  sed -n '/id="routing"/,/id="maintenance"/p' "$HTML" |
     sed -n '/<pre><code>{/,/}<\/code><\/pre>/p' |
     sed '1s/.*<pre><code>//; $s/<\/code><\/pre>.*//' |
     jq -S .
 )
 
-for anchor in routing herdr monorepo; do
+for anchor in routing monorepo; do
   grep -Fq "vinicius91carvalho.github.io/harness-engineering/#$anchor" "$README"
 done
 
@@ -113,10 +113,14 @@ grep -Fq 'latest GitHub Release tag' "$HTML"
 grep -Fq 'id="AC-001"' "$README"
 grep -Fq 'WI-AC-001' "$README"
 
+# init.sh lifecycle contract surfaced on the site
+grep -Fq 'start|stop|restart|status|help' "$HTML"
+grep -Fq 'start|stop|restart|status|help' "$README"
+
 # Site: plan integration branch model (not Goal Review on main)
 grep -Fq 'plan integration branch' "$HTML"
 ! grep -Fq 'Final independent audit of the whole spec on <code>main</code>' "$HTML"
 ! grep -Fq 'Checks run again after merging into current <code>main</code>' "$HTML"
 ! grep -Fq 'proves completion on <code>main</code>' "$HTML"
 
-echo 'ok - README is a short quick-start pointing into the complete site, which documents the full workflow, role routing, and optional herdr visibility'
+echo 'ok - README is a short quick-start pointing into the complete site, which documents the full workflow, role routing, and background worker monitoring'

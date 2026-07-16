@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { join, isAbsolute, resolve } from 'node:path'
+import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
 export const DEFAULT_INTEGRATION_BRANCH = 'main'
@@ -27,10 +27,4 @@ export function integrationBranchName(repo, { env = process.env } = {}) {
 
 export function integrationBranchRef(repo, options) {
   return `refs/heads/${integrationBranchName(repo, options)}`
-}
-
-export function integrationBranchSpec(repo, relativePath = 'feature_list.json') {
-  const prefix = spawnSync('git', ['-C', repo, 'rev-parse', '--show-prefix'], { encoding: 'utf8' }).stdout.trim()
-  const branch = integrationBranchName(repo)
-  return prefix ? `${branch}:${prefix}${relativePath}` : `${branch}:${relativePath}`
 }

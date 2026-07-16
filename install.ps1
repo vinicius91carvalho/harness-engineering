@@ -1,11 +1,11 @@
-# Native Windows installer for Claude Code, Codex, OpenCode, and Cursor Agent.
+# Native Windows installer for Claude Code, Codex, OpenCode, Pi, and Cursor Agent.
 [CmdletBinding()]
 param(
   [switch]$Yes,
   [switch]$No,
   [switch]$DryRun,
   [string]$Version,
-  [ValidateSet("claude", "codex", "opencode", "agent", "all")][string]$Cli,
+  [ValidateSet("claude", "codex", "opencode", "pi", "agent", "all")][string]$Cli,
   [ValidateSet("user", "project", "local")][string]$Scope = "user"
 )
 $ErrorActionPreference = "Stop"
@@ -13,13 +13,10 @@ $ErrorActionPreference = "Stop"
 $MarketplaceRepo = "vinicius91carvalho/harness-engineering"
 $ClaudeMarketplace = "harness-engineering"
 $CodexMarketplace = "harness-engineering"
-$MemoryInstaller = "https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.ps1"
 $NoMistakesInstaller = "https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.ps1"
 $TreehouseInstaller = "https://kunchenguid.github.io/treehouse/install.ps1"
-$FirstmateRepo = "https://github.com/kunchenguid/firstmate.git"
-$FirstmateHome = if ($env:FIRSTMATE_HOME) { $env:FIRSTMATE_HOME } else { Join-Path $HOME ".local/share/firstmate" }
 $RepoRoot = if ($PSScriptRoot) { $PSScriptRoot } else { $null }
-$DefaultOptional = @("ponytail", "lavish-axi", "hallmark", "no-mistakes", "treehouse", "firstmate", "skill-creator", "codebase-memory-mcp", "context7", "playwright", "crawl4ai", "status-line", "shared-config", "mcp-servers")
+$DefaultOptional = @("hallmark", "no-mistakes", "treehouse", "skill-creator", "playwright", "crawl4ai", "status-line", "shared-config")
 $Optional = $DefaultOptional
 if ($RepoRoot -and (Test-Path (Join-Path $RepoRoot "config/installable-catalog.json")) -and (Get-Command node -ErrorAction SilentlyContinue)) {
   $catalogOptional = & node (Join-Path $RepoRoot "scripts/install-reconcile.mjs") optional-ids 2>$null
@@ -27,13 +24,13 @@ if ($RepoRoot -and (Test-Path (Join-Path $RepoRoot "config/installable-catalog.j
 }
 $ReceiptDir = Join-Path $HOME ".local/share/harness"
 $PluginClis = @{
-  harness = @("claude", "codex", "opencode", "agent")
-  ponytail = @("claude", "codex", "opencode", "agent")
-  "skill-creator" = @("claude", "codex", "opencode", "agent")
-  "codebase-memory-mcp" = @("claude", "codex", "opencode", "agent")
-  context7 = @("claude", "codex", "opencode", "agent"); playwright = @("claude", "codex", "opencode", "agent")
+  harness = @("claude", "codex", "opencode", "pi", "agent")
+  "skill-creator" = @("claude", "codex", "opencode", "pi", "agent")
+  hallmark = @("claude", "codex", "opencode", "agent")
+  "no-mistakes" = @("claude", "codex", "opencode", "pi", "agent")
+  treehouse = @("claude", "codex", "opencode", "agent")
+  playwright = @("claude", "codex", "opencode", "agent")
   crawl4ai = @("claude", "codex", "opencode", "pi", "agent")
-  "mcp-servers" = @("claude", "codex", "opencode", "agent")
   "status-line" = @("claude", "codex"); "shared-config" = @("claude")
 }
 
@@ -67,8 +64,8 @@ function Test-CliInstalled([string]$Name) {
   return $false
 }
 
-$Detected = @("claude", "codex", "opencode", "agent") | Where-Object { Test-CliInstalled $_ }
-if ($Detected.Count -eq 0) { throw "No supported CLI found. Install Claude Code, Codex, OpenCode, or Cursor Agent." }
+$Detected = @("claude", "codex", "opencode", "pi", "agent") | Where-Object { Test-CliInstalled $_ }
+if ($Detected.Count -eq 0) { throw "No supported CLI found. Install Claude Code, Codex, OpenCode, Pi, or Cursor Agent." }
 
 $script:MenuDim = [char]27 + "[2m"
 $script:MenuReset = [char]27 + "[0m"
@@ -82,20 +79,14 @@ function Get-MenuBlurb([string]$Kind, [string]$Item) {
     "host:agent" { return "Cursor Agent CLI for headless workflows in Cursor." }
     "host:all" { return "Install to every detected host above." }
     "install:harness" { return "Spec→build→QA pipeline with planner, generator, evaluator, supervisor, learning loop, and project backup." }
-    "install:ponytail" { return "Lazy senior-dev mode: YAGNI, stdlib first, no unrequested abstractions." }
-    "install:lavish-axi" { return "Lavish Editor for agent HTML artifacts. Installs the lavish skill globally via npx skills." }
     "install:hallmark" { return "Anti-AI-slop design skill. Installs the hallmark skill globally via npx skills." }
     "install:no-mistakes" { return "Git push gate with AI validation. Installs the upstream binary; run no-mistakes init per repository afterward." }
     "install:treehouse" { return "Reusable git worktree pool for agents. Installs the upstream treehouse CLI." }
-    "install:firstmate" { return "Orchestrator agent crew home. Clones firstmate to ~/.local/share/firstmate for harness launch." }
     "install:skill-creator" { return "Multi-agent pipeline to create, evaluate, benchmark, and refine AI coding skills." }
-    "install:codebase-memory-mcp" { return "High-performance code intelligence MCP server. Indexes codebases into a persistent knowledge graph — average repo in milliseconds. 158 languages, sub-ms queries, 99% fewer tokens." }
-    "install:context7" { return "Up-to-date, version-specific library documentation through Upstash remote MCP." }
     "install:playwright" { return "Browser automation and E2E testing through Microsoft official Playwright MCP server." }
     "install:crawl4ai" { return "Web crawling and structured extraction. Installs the Python package plus a bundled skill per host." }
     "install:status-line" { return "Custom status bar for Claude; built-in status items for Codex (model, git branch, context usage)." }
     "install:shared-config" { return "Atomically merge the project shareable Claude settings while preserving your existing preferences." }
-    "install:mcp-servers" { return "Restore MCP servers from the project inventory. Prompts once for redacted secrets per server." }
     default { return "" }
   }
 }
@@ -164,7 +155,7 @@ function Select-Host {
     return @($Cli)
   }
   if ($Detected.Count -eq 1) { return @($Detected[0]) }
-  if ([Console]::IsInputRedirected) { throw "Multiple CLIs detected; pass -Cli claude|codex|opencode|agent|all." }
+  if ([Console]::IsInputRedirected) { throw "Multiple CLIs detected; pass -Cli claude|codex|opencode|pi|agent|all." }
   $choice = @(Select-Menu -Mode single -Items (@($Detected) + "all") -Title "Select target host:" -LabelKind host)[0]
   if ($choice -eq "all") { return $Detected }
   return @($choice)
@@ -300,21 +291,7 @@ function Set-CursorMcp([string]$Name, $Entry) {
 
 function Install-OpenCodePlugin([string]$Name) {
   if ($DryRun) {
-    if ($Name -eq "ponytail") {
-      Write-Host "DRY RUN - npm install -g @dietrichgebert/ponytail"
-      Write-Host "DRY RUN - register ponytail in OpenCode plugin config"
-    } else {
-      Write-Host "DRY RUN - install namespaced OpenCode skills, agents, and commands for $Name"
-    }
-    return
-  }
-  if ($Name -eq "ponytail") {
-    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { throw "npm is required to install the ponytail OpenCode plugin" }
-    Invoke-Native npm @("install", "-g", "@dietrichgebert/ponytail")
-    $ponytailVersion = (& npm list -g @dietrichgebert/ponytail --json 2>$null | ConvertFrom-Json).dependencies.'@dietrichgebert/ponytail'.version
-    Write-InstallReceipt ponytail @{ npm = "@dietrichgebert/ponytail"; version = ($ponytailVersion ?? "unknown") }
-    Remove-OpenCodePluginFiles ponytail
-    Set-OpenCodePlugin ponytail "@dietrichgebert/ponytail"
+    Write-Host "DRY RUN - install namespaced OpenCode skills, agents, and commands for $Name"
     return
   }
   $source = Get-Repository
@@ -432,132 +409,6 @@ function Apply-ClaudeSharedConfig {
   Write-ClaudeSettings { param($json) foreach ($property in $shared.PSObject.Properties) { $json | Add-Member -Force NoteProperty $property.Name $property.Value } }
 }
 
-function Read-PasteableSecret([string]$Prompt) {
-  Write-Host -NoNewline "${Prompt} (hidden): "
-  $value = [Text.StringBuilder]::new()
-  while ($true) {
-    $key = [Console]::ReadKey($true)
-    if ($key.Key -eq "Enter") { Write-Host; return $value.ToString() }
-    if ($key.Key -eq "C" -and ($key.Modifiers -band [ConsoleModifiers]::Control)) { throw "Cancelled" }
-    if ($key.Key -eq "Backspace") {
-      if ($value.Length -gt 0) {
-        $value.Length--
-        Write-Host -NoNewline "`b `b"
-      }
-      continue
-    }
-    if (-not [char]::IsControl($key.KeyChar)) {
-      [void]$value.Append($key.KeyChar)
-      Write-Host -NoNewline "*"
-    }
-  }
-}
-
-function Install-McpInventory {
-  if ($DryRun) { Write-Host "DRY RUN - prompt for and configure MCP inventory for: $($Targets -join ', ')"; return }
-  if ([Console]::IsInputRedirected) { Write-Warning "MCP inventory requires a console for secret prompts; skipped"; return }
-  $path = Join-Path (Get-Repository) "config/mcp.json"
-  if (-not (Test-Path $path)) { Write-Host "No MCP inventory found"; return }
-  $servers = (Get-Content $path -Raw | ConvertFrom-Json).mcpServers
-  foreach ($property in $servers.PSObject.Properties) {
-    if ((Read-Host "Configure MCP server $($property.Name)? [y/N]") -notmatch '^(y|yes)$') { continue }
-    $json = $property.Value | ConvertTo-Json -Depth 20 -Compress
-    $skip = $false
-    $obj = $json | ConvertFrom-Json
-    $placeholders = [regex]::Matches(($obj | ConvertTo-Json -Depth 20 -Compress), '\$\{([A-Za-z0-9_]+)\}') |
-      ForEach-Object { $_.Value } | Select-Object -Unique
-    foreach ($placeholder in $placeholders) {
-      $key = $placeholder.Trim('${}')
-      $value = Read-PasteableSecret "Value for $key (paste supported; Enter skips server)"
-      if (-not $value) { $skip = $true; break }
-      $jsonText = $obj | ConvertTo-Json -Depth 20 -Compress
-      # Escape for JSON string embedding, then split/join via ConvertFrom-Json round-trip on strings only.
-      $escaped = ($value | ConvertTo-Json)
-      $escaped = $escaped.Substring(1, $escaped.Length - 2)
-      $from = [regex]::Escape($placeholder)
-      $jsonText = [regex]::Replace($jsonText, $from, [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $escaped })
-      try { $obj = $jsonText | ConvertFrom-Json }
-      catch { throw "Secret substitution produced invalid JSON for $($property.Name)" }
-    }
-    if ($skip) { continue }
-    $json = $obj | ConvertTo-Json -Depth 20 -Compress
-    $server = $obj
-    foreach ($target in $Targets) {
-      switch ($target) {
-        claude {
-          & claude mcp remove $property.Name --scope user *> $null
-          Invoke-Native claude @("mcp", "add-json", "--scope", "user", $property.Name, $json)
-        }
-        codex {
-          if ($server.url) {
-            & codex mcp remove $property.Name *> $null
-            & codex mcp add $property.Name --url $server.url *> $null
-            if ($LASTEXITCODE -ne 0) {
-              & codex mcp get $property.Name *> $null
-              if ($LASTEXITCODE -ne 0) { throw "Codex MCP configuration failed for $($property.Name)" }
-            }
-          }
-          else {
-            $envArgs = @()
-            if ($server.env) { $server.env.PSObject.Properties | ForEach-Object { $envArgs += @("--env", "$($_.Name)=$($_.Value)") } }
-            Invoke-Native codex (@("mcp", "add", $property.Name) + $envArgs + @("--", $server.command) + @($server.args))
-          }
-        }
-        opencode {
-          $entry = if ($server.url) { [pscustomobject]@{ type="remote"; url=$server.url; enabled=$true } }
-            else {
-              $local = @{ type="local"; command=@($server.command) + @($server.args); enabled=$true }
-              if ($server.env) { $local.environment = $server.env }
-              [pscustomobject]$local
-            }
-          Set-OpenCodeMcp $property.Name $entry
-        }
-        agent {
-          $entry = if ($server.url) { [pscustomobject]@{ type="http"; url=$server.url } }
-            else {
-              $local = @{ type="stdio"; command=$server.command; args=@($server.args) }
-              if ($server.env) { $local.env = $server.env }
-              [pscustomobject]$local
-            }
-          Set-CursorMcp $property.Name $entry
-        }
-      }
-    }
-  }
-}
-
-function Install-Memory {
-  if ($DryRun) {
-    Write-Host "DRY RUN - download signed codebase-memory-mcp binary with --skip-config"
-    $Targets | ForEach-Object { Write-Host "DRY RUN - configure codebase-memory-mcp for $_" }
-    return
-  }
-  $binary = Get-Command codebase-memory-mcp -ErrorAction SilentlyContinue
-  if (-not $binary) {
-    $installer = Join-Path ([IO.Path]::GetTempPath()) "codebase-memory-install-$PID.ps1"
-    try { Invoke-WebRequest $MemoryInstaller -OutFile $installer } catch { throw "codebase-memory-mcp download failed: $_" }
-    & $installer --skip-config
-    if ($LASTEXITCODE -ne 0) { throw "codebase-memory-mcp installer failed" }
-    $binary = Get-Command codebase-memory-mcp -ErrorAction SilentlyContinue
-  }
-  if (-not $binary) { throw "codebase-memory-mcp binary was not found after installation; add it to PATH and retry" }
-  $memoryVersion = try { & $binary.Source --version 2>$null } catch { $null }
-  Write-InstallReceipt codebase-memory-mcp @{ binary = $binary.Source; version = ($memoryVersion ?? "unknown") }
-  & $binary.Source config set auto_index true
-  if ($LASTEXITCODE -ne 0) { throw "Could not enable codebase-memory-mcp auto-indexing" }
-  foreach ($target in $Targets) {
-    switch ($target) {
-      claude {
-        & claude mcp remove codebase-memory-mcp --scope user *> $null
-        Invoke-Native claude @("mcp", "add-json", "--scope", "user", "codebase-memory-mcp", "{`"command`":`"$($binary.Source)`",`"args`":[]}")
-      }
-      codex { Invoke-Native codex @("mcp", "add", "codebase-memory-mcp", "--", $binary.Source) }
-      opencode { Set-OpenCodeMcp "codebase-memory-mcp" ([pscustomobject]@{ type="local"; command=@($binary.Source); enabled=$true }) }
-      agent { Set-CursorMcp "codebase-memory-mcp" ([pscustomobject]@{ type="stdio"; command=$binary.Source; args=@() }) }
-    }
-  }
-}
-
 function Install-SkillCreator {
   foreach ($target in $Targets) {
     if ((Get-ModuleHosts "skill-creator") -notcontains $target) { continue }
@@ -663,16 +514,6 @@ function Install-Crawl4Ai {
   }
 }
 
-function Install-LavishAxi {
-  if ($DryRun) {
-    Write-Host "DRY RUN - npx skills add kunchenguid/lavish-axi --skill lavish -g"
-    return
-  }
-  if (-not (Get-Command npx -ErrorAction SilentlyContinue)) { throw "npx is required to install the lavish skill" }
-  Invoke-Native npx @("skills", "add", "kunchenguid/lavish-axi", "--skill", "lavish", "-g")
-  Write-InstallReceipt lavish-axi @{ skills = "kunchenguid/lavish-axi"; skill = "lavish"; global = $true }
-}
-
 function Install-Hallmark {
   if ($DryRun) {
     Write-Host "DRY RUN - npx skills add nutlope/hallmark --skill hallmark -g"
@@ -709,30 +550,9 @@ function Install-Treehouse {
   Write-InstallReceipt treehouse @{ binary = ($binary.Source ?? "unknown"); version = ($version ?? "unknown") }
 }
 
-function Install-Firstmate {
-  if ($DryRun) {
-    Write-Host "DRY RUN - git clone --depth 1 $FirstmateRepo $FirstmateHome"
-    Write-Host "DRY RUN - note: cd into the clone and launch your agent harness (see firstmate README)"
-    return
-  }
-  if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw "git is required to install firstmate" }
-  if (Test-Path (Join-Path $FirstmateHome ".git")) {
-    Invoke-Native git @("-C", $FirstmateHome, "pull", "--ff-only")
-  } else {
-    New-Item -ItemType Directory -Force (Split-Path $FirstmateHome -Parent) | Out-Null
-    Invoke-Native git @("clone", "--depth", "1", $FirstmateRepo, $FirstmateHome)
-  }
-  $revision = try { (git -C $FirstmateHome rev-parse --short HEAD 2>$null).Trim() } catch { "unknown" }
-  Write-InstallReceipt firstmate @{ clone = $FirstmateHome; revision = ($revision ?? "unknown") }
-  Write-Host "install.ps1: firstmate home at $FirstmateHome - cd there and launch your agent harness"
-}
-
-function Install-PortableMcp([string]$Name) {
-  $server = switch ($Name) {
-    "context7" { [pscustomobject]@{ type="http"; url="https://mcp.context7.com/mcp" } }
-    "playwright" { [pscustomobject]@{ type="stdio"; command="npx"; args=@("-y", "@playwright/mcp@latest") } }
-    default { throw "unknown portable MCP: $Name" }
-  }
+function Install-PlaywrightMcp {
+  $Name = "playwright"
+  $server = [pscustomobject]@{ type="stdio"; command="npx"; args=@("-y", "@playwright/mcp@latest") }
   if ($DryRun) { Write-Host "DRY RUN - configure $Name MCP for: $($Targets -join ', ')"; return }
   $json = $server | ConvertTo-Json -Compress
   foreach ($target in $Targets) {
@@ -743,13 +563,10 @@ function Install-PortableMcp([string]$Name) {
       }
       codex {
         & codex mcp remove $Name *> $null
-        if ($server.url) { Invoke-Native codex @("mcp", "add", $Name, "--url", $server.url) }
-        else { Invoke-Native codex (@("mcp", "add", $Name, "--", $server.command) + @($server.args)) }
+        Invoke-Native codex (@("mcp", "add", $Name, "--", $server.command) + @($server.args))
       }
       opencode {
-        $entry = if ($server.url) { [pscustomobject]@{ type="remote"; url=$server.url; enabled=$true } }
-          else { [pscustomobject]@{ type="local"; command=@($server.command) + @($server.args); enabled=$true } }
-        Set-OpenCodeMcp $Name $entry
+        Set-OpenCodeMcp $Name ([pscustomobject]@{ type="local"; command=@($server.command) + @($server.args); enabled=$true })
       }
       agent { Set-CursorMcp $Name $server }
     }
@@ -791,14 +608,11 @@ if ($DryRun) {
 
 foreach ($item in $Selected) {
   if ($item -eq "skill-creator") { Install-SkillCreator; continue }
-  if ($item -eq "codebase-memory-mcp") { Install-Memory; continue }
   if ($item -eq "crawl4ai") { Install-Crawl4Ai; continue }
-  if ($item -eq "lavish-axi") { Install-LavishAxi; continue }
   if ($item -eq "hallmark") { Install-Hallmark; continue }
   if ($item -eq "no-mistakes") { Install-NoMistakes; continue }
   if ($item -eq "treehouse") { Install-Treehouse; continue }
-  if ($item -eq "firstmate") { Install-Firstmate; continue }
-  if ($item -eq "context7" -or $item -eq "playwright") { Install-PortableMcp $item; continue }
+  if ($item -eq "playwright") { Install-PlaywrightMcp; continue }
   if ($item -eq "status-line") {
     foreach ($target in $Targets) {
       if ($target -eq "claude") { Enable-ClaudeStatusLine }
@@ -807,7 +621,6 @@ foreach ($item in $Selected) {
     continue
   }
   if ($item -eq "shared-config") { Apply-ClaudeSharedConfig; continue }
-  if ($item -eq "mcp-servers") { Install-McpInventory; continue }
   foreach ($target in $Targets) {
     if ((Get-ModuleHosts $item) -notcontains $target) { continue }
     switch ($target) {
@@ -818,16 +631,7 @@ foreach ($item in $Selected) {
           if ($LASTEXITCODE -ne 0) { Invoke-Native claude @("plugin", "install", "$item@$ClaudeMarketplace", "--scope", $Scope) }
         }
       }
-      codex {
-        if ($item -eq "ponytail") {
-          if ($DryRun) { Invoke-Native codex @("plugin", "marketplace", "upgrade", "ponytail") }
-          else {
-            & codex plugin marketplace upgrade ponytail
-            if ($LASTEXITCODE -ne 0) { Invoke-Native codex @("plugin", "marketplace", "add", "https://github.com/DietrichGebert/ponytail") }
-          }
-          Invoke-Native codex @("plugin", "add", "ponytail@ponytail")
-        } else { Invoke-Native codex @("plugin", "add", "$item@$CodexMarketplace") }
-      }
+      codex { Invoke-Native codex @("plugin", "add", "$item@$CodexMarketplace") }
       opencode { Install-OpenCodePlugin $item }
       agent {
         if ($item -eq "harness") { Install-AgentPlugin $item }

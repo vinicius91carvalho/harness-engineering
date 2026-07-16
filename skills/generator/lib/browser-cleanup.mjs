@@ -1,16 +1,4 @@
-import { spawnSync } from 'node:child_process'
-
-function killPatterns(patterns) {
-  let killed = 0
-  for (const pattern of patterns) {
-    if (!pattern) continue
-    const probe = spawnSync('pgrep', ['-f', pattern], { encoding: 'utf8' })
-    if (probe.status !== 0 || !probe.stdout.trim()) continue
-    const pkill = spawnSync('pkill', ['-f', pattern], { encoding: 'utf8' })
-    if (pkill.status === 0) killed++
-  }
-  return killed
-}
+import { killMatchingPatterns } from './worker-lifecycle.mjs'
 
 /**
  * Tear down browsers owned by this run only.
@@ -29,5 +17,5 @@ export function cleanupBrowserOrphans({ port, workdir, profileDir } = {}) {
     workdir && `chromium.*${workdir}`,
     workdir && `playwright.*${workdir}`,
   ]
-  return { killed: killPatterns(patterns) }
+  return { killed: killMatchingPatterns(patterns) }
 }

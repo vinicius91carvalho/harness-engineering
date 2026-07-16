@@ -88,17 +88,108 @@ Acceptance Checks and may update only execution state (`implementation`, `qa`,
 
 ## STEP 3: Create init.sh
 
-Create an idempotent `init.sh` that any later agent runs to bring up the app.
-Base it on the spec's tech stack. It MUST:
+Create an idempotent `init.sh` that any later agent runs to manage the app lifecycle.
+Base it on the spec's tech stack. It MUST expose these subcommands (no-arg defaults to `start`):
 
-1. Install dependencies if missing (include `jq` — the generator's claim helper needs it).
-2. **Bind every server to the `PORT` / `FRONTEND_PORT` / `BACKEND_PORT` env vars
-   passed in, falling back to defaults.** Concurrent worktrees run the app on
-   different ports simultaneously, so ports must never be hard-coded.
-3. Start the needed servers (write logs to a known file, e.g. `dev.log`, so agents
-   can tail them with Monitor).
-4. Wait until the real health/UI boundary responds, then print one line containing
-   `Ready` plus the resolved URLs. Never print readiness before the service responds.
+```bash
+./init.sh              # same as start
+./init.sh start
+./init.sh stop
+./init.sh restart
+./init.sh status
+./init.sh help
+```
+
+Behavior:
+
+1. **`start`**: install dependencies if missing (include `jq` — the generator's claim
+   helper needs it); **bind every server to the `PORT` / `FRONTEND_PORT` /
+   `BACKEND_PORT` env vars passed in, falling back to defaults** (concurrent
+   worktrees use different ports — never hard-code); daemonize the app; append logs
+   to `dev.log`; write the **server** PID (not the shell) to `.harness/app.pid`;
+   wait until the real health/UI boundary responds; print one line containing
+   `Ready` plus the resolved URLs; exit 0. Idempotent when already healthy.
+   Never print readiness before the service responds.
+2. **`stop`**: stop only the PID in `.harness/app.pid` (and its process tree if
+   needed), then remove the pid file. Never `pkill -f` / `killall` on WORKDIR or PORT.
+3. **`restart`**: `stop` then `start`.
+4. **`status`**: print whether the pid is alive and whether the health URL responds;
+   exit 0 if healthy, non-zero otherwise.
+5. **`help`**: print usage. Unknown args → usage + exit 2.
+
+Use this skeleton (adapt the start body to the stack; keep the subcommand dispatch):
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+PORT="${PORT:-3000}"
+FRONTEND_PORT="${FRONTEND_PORT:-$PORT}"
+BACKEND_PORT="${BACKEND_PORT:-$((PORT + 1))}"
+PID_FILE=".harness/app.pid"
+LOG_FILE="dev.log"
+HEALTH_URL="http://127.0.0.1:${PORT}/"
+
+usage() {
+  cat <<'EOF'
+Usage: ./init.sh [start|stop|restart|status|help]
+  start    (default) install deps if needed, daemonize app, wait for Ready
+  stop     stop PID in .harness/app.pid only
+  restart  stop then start
+  status   exit 0 if pid alive and health URL responds
+  help     show this usage
+EOF
+}
+
+cmd_stop() {
+  if [[ -s "$PID_FILE" ]]; then
+    pid="$(cat "$PID_FILE")"
+    if kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+      for _ in $(seq 1 20); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.1
+      done
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+    rm -f "$PID_FILE"
+  fi
+}
+
+cmd_status() {
+  local alive=0 healthy=0
+  if [[ -s "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+    alive=1
+  fi
+  if curl -sf -o /dev/null --max-time 2 "$HEALTH_URL" 2>/dev/null; then
+    healthy=1
+  fi
+  echo "pid_alive=$alive healthy=$healthy url=$HEALTH_URL"
+  [[ "$alive" -eq 1 && "$healthy" -eq 1 ]]
+}
+
+cmd_start() {
+  mkdir -p .harness
+  if cmd_status >/dev/null 2>&1; then
+    echo "Ready ${HEALTH_URL} (already up)"
+    return 0
+  fi
+  # 1) install jq + deps if missing
+  # 2) daemonize the app, append to $LOG_FILE, write server PID to $PID_FILE
+  # 3) wait until HEALTH_URL responds, then:
+  echo "Ready ${HEALTH_URL} (logs: $LOG_FILE)"
+}
+
+cmd="${1:-start}"
+case "$cmd" in
+  start) cmd_start ;;
+  stop) cmd_stop ;;
+  restart) cmd_stop; cmd_start ;;
+  status) cmd_status ;;
+  help|-h|--help) usage ;;
+  *) usage >&2; exit 2 ;;
+esac
+```
 
 ## STEP 4: Project structure + git
 

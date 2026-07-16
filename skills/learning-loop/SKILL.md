@@ -40,7 +40,7 @@ Route "always/never" corrections into the matching skill instead:
 
 | Topic | Prefer skill |
 |---|---|
-| Supervisor ticks, herdr, worker health, fail-closed ops | `skills/supervisor/` and/or `skills/monorepo-supervisor-ops/` |
+| Supervisor ticks, worker health, fail-closed ops | `skills/supervisor/` and/or `skills/monorepo-supervisor-ops/` |
 | Coding/QA/repair/plan branch/roles/OSS-first | `skills/generator/` |
 | Learning-loop itself | `skills/learning-loop/` |
 | Install / backup / host config | `skills/update-project/` or `skills/setup/` |
@@ -61,11 +61,11 @@ Decide what you're reflecting *on*:
 - **Default:** the current conversation. It's already in your context — read back
   over what the user asked, what you did, where you stumbled, and what they corrected.
 - **A provided transcript / file:** if the user points you at one, read it.
-- **Continuity:** use the current host's documented memory/instruction surface and
-  `codebase-memory-mcp` when configured. Never inspect credentials, histories,
+- **Continuity:** use the current host's documented memory/instruction surface when
+  configured. Never inspect credentials, histories,
   caches, or session databases.
 - **Optional — evidence-corpus:** when the session involved harness QA / Goal Review
-  failures, mine create-only Evidence Artifacts instead of pane tails:
+  failures, mine create-only Evidence Artifacts instead of worker log tails:
 
 ```bash
 node ./skills/learning-loop/learning-report.mjs --repo . --min 2
@@ -166,8 +166,8 @@ recipe for that type. In short:
 
 Even if the user declines every artifact, capture **at least one memory entry**
 recording the most useful durable thing from this session, but only after the user
-approves that write. Use the current host's documented project memory surface or
-`codebase-memory-mcp`. If neither is available, report the finding without creating
+approves that write. Use the current host's documented project memory surface.
+If none is available, report the finding without creating
 an ad-hoc hidden data directory.
 
 ## Step 6 — Curate on write (lightweight)

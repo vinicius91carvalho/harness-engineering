@@ -16,7 +16,7 @@ for (let i = 0; i < rawArgs.length; i += 2) {
   if (!key?.startsWith('--') || value === undefined) fatal(`invalid argument: ${key || ''}`)
   options[key.slice(2)] = value
 }
-if (!commandName) fatal('usage: harness-control.mjs {start|run|status|fleet-snapshot|capacity|events|ack|respond|quota|pause|resume|stop|kill-supervisor|release-supervisor-lock|kill-worker|release-lease|clear-dead-lock|preflight|reap-cursor-subagents} --repo <path> ...')
+if (!commandName) fatal('usage: harness-control.mjs {start|run|status|fleet-snapshot|capacity|events|ack|respond|quota|pause|resume|stop|kill-supervisor|release-supervisor-lock|kill-worker|release-lease|clear-dead-lock|preflight} --repo <path> ...')
 
 const scriptFile = fileURLToPath(import.meta.url)
 const supervisorLib = resolve(dirname(scriptFile), '..', 'lib')
@@ -47,19 +47,26 @@ const { acquireComposeShare } = await importLib('compose-shared.mjs')
 const {
   readDurable,
   interpretClosed,
-  assessLive,
   isWorkerStuck,
   isWorkerStuckByHealth,
   stuckThresholdMs,
 } = await importLib('worker-outcome.mjs')
 const { planWorkerClosedActions, shouldEnqueueStuckWorkerRetry, planAutoRetryResponses } = await importLib('failure-policy.mjs')
 const { enrichGuidanceWithEvidence } = await importLib('evidence-guidance.mjs')
-const { buildOrchestratorArgv, buildWorkerBase, workerLogFileName, planWorkerHerdrMeta, planWorkerStop, planWorkerCleanupTargets, terminateProcessTree, persistWorkerPaneTail, processGroupForWorker } = await importLib('worker-lifecycle.mjs')
+const {
+  buildOrchestratorArgv,
+  buildWorkerBase,
+  workerLogFileName,
+  planWorkerStop,
+  planWorkerCleanupTargets,
+  terminateProcessTree,
+  processGroupForWorker,
+} = await importLib('worker-lifecycle.mjs')
 const { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } = await importLib('supervisor-tick.mjs')
 const { planTickAdmission, goalReviewGate } = await importLib('supervisor-admission.mjs')
 const { isCheckoutCleanForGoalReview } = await importLib('checkout-dirt.mjs')
 const { pruneOrphanPendingInputs, isCrashBoundContext } = await importLib('supervisor-claims.mjs')
-const { planRuntimeRecovery } = await importLib('runtime-recovery.mjs')
+const { planRuntimeRecovery, shouldEmitEmptyFleet } = await importLib('runtime-recovery.mjs')
 const { nextTickDelay, tickWatchPaths } = await importLib('tick-context.mjs')
 const { selectClaim, resumeClaim, releaseClaim, mergeLockHolder, clearDeadLock, clearStaleGeneratorLocks } = await importLib('claim-lease.mjs')
 const { integrationBranchName, integrationBranchRef } = await importLib('integration-branch.mjs')
@@ -74,14 +81,6 @@ const {
   isEmptyFleetActionable,
   buildFleetSnapshot,
 } = await importLib('fleet-snapshot.mjs')
-const {
-  resolveDisplayMode, spawnAgent, closeWorkerDisplay, renameWorkerTab,
-  buildWorkerTabLabel, roleFromPhase, readPaneTail, getPaneAgentStatus, paneExists,
-  reportHarnessAgent, detectPaneWaiting, detectPaneOrchestratorExited, detectPaneMergeLockWait,
-  paneShowsIdleShell, listProjectWorkerAgents, contextFromWorkerAgent, getFocusedWorkspaceId,
-  listHarnessWorkerTabs, closeDanglingShellPanes, closeStaleHarnessPanesForProject,
-  closeAllDanglingHarnessShells, listPaneScroll, createPaneSnapshot, listPanes,
-} = await import(pathToFileURL(join(supervisorLib, 'herdr-spawn.mjs')).href)
 const { runSupervisorPreflight } = await import(pathToFileURL(join(supervisorLib, 'supervisor-preflight.mjs')).href)
 const orchestrator = join(generatorDir, 'orchestrator.mjs')
 const reconciler = join(generatorDir, 'reconcile.mjs')
@@ -123,7 +122,6 @@ function gitIn(cwd, args, allowFailure = false) { return exec('git', args, cwd, 
 
 const topology = resolveProjectTopology(repo)
 const commonGit = topology.commonGit
-const herdrLayoutLock = join(commonGit, 'harness-control', 'herdr-layout.lock')
 const projectPrefix = topology.projectPrefix.replace(/\/$/, '')
 const projectId = topology.projectId
 const root = topology.controlRoot
@@ -227,13 +225,18 @@ function recoveryReasonsFromFleet({ state = {}, ghostClaims = [] } = {}) {
   return reasons
 }
 
+async function loadRunStatesByContext(contexts) {
+  const runStatesByContext = {}
+  await Promise.all([...new Set(contexts.filter(Boolean))].map(async (context) => {
+    runStatesByContext[context] = await readJson(runStateFile(context), {})
+  }))
+  return runStatesByContext
+}
+
 async function listProjectGhostClaims() {
   const claims = await ownClaims()
-  const runStatesByContext = {}
-  for (const [key, claim] of Object.entries(claims)) {
-    const context = claim.context || key
-    runStatesByContext[context] = await readJson(runStateFile(context), {})
-  }
+  const contexts = Object.entries(claims).map(([key, claim]) => claim.context || key)
+  const runStatesByContext = await loadRunStatesByContext(contexts)
   return listGhostClaims({ claims, runStatesByContext, processAlive })
 }
 
@@ -363,7 +366,6 @@ function workerHost() {
 function capacityConfig({ requireHost = false } = {}) {
   return {
     host: requireHost ? workerHost() : (options.host || 'default'),
-    display: resolveDisplayMode(options),
     maxWorkers: Math.max(1, Math.floor(number('max-workers', 4))),
     quotaWorkers: Math.max(0, Math.floor(number('quota-workers', 2))),
     cpuPerWorker: Math.max(0.25, number('cpu-per-worker', 2)),
@@ -424,12 +426,13 @@ class Supervisor {
     this.workers = new Map()
     this.stopping = false
     this.lastSummary = 0
-    this.lastFinishedTabReap = 0
+    this.lastEmptyFleetEmit = null
     this.finalizing = new Set()
     this.pendingGoalResult = null
     this.tickDirty = false
     this.tickWatchers = []
     this.wakeTick = null
+    this.lastJournalCompactAt = 0
   }
 
   lease() {
@@ -498,12 +501,8 @@ class Supervisor {
       heartbeat: new Date().toISOString(),
       heartbeatEpoch: Math.floor(Date.now() / 1000),
       workers: Object.fromEntries([...this.workers].map(([key, worker]) => [key, {
-        pid: worker.child?.pid || null,
-        paneId: worker.paneId || null,
-        tabId: worker.tabId || null,
-        tabLabel: worker.tabLabel || null,
-        agentName: worker.agentName || null,
-        display: worker.type || 'background',
+        pid: worker.child?.pid || worker.childPid || worker.pid || null,
+        type: 'background',
         context: worker.context, featureIds: worker.featureIds,
         worktree: worker.worktree, port: worker.port, logFile: worker.logFile, startedAt: worker.startedAt,
       }])),
@@ -543,14 +542,8 @@ class Supervisor {
 
   applyWorkerStop(worker, signal = 'SIGTERM') {
     const plan = planWorkerStop(worker, { signal })
-    if (plan.kind === 'close_display') {
-      closeWorkerDisplay(plan.paneId, plan.tabId)
-      if (plan.alsoTerminatePid) terminateProcessTree(plan.alsoTerminatePid, plan.signal)
-      return plan
-    }
     if (plan.kind === 'terminate_tree') {
       terminateProcessTree(plan.pid, plan.signal)
-      return plan
     }
     return plan
   }
@@ -568,9 +561,6 @@ class Supervisor {
     claim,
     guidance = '',
     mode = 'work-items',
-    herdrRole,
-    herdrTaskId,
-    herdrRetry,
     startedEvent,
     quotaTestTail = null,
     phase = 'coding',
@@ -659,36 +649,6 @@ class Supervisor {
       await this.emit(startedEvent || 'worker_started', { context: claim.context, featureIds: claim.featureIds, pid: null })
       await this.save()
       await this.trackClose(this.workerClosed(key, 1, quotaTestTail).catch((error) => this.crash(error)))
-      return true
-    }
-
-    if (this.config.display === 'herdr') {
-      const meta = planWorkerHerdrMeta({
-        claim,
-        projectId,
-        role: herdrRole,
-        taskId: herdrTaskId,
-        retry: herdrRetry,
-      })
-      const { paneId, tabId, tabLabel } = spawnAgent(meta.agentName, [process.execPath, ...argv], {
-        cwd: meta.cwd,
-        layoutLockDir: herdrLayoutLock,
-        taskId: meta.taskId,
-        role: meta.role,
-        project: meta.project,
-        retry: meta.retry,
-        env: governorEnv,
-      })
-      reportHarnessAgent(paneId, meta.agentName, 'working', mode === 'goal-review' ? 'goal review starting' : 'orchestrator starting')
-      this.workers.set(key, {
-        type: 'herdr', paneId, tabId, tabLabel, agentName: meta.agentName,
-        ...workerBase,
-      })
-      const eventPayload = startedEvent === 'goal_review_started'
-        ? { paneId, tabId, tabLabel, display: 'herdr' }
-        : { context: claim.context, featureIds: claim.featureIds, paneId, tabId, tabLabel, display: 'herdr' }
-      await this.emit(startedEvent || 'worker_started', eventPayload)
-      await this.save()
       return true
     }
 
@@ -788,61 +748,6 @@ class Supervisor {
       await this.save({ status: 'needs_input' })
       return
     }
-    await this.rehydrateHerdrWorkers()
-  }
-
-  /** Reattach live herdr panes after supervisor restart (orchestrators keep running). */
-  async rehydrateHerdrWorkers() {
-    if (this.config.display !== 'herdr') return
-    const claims = await ownClaims()
-    const savedWorkers = this.state?.workers || {}
-    const paneSnapshot = createPaneSnapshot()
-    let added = false
-    for (const agent of listProjectWorkerAgents(projectId)) {
-      const context = contextFromWorkerAgent(agent.agent, projectId)
-      if (!context || this.workers.has(context)) continue
-      if (!paneExists(agent.pane_id, paneSnapshot)) continue
-      const tail = readPaneTail(agent.pane_id, 30, paneSnapshot)
-      if (paneShowsIdleShell(tail) && !detectPaneMergeLockWait(tail)) continue
-      let claim
-      if (context === 'goal-review') {
-        try {
-          claim = { context: 'goal-review', worktree: await integrationCheckout(), port: 5170, featureIds: [] }
-        } catch {
-          continue
-        }
-      } else {
-        claim = Object.values(claims).find((entry) => entry.context === context)
-        if (!claim) continue
-      }
-      const runState = await readJson(runStateFile(context), {})
-      const live = isLiveRunOwner(runState, processAlive)
-      if (!live && !detectPaneMergeLockWait(tail) && context !== 'goal-review') continue
-      const saved = savedWorkers[context] || {}
-      this.workers.set(context, {
-        type: 'herdr',
-        paneId: agent.pane_id,
-        tabId: saved.tabId || agent.tab_id || null,
-        tabLabel: saved.tabLabel || null,
-        agentName: agent.agent,
-        logFile: saved.logFile || join(logDir, `${context.replace(/[^a-zA-Z0-9_-]/g, '_')}-reattached.log`),
-        context: claim.context,
-        featureIds: saved.featureIds || claim.featureIds || [],
-        worktree: saved.worktree || claim.worktree,
-        port: saved.port || claim.port,
-        startedAt: saved.startedAt || new Date().toISOString(),
-        reservationId: saved.reservationId || null,
-        governorReservationId: saved.governorReservationId || null,
-        ownedResources: {
-          port: saved.port || claim.port,
-          worktree: saved.worktree || claim.worktree,
-          profileDir: null,
-          processGroup: processGroupForWorker({ type: 'herdr' }, runState),
-        },
-      })
-      added = true
-    }
-    if (added) await this.save()
   }
 
   async snapshot() {
@@ -877,15 +782,15 @@ class Supervisor {
     return pruned
   }
 
-  async inspectClaims() {
-    const claims = await ownClaims()
+  async inspectClaims(runStates = null, claims = null) {
+    claims = claims || await ownClaims()
     if (this.pruneOrphanPending(claims)) await this.save()
     let external = 0
     const recoverable = []
     for (const [claimKey, claim] of Object.entries(claims)) {
       const context = claim.context || claimKey
       if (this.workers.has(context)) continue
-      const runState = await readJson(runStateFile(context), {})
+      const runState = runStates?.[context] ?? await readJson(runStateFile(context), {})
       if (this.state.retryQueue?.[context]) continue
       // A worker that crashes before ever reaching a recognizable result (e.g. reconcile.mjs
       // choking on a corrupted feature_list.json in its own worktree) never sets claim/runState
@@ -927,17 +832,11 @@ class Supervisor {
   async spawnWorker(claim, guidance = '') {
     const key = claim.context
     const runState = await readJson(runStateFile(key), {})
-    const herdrRetry = Math.max(1, Number(runState.attempt) || Number(this.state.retryQueue?.[key]?.attempts) || 1)
-    const herdrTaskId = (claim.featureIds && claim.featureIds[0]) || claim.context || key
-    const herdrRole = roleFromPhase(runState.phase || 'coding')
     if (process.env.HARNESS_TEST_SUPERVISOR_QUOTA === '1') {
       const quotaTail = "ERROR: You've hit your usage limit. Try again at Jul 9th, 2026 12:17 AM.\n"
       return this.startWorkerRuntime({
         claim,
         guidance,
-        herdrRole,
-        herdrTaskId,
-        herdrRetry,
         quotaTestTail: quotaTail,
         phase: runState.phase || 'coding',
       })
@@ -945,9 +844,6 @@ class Supervisor {
     return this.startWorkerRuntime({
       claim,
       guidance,
-      herdrRole,
-      herdrTaskId,
-      herdrRetry,
       phase: runState.phase || 'coding',
     })
   }
@@ -960,193 +856,21 @@ class Supervisor {
     await this.save({ status: 'complete', completedAt: new Date().toISOString() })
   }
 
-  async reapFinishedHarnessTabs({ force = false } = {}) {
-    const { planFinishedTabReap } = await importLib('finished-tab-reaper.mjs')
-    const plan = planFinishedTabReap({
-      workers: this.workers,
-      workerHealth: this.state?.workerHealth || {},
-      now: Date.now(),
-      lastReapAt: this.lastFinishedTabReap || 0,
-      force,
-    })
-    if (!plan.shouldReap) {
-      // Still sweep Cursor Task mirror tabs — they are not worker-* panes and
-      // otherwise stick as agent_status=working after the Task finishes.
-      await this.reapCursorSubagentTabs({ force })
-      return plan
-    }
-    try {
-      const workspaceId = getFocusedWorkspaceId()
-      closeAllDanglingHarnessShells(workspaceId)
-      for (const tab of listHarnessWorkerTabs(workspaceId)) {
-        closeDanglingShellPanes(tab.tab_id, plan.keepPaneIds)
-        closeStaleHarnessPanesForProject(tab.tab_id, projectId, plan.keepPaneIds)
-      }
-      this.lastFinishedTabReap = Date.now()
-    } catch {}
-    await this.reapCursorSubagentTabs({ force: true })
-    return plan
-  }
-
-  async reapCursorSubagentTabs({ force = false } = {}) {
-    try {
-      const {
-        planCursorSubagentTabReap,
-        applyCursorSubagentTabReap,
-        loadCursorSubagentRegistry,
-        logviewAliveForMeta,
-        DEFAULT_ORPHAN_GRACE_MS,
-      } = await importLib('cursor-subagent-tab-reaper.mjs')
-      const now = Date.now()
-      if (!force && this.lastCursorSubagentReap
-        && now - this.lastCursorSubagentReap < 15_000) {
-        return { shouldReap: false, reason: 'rate_limited' }
-      }
-      const registry = loadCursorSubagentRegistry()
-      const panes = listPanes()
-      let tabs = []
-      try {
-        const proc = spawnSync('herdr', ['tab', 'list'], { encoding: 'utf8', timeout: 5000 })
-        if (proc.status === 0 && proc.stdout) {
-          const parsed = JSON.parse(proc.stdout)
-          tabs = parsed.result?.tabs || []
-        }
-      } catch {
-        tabs = []
-      }
-      const plan = planCursorSubagentTabReap({
-        registry,
-        panes,
-        tabs,
-        now,
-        orphanGraceMs: DEFAULT_ORPHAN_GRACE_MS,
-        isLogviewAlive: (metaPath) => logviewAliveForMeta(metaPath),
-      })
-      if (!plan.shouldReap) {
-        this.lastCursorSubagentReap = now
-        return plan
-      }
-      const result = applyCursorSubagentTabReap(plan, { registry })
-      this.lastCursorSubagentReap = now
-      if (result.closed > 0) {
-        await this.emit('cursor_subagent_tabs_reaped', {
-          closed: result.closed,
-          reasons: plan.closes.map((c) => ({ tabId: c.tabId, reason: c.reason })),
-        }, false)
-      }
-      return { ...plan, ...result }
-    } catch (error) {
-      return { shouldReap: false, reason: 'error', error: String(error?.message || error) }
-    }
-  }
-
-  async inspectHerdrAgentPresence() {
-    const waitingReason = 'Harness worker needs human input'
-    const paneSnapshot = this.config.display === 'herdr' ? createPaneSnapshot() : null
-    for (const [key, worker] of [...this.workers]) {
-      if (worker.type !== 'herdr' || !worker.paneId || !worker.agentName) continue
-      if (!paneExists(worker.paneId, paneSnapshot)) continue
-      const runState = await readJson(runStateFile(key), {})
-      const terminal = ['complete', 'blocked', 'failed'].includes(runState.status)
-        || runState.nextAction === 'release-claim'
-      const tail = readPaneTail(worker.paneId, 60, paneSnapshot)
-      const paneStatus = getPaneAgentStatus(worker.paneId, paneSnapshot)
-      const waiting = detectPaneWaiting(tail, paneStatus)
-      if (!terminal) {
-        if (waiting) {
-          reportHarnessAgent(worker.paneId, worker.agentName, 'blocked', waiting.reason, paneSnapshot)
-          if (waiting.kind === 'prompt' || waiting.kind === 'blocked') {
-            await this.input('context', waitingReason, {
-              kind: waiting.kind,
-              paneStatus,
-              phase: runState.phase,
-              nextAction: runState.nextAction,
-              tail: tail.slice(-2000),
-            }, key)
-          }
-        } else {
-          let message = runState.childPid
-            ? `${runState.phase || 'coding'} (agent pid ${runState.childPid})`
-            : (runState.phase || runState.nextAction || 'orchestrator running')
-          if (detectPaneMergeLockWait(tail)) {
-            message = 'waiting for merge lock (another context is integrating)'
-          }
-          reportHarnessAgent(worker.paneId, worker.agentName, 'working', message, paneSnapshot)
-          if (worker.tabId) {
-            const taskId = (worker.featureIds && worker.featureIds[0]) || worker.context || key
-            const retry = Math.max(1, Number(runState.attempt) || 1)
-            const nextLabel = buildWorkerTabLabel({
-              taskId,
-              role: roleFromPhase(runState.phase || 'coding'),
-              project: projectId,
-              retry,
-            })
-            if (nextLabel !== worker.tabLabel) {
-              renameWorkerTab(worker.tabId, nextLabel)
-              worker.tabLabel = nextLabel
-            }
-          }
-        }
-      }
-    }
-  }
-
-  async inspectStuckWorkers() {
-    const paneSnapshot = this.config.display === 'herdr' ? createPaneSnapshot() : null
-    const scrollMap = listPaneScroll(paneSnapshot)
-    const prevScroll = this._paneScrollSample || new Map()
-    this._paneScrollSample = scrollMap
+  async inspectStuckWorkers(runStates = null) {
     const lock = mergeLockHolder(repo)
     const lockAlive = lock.busy && lock.owner ? processAlive(Number(lock.owner)) : false
     const healthByContext = {}
 
     for (const [key, worker] of [...this.workers]) {
-      const runState = await readJson(runStateFile(key), {})
-      const now = Date.now()
-      const heartbeatEpoch = Number(runState.heartbeatEpoch || 0)
-      const runStateAgeMs = heartbeatEpoch > 0 ? now - heartbeatEpoch * 1000 : 0
-      let lastAgentOutputAgeMs = null
-      if (runState.lastAgentOutputAt) {
-        const ts = Date.parse(runState.lastAgentOutputAt)
-        const startedMs = worker.startedAt ? Date.parse(worker.startedAt) : NaN
-        // Ignore timestamps from a prior run — they make MCP-warmup look instantly overdue.
-        if (Number.isFinite(ts) && (!Number.isFinite(startedMs) || ts >= startedMs)) {
-          lastAgentOutputAgeMs = now - ts
-        }
-      }
-      const childAlive = Boolean(runState.childPid && processAlive(runState.childPid))
-      let health
-      let paneTail = ''
-
-      if (worker.type === 'herdr' && worker.paneId && paneExists(worker.paneId, paneSnapshot)) {
-        const scroll = scrollMap.get(worker.paneId) ?? 0
-        const prev = prevScroll.get(worker.paneId)
-        const scrollDelta = prev == null ? 0 : scroll - prev
-        const tail = readPaneTail(worker.paneId, 60, paneSnapshot)
-        paneTail = tail
-        const paneStatus = getPaneAgentStatus(worker.paneId, paneSnapshot)
-        health = assessLive({
-          runStateAgeMs,
-          childAlive,
-          paneStatus,
-          scrollDelta,
-          tailText: tail,
-          lastAgentOutputAgeMs,
-          runStatus: runState.status || '',
-          mergeHolderAlive: lockAlive,
-          thresholds: { agentOutputStuckMs: this.config.stuckTimeoutMs },
-        })
-      } else {
-        // Background workers: fall back to log/heartbeat age
-        const stuck = await isWorkerStuck({
-          logFile: worker.logFile,
-          runState,
-          thresholdMs: this.config.stuckTimeoutMs,
-        })
-        health = stuck
-          ? { verdict: 'stuck', tailClass: 'unknown', reason: 'log/heartbeat stale', recycle: true }
-          : { verdict: 'healthy', tailClass: 'unknown', reason: 'log/heartbeat fresh', recycle: false }
-      }
+      const runState = runStates?.[key] ?? await readJson(runStateFile(key), {})
+      const stuck = await isWorkerStuck({
+        logFile: worker.logFile,
+        runState,
+        thresholdMs: this.config.stuckTimeoutMs,
+      })
+      const health = stuck
+        ? { verdict: 'stuck', reason: 'log/heartbeat stale', recycle: true }
+        : { verdict: 'healthy', reason: 'log/heartbeat fresh', recycle: false }
 
       healthByContext[key] = {
         ...health,
@@ -1156,11 +880,8 @@ class Supervisor {
       }
 
       const prevHealth = this.state.workerHealth?.[key]
-      if (!prevHealth || prevHealth.verdict !== health.verdict || prevHealth.tailClass !== health.tailClass) {
+      if (!prevHealth || prevHealth.verdict !== health.verdict || prevHealth.reason !== health.reason) {
         await this.emit('worker_health', { context: key, ...health }, health.verdict === 'stuck')
-        if (health.verdict === 'done' && worker.type === 'herdr') {
-          await this.reapFinishedHarnessTabs({ force: true })
-        }
       }
 
       if (!isWorkerStuckByHealth(health)) continue
@@ -1171,13 +892,8 @@ class Supervisor {
         phase: runState.phase,
         health,
       }, true)
-      if (worker.type === 'herdr') {
-        if (paneTail) await persistWorkerPaneTail(worker.logFile, paneTail)
-        this.applyWorkerStop(worker)
-      } else {
-        this.applyWorkerStop(worker, 'SIGTERM')
-        setTimeout(() => this.applyWorkerStop(worker, 'SIGKILL'), 5000)
-      }
+      this.applyWorkerStop(worker, 'SIGTERM')
+      setTimeout(() => this.applyWorkerStop(worker, 'SIGKILL'), 5000)
       if (shouldEnqueueStuckWorkerRetry(health)) {
         this.state.retryQueue ||= {}
         this.state.retryQueue[key] = {
@@ -1198,51 +914,9 @@ class Supervisor {
     })
   }
 
-  async inspectHerdrWorkers() {
-    const paneSnapshot = this.config.display === 'herdr' ? createPaneSnapshot() : null
-    for (const [key, worker] of [...this.workers]) {
-      if (worker.type !== 'herdr') continue
-      const runState = await readJson(runStateFile(key), {})
-      const terminal = ['complete', 'blocked', 'failed'].includes(runState.status)
-        || runState.nextAction === 'release-claim'
-      const gone = !paneExists(worker.paneId, paneSnapshot)
-      const tail = gone ? '' : readPaneTail(worker.paneId, 80, paneSnapshot)
-      const ownerAlive = Boolean(runState.ownerPid && processAlive(runState.ownerPid))
-      const childAlive = processAlive(runState.childPid)
-      const startedMs = worker.startedAt ? Date.parse(worker.startedAt) : 0
-      const warmedUp = startedMs > 0 && Date.now() - startedMs > 45_000
-      // Nested agent early-exit (verdict received → SIGTERM) leaves childPid dead while
-      // the orchestrator is still applying the ledger. Never treat that as an orphan.
-      const orphanShell = !terminal && !gone && !ownerAlive && (
-        detectPaneOrchestratorExited(tail)
-        || (runState.childPid && !childAlive)
-        || (warmedUp && !childAlive && paneShowsIdleShell(tail))
-        || (warmedUp && !runState.status && !runState.heartbeat)
-      )
-      // Herdr panes often keep a live shell after the orchestrator exits, so
-      // "pane still exists" is not enough. Treat terminal Run State, a dead
-      // child, or an idle shell with no run state as done — close the tab
-      // immediately (finished agents must not linger), then finalize.
-      if (!gone && !terminal && !orphanShell) continue
-      if (!gone) {
-        if (worker.agentName) {
-          const state = terminal && runState.status === 'complete' ? 'done' : 'idle'
-          reportHarnessAgent(worker.paneId, worker.agentName, state, runState.status || 'finished', paneSnapshot)
-        }
-        closeWorkerDisplay(worker.paneId, worker.tabId)
-      } else if (worker.tabId) {
-        closeWorkerDisplay(null, worker.tabId)
-      }
-      await this.trackClose(this.workerClosed(key, terminal ? 0 : 1, tail).catch((error) => this.crash(error)))
-    }
-  }
-
   async finalizeWorkerRecord(key, worker) {
     this.workers.delete(key)
     this.cleanupWorkerResources(worker)
-    if (worker.type === 'herdr') {
-      await this.reapFinishedHarnessTabs({ force: true })
-    }
   }
 
   async workerClosed(key, code, capturedTail) {
@@ -1255,7 +929,6 @@ class Supervisor {
       }
       this.workers.delete(key)
       this.cleanupWorkerResources(worker)
-      if (worker.type === 'herdr') await this.reapFinishedHarnessTabs({ force: true })
       return
     }
     if (worker.log) {
@@ -1294,7 +967,6 @@ class Supervisor {
       retryQueue: this.state.retryQueue,
       autoRepair: process.env.HARNESS_AUTO_REPAIR === 'true',
       logFile: worker.logFile,
-      prevTailClass: this.state.workerHealth?.[key]?.tailClass,
     })
 
     if (plan.emitHarnessIssue) {
@@ -1493,21 +1165,18 @@ class Supervisor {
       claim,
       guidance: reviewGuidance,
       mode: 'goal-review',
-      herdrRole: 'goal-review',
-      herdrTaskId: 'goal-review',
-      herdrRetry: Math.max(1, Number(queued?.attempts) || 1),
       startedEvent: 'goal_review_started',
       phase: 'goal-review',
     })
   }
 
-  async summary(snapshot, cap) {
+  async summary(snapshot, cap, runStates = null) {
     const now = Date.now()
     if (now - this.lastSummary < this.config.summaryMinutes * 60_000) return
     this.lastSummary = now
     const contexts = []
     for (const context of snapshot.claims) {
-      const runState = await readJson(runStateFile(context), {})
+      const runState = runStates?.[context] ?? await readJson(runStateFile(context), {})
       contexts.push({ context, status: runState.status, phase: runState.phase, attempt: runState.attempt, nextAction: runState.nextAction })
     }
     await this.emit('progress', { ...snapshot.counts, workers: this.workers.size, capacity: cap, contexts })
@@ -1528,6 +1197,7 @@ class Supervisor {
 
     const ghosts = fleet.ghostClaims || []
     const staleLocks = clearStaleGeneratorLocks(repo)
+    const cap = await capacity(this.config, active)
     const recovery = planRuntimeRecovery({
       active,
       fleet,
@@ -1535,6 +1205,7 @@ class Supervisor {
       staleLocks,
       crashCounts: this.state.crashCounts,
       snapshotCounts: snapshot?.counts || this.state.progress || {},
+      pressureReason: cap.pressureReason ?? null,
     })
 
     for (const cleared of staleLocks) {
@@ -1555,11 +1226,16 @@ class Supervisor {
     }
 
     for (const event of recovery.events) {
-      await this.emit(event.kind, {
+      const detail = {
         ...event.detail,
         ghostContexts: event.detail.ghostContexts || ghostContexts,
         staleLocks: event.detail.staleLocks || staleLocks.map((row) => row.lock),
-      }, event.immediate)
+      }
+      if (event.kind === 'empty_fleet_actionable') {
+        if (!shouldEmitEmptyFleet(this.lastEmptyFleetEmit, detail, Date.now())) continue
+        this.lastEmptyFleetEmit = { detail, at: Date.now() }
+      }
+      await this.emit(event.kind, detail, event.immediate)
     }
 
     if (recovery.repaired) await this.save()
@@ -1598,32 +1274,41 @@ class Supervisor {
     await this.autoRespondPendingInputs()
     await this.processResponses()
     if (this.stopping || this.state.status === 'stopped' || this.state.status === 'complete') return
-    await this.rehydrateHerdrWorkers()
-    await this.inspectHerdrAgentPresence()
-    await this.inspectHerdrWorkers()
-    await this.reapFinishedHarnessTabs()
-    await this.inspectStuckWorkers()
-    let { external, recoverable } = await this.inspectClaims()
-    const preSnapshot = await this.snapshot()
-    const emptyRepair = await this.repairEmptyFleetActionable({ external, snapshot: preSnapshot })
+    const claims = await ownClaims()
+    const runContexts = [
+      ...Object.entries(claims).map(([key, claim]) => claim.context || key),
+      ...this.workers.keys(),
+    ]
+    const runStates = await loadRunStatesByContext(runContexts)
+    await this.inspectStuckWorkers(runStates)
+    let { external, recoverable } = await this.inspectClaims(runStates, claims)
+    const snapshot = await this.snapshot()
+    const emptyRepair = await this.repairEmptyFleetActionable({ external, snapshot })
     if (emptyRepair.recoverable) {
       external = emptyRepair.external
       recoverable = emptyRepair.recoverable
     }
     const active = this.workers.size + external
     const cap = await capacity(this.config, active)
-    const snapshot = await this.snapshot()
-    await this.summary(snapshot, cap)
+    await this.summary(snapshot, cap, runStates)
     await this.save({ capacity: cap, progress: snapshot.counts })
     try {
       const { maybeCompactControlJournal } = await importLib('control-journal.mjs')
-      await maybeCompactControlJournal(root, { minTail: 100, lease: this.lease() })
+      const compacted = await maybeCompactControlJournal(root, {
+        minTail: 100,
+        lease: this.lease(),
+        minIntervalMs: 60_000,
+        lastCompactAt: this.lastJournalCompactAt,
+      })
+      if (!compacted?.skipped || compacted.reason !== 'interval-throttle') {
+        this.lastJournalCompactAt = Date.now()
+      }
     } catch {}
     if (this.state.status === 'paused' || this.state.status === 'needs_input') return
     let slots = cap.available
     const { attempts: retryAttempts } = drainRetryQueue(this.state.retryQueue, slots)
     for (const { context, retry } of retryAttempts) {
-      // Rehydrated herdr workers (or an external live orchestrator) already own
+      // Rehydrated workers (or an external live orchestrator) already own
       // this context — drop the retry instead of force-resuming into a race that
       // exhausts attempts and raises "Retry could not resume the Claim Lease".
       if (this.workers.has(context)) {
@@ -1747,8 +1432,7 @@ class Supervisor {
         try {
           await this.tick()
         } catch (error) {
-          // Keep the supervisor alive through transient herdr/git/fs failures.
-          // A thrown tick used to fall into finally and close every live herdr pane.
+          // Keep the supervisor alive through transient git/fs failures.
           try {
             await this.emit('supervisor_tick_failed', { error: error.message || String(error) }, true)
             await this.save({ lastError: error.message || String(error) })
@@ -1763,17 +1447,13 @@ class Supervisor {
     } finally {
       this.stopping = true
       this.stopTickWatchers()
-      // Herdr workers outlive the supervisor process — never close their panes
-      // here. inspectHerdrWorkers closes panes only when Run State is terminal
-      // or the shell is idle. Background children still get SIGTERM.
       for (const worker of this.workers.values()) {
-        if (worker.type === 'herdr') continue
         try { worker.child?.stdout?.destroy?.() } catch {}
         try { worker.child?.stderr?.destroy?.() } catch {}
         this.applyWorkerStop(worker, 'SIGTERM')
       }
       const deadline = Date.now() + 5000
-      while ([...this.workers.values()].some((worker) => worker.type !== 'herdr') && Date.now() < deadline) {
+      while (this.workers.size > 0 && Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 25))
       }
       await this.drainFinalizers()
@@ -1806,11 +1486,7 @@ class Supervisor {
       }
       void turnEndDrain()
     }
-    // SIGINT / unexpected SIGTERM: keep herdr orchestrators for rehydrate.
-    // Explicit `harness-control stop`: tear down panes, process trees, and
-    // worktree runtimes (tsx/next/compose) so they cannot exhaust host RAM.
     for (const worker of this.workers.values()) {
-      if (worker.type === 'herdr' && !operatorStop) continue
       this.applyWorkerStop(worker, 'SIGTERM')
       if (operatorStop) this.cleanupWorkerResources(worker)
     }
@@ -1937,13 +1613,11 @@ async function buildBeaconSnapshotFromState(state = {}) {
   const workers = {}
   for (const [context, worker] of Object.entries(state.workers || {})) {
     const runState = await readJson(runStateFile(context), {})
-    const isHerdr = worker.display === 'herdr' || worker.type === 'herdr'
-    const paneOk = isHerdr && worker.paneId ? paneExists(worker.paneId) : null
     workers[context] = {
       ...worker,
       context,
-      type: worker.display === 'herdr' ? 'herdr' : (worker.type || worker.display || 'background'),
-      live: resolveWorkerLive(worker, { processAlive, runState, paneExists: paneOk }),
+      type: 'background',
+      live: resolveWorkerLive(worker, { processAlive, runState }),
     }
   }
   return beaconSnapshot({
@@ -2025,8 +1699,8 @@ async function killWorker() {
   const worker = saved
     ? {
       ...saved,
-      type: saved.display === 'herdr' ? 'herdr' : 'background',
-      childPid: runState.childPid || null,
+      type: 'background',
+      childPid: runState.childPid || saved.pid || null,
       ownedResources: {
         port: saved.port,
         worktree: saved.worktree,
@@ -2034,24 +1708,19 @@ async function killWorker() {
       },
     }
     : {
-      type: runState.childPid ? 'background' : 'herdr',
-      paneId: null,
-      tabId: null,
+      type: 'background',
       childPid: runState.childPid || runState.ownerPid || null,
       port: runState.port,
       worktree: runState.worktree,
       ownedResources: {
         port: runState.port,
         worktree: runState.worktree,
-        processGroup: processGroupForWorker({ type: runState.childPid ? 'background' : 'herdr' }, runState),
+        processGroup: processGroupForWorker({}, runState),
       },
     }
   const signal = options.signal === 'SIGKILL' ? 'SIGKILL' : 'SIGTERM'
   const stopPlan = planWorkerStop(worker, { signal })
-  if (stopPlan.kind === 'close_display') {
-    closeWorkerDisplay(stopPlan.paneId, stopPlan.tabId)
-    if (stopPlan.alsoTerminatePid) terminateProcessTree(stopPlan.alsoTerminatePid, signal)
-  } else if (stopPlan.kind === 'terminate_tree') {
+  if (stopPlan.kind === 'terminate_tree') {
     terminateProcessTree(stopPlan.pid, stopPlan.signal)
   }
   const targets = planWorkerCleanupTargets(worker)
@@ -2208,12 +1877,6 @@ async function fleetSnapshotCmd() {
   process.stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`)
 }
 
-async function reapCursorSubagentsCmd() {
-  const supervisor = new Supervisor(baseConfig())
-  const result = await supervisor.reapCursorSubagentTabs({ force: true })
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
-}
-
 async function main() {
   if (commandName === 'start') return start()
   if (commandName === 'status') {
@@ -2280,7 +1943,6 @@ async function main() {
   if (commandName === 'release-lease') return releaseLease()
   if (commandName === 'clear-dead-lock') return clearDeadLockCmd()
   if (commandName === 'preflight') return preflightCmd()
-  if (commandName === 'reap-cursor-subagents') return reapCursorSubagentsCmd()
   if (commandName === 'run') {
     const supervisor = new Supervisor(baseConfig())
     process.on('SIGINT', () => supervisor.stop('SIGINT'))

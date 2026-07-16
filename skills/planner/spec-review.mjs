@@ -16,6 +16,12 @@ import { spawnSync, spawn } from 'node:child_process'
 import { createServer } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { parseProjectSpecification } from '../generator/lib/project-specification.mjs'
+import {
+  resolveGitRoot,
+  resolveProjectPrefix,
+  projectIdFromPrefix,
+  readProjectsRegistry,
+} from '../generator/lib/project-topology.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const TEMPLATE = join(__dirname, 'assets', 'spec_review.html')
@@ -241,6 +247,47 @@ function cmdStatus(projectDir, { json = false } = {}) {
   process.exit(statusExitCode(report))
 }
 
+function gitOutput(dir, args) {
+  const result = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' })
+  if (result.status !== 0) return null
+  return (result.stdout || '').trim()
+}
+
+function registerProject(root) {
+  if (gitOutput(root, ['rev-parse', '--is-inside-work-tree']) !== 'true') return
+  const gitRoot = resolveGitRoot(root)
+  const prefix = resolveProjectPrefix(root) || ''
+  const id = projectIdFromPrefix(prefix) || 'root'
+  const path = prefix.replace(/\/$/, '')
+  const registry = readProjectsRegistry(gitRoot) || {}
+  const projects = Array.isArray(registry.projects) ? registry.projects : []
+  const existing = projects.find((entry) => entry && entry.id === id)
+  if (existing) existing.path = path
+  else projects.push({ id, path })
+  registry.projects = projects
+  const file = join(gitRoot, '.harness', 'projects.json')
+  writeJson(file, registry)
+  console.log(`spec-review: registered project ${id} (${path || '.'}) in ${file}`)
+}
+
+function pinIntegrationBranch(root, projectName) {
+  if (gitOutput(root, ['rev-parse', '--verify', '--quiet', 'HEAD']) == null) return
+  const gitRoot = resolveGitRoot(root)
+  const pinFile = join(gitRoot, '.harness', 'integration-branch')
+  if (existsSync(pinFile)) return
+  const slug = String(projectName || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'project'
+  const branch = `plan/${slug}`
+  if (gitOutput(root, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]) == null) {
+    spawnSync('git', ['-C', root, 'branch', branch], { encoding: 'utf8' })
+  }
+  mkdirSync(dirname(pinFile), { recursive: true })
+  writeFileSync(pinFile, `${branch}\n`, 'utf8')
+  console.log(`spec-review: pinned integration branch ${branch} in ${pinFile}`)
+}
+
 function cmdFinalize(projectDir) {
   const report = reviewStatus(projectDir)
   if (!report.ready) {
@@ -273,6 +320,12 @@ function cmdFinalize(projectDir) {
   const p = paths(projectDir)
   for (const file of [p.draft, p.feedback, p.html, p.state, p.done]) {
     if (existsSync(file)) unlinkSync(file)
+  }
+  try {
+    registerProject(root)
+    pinIntegrationBranch(root, draft.project_name)
+  } catch (error) {
+    console.error(`spec-review: post-finalize registration failed: ${error.message}`)
   }
   console.log(target)
 }

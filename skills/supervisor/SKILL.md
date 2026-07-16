@@ -21,10 +21,10 @@ must pass through its Resource Governor.
    (`implementation` / `qa` / `integration` / `goal` / `defects`).
    That log is the pass/fail source of truth.
 2. **Do not rely only on status checks.** `harness-control status`, progress
-   counters (`implemented/qa/integrated`), `workerHealth`, herdr `working`,
-   pane chatter, and bare process `exitCode` are liveness/scheduling signals
-   only. They can show green while the evidence log records defects (or a
-   false `qa: true` with empty defects that INTEGRATION_QA later contradicts).
+   counters (`implemented/qa/integrated`), `workerHealth`, worker log tails, and
+   bare process `exitCode` are liveness/scheduling signals only. They can show
+   green while the evidence log records defects (or a false `qa: true` with
+   empty defects that INTEGRATION_QA later contradicts).
 3. When reporting progress or answering Input Requests, cite defects from the
    evidence log. Retry guidance must quote expected/observed pairs from that
    final log — never invent from status alone. `harness-control input` and
@@ -54,18 +54,17 @@ Let `REPO` be the selected harness project directory (which may be below the Git
 top-level), `CONTROL` this skill directory, and
 `WORKER_HOST` one authenticated CLI installed on the machine: `claude`, `codex`,
 `opencode`, or `agent`. Role routing is selected by project-local `.harness/roles.json`.
-Herdr visibility is automatic when running inside a herdr workspace
-(`HERDR_ENV=1`) and the `herdr` CLI is installed; pass `--display background` to
-force background workers, or `--display herdr` to force herdr when available.
-Each admitted worker gets its own dedicated herdr **tab** (one pane per tab),
-named `{taskId} - {role} - {project} - r{retry}` (e.g. `WI-AC-025 - qa -
-public-docs - r1`). The tab renames when the orchestrator phase changes and
-closes when the worker finishes, so it appears clearly in the herdr sidebar.
+Workers always run in the background. Monitor via `harness-control status`,
+`fleet-snapshot`, and worker logs under `.git/harness-control/<project>/logs/`.
 
-At a monorepo root, resolve one project through `.harness/projects.json` before
-starting. Each project has its own specification, Work Item catalog, Execution Ledger,
-supervisor Control Journal, and Goal Review. Do not start one aggregate supervisor
-for multiple project queues.
+At a monorepo root, resolve one project the same way generator does: `node
+"$GENERATOR/reconcile.mjs" --print-root` (set below) walks up for the nearest
+`project_specs.xml`, then falls back to `.harness/projects.json` when more than
+one project is registered. Planner finalize registers each project there
+automatically, so there is nothing to maintain by hand. Each project has its own
+specification, Work Item catalog, Execution Ledger, supervisor Control Journal,
+and Goal Review. Do not start one aggregate supervisor for multiple project
+queues.
 
 ## Prepare the goal
 
@@ -94,7 +93,7 @@ Preflight always:
 1. `reconcile.mjs --check` (blocks start on failure → `needs_input` / amend)
 2. Prunes dead Resource Governor reservations and stale Resource Governor locks
 3. Clears dead Claim Lease entries only when claim session **and** run-state
-   owner/child PIDs are dead (never under a live herdr orchestrator; does not
+   owner/child PIDs are dead (never under a live orchestrator; does not
    `git branch -D` — orphan worktree dirs are removed separately)
 4. Marks ghost Run States (`running` + dead PIDs) as `abandoned`
 5. Clears stale `capacity` / dead `workerHealth` / dead `workers` snapshots,
@@ -232,7 +231,7 @@ node "$CONTROL/scripts/harness-control.mjs" stop   --repo "$REPO"
 **Control-host beacon (ADR-0019):** `harness-control stop` and in-process shutdown
 consult `skills/generator/lib/control-beacon.mjs` before soft stop.
 Soft stop is denied while workers are live (live pid and/or live Run State
-owner/child; pane when applicable - never default-live without evidence),
+owner/child; never default-live without evidence),
 required journal consumers (default `herdr-notify`) are behind the journal tip,
 or an `input_required` is unacked.
 After a bounded wait (~60s) surface an Input Request instead of forcing exit.
@@ -264,10 +263,11 @@ orphan PIDs, re-admit when capacity allows).
 The Control Host LLM acts only on Wake Triage judgment, quota pauses, cross-project
 RAM contention, and operator playbooks in `monorepo-supervisor-ops`.
 
-Herdr `working` / run-state heartbeats alone are not proof of progress.
+Run-state heartbeats and `workerHealth=working` alone are not proof of progress.
 Never recycle `waiting_expected` merge_lock when the holder is alive, or MCP warmup
 still under budget — only recycle `stuck`.
-Close the whole herdr tab when `workerHealth=done` / Run State is terminal.
+When `workerHealth=done` or Run State is terminal, clear the worker row on the
+next tick (background workers do not leave visible panes).
 
 ### Every supervisor tick (ordered)
 
@@ -298,8 +298,8 @@ Close the whole herdr tab when `workerHealth=done` / Run State is terminal.
    capacity before the next progress narration (Hard rule 6).
    Re-admit the blocker, then let dependents resume.
 
-If `fleetSnapshot.emptyFleetActionable`, finished tabs are still open, or health
-is `stuck`, act immediately on judgment cases and harden this skill /
+If `fleetSnapshot.emptyFleetActionable` or health is `stuck`, act immediately on
+judgment cases and harden this skill /
 `monorepo-supervisor-ops` / harness code in the same turn — do not only narrate
 (fail-closed). **Acting without updating the workflow is also incomplete**
 (Hard rule 5: self-improvement).
@@ -325,10 +325,10 @@ compose stacks, named containers, and worktree servers they started (see
 generator `RESOURCE_CLEANUP_RULE`).
 Supervisor teardown is no longer browser-only: `kill-worker`, `workerClosed`,
 and operator `harness-control stop` also run `cleanupWorktreeRuntime`
-(`.harness/app.pid` tree, worktree-scoped `next`/`tsx`/`esbuild`, and
-`docker compose down --remove-orphans`).
-For herdr workers, `kill-worker` targets the Run State owner process tree before
-falling back to the nested agent child PID.
+(`./init.sh stop` when present, then `.harness/app.pid` tree, worktree-scoped
+`next`/`tsx`/`esbuild`, and `docker compose down --remove-orphans`).
+`kill-worker` targets the Run State owner process tree before falling back to the
+nested agent child PID.
 If `docker ps` still shows WI/AC leftovers (`wi-ac-*`, `ac0*`, completed
 subproject stacks) while no live worker owns them, treat that as a workflow
 defect: stop the orphans, then harden generator prompts/skills the same turn
@@ -337,36 +337,14 @@ defect: stop the orphans, then harden generator prompts/skills the same turn
 For multi-supervisor monorepo ops (empty-fleet recovery, composer-2.5 ops host,
 stream smoke checks), use the sibling `monorepo-supervisor-ops` skill.
 
-## Herdr workflow (optional)
+## Worker monitoring
 
-Herdr is not required. When you run inside a herdr workspace (`HERDR_ENV=1`) and
-the `herdr` CLI is installed, workers automatically get visible panes; otherwise
-they run in the background. Force one mode explicitly with `--display herdr` or
-`--display background`. Each admitted worker gets its own dedicated tab, labeled
-`{taskId} - {role} - {project} - r{retry}`, with agent name
-`worker-<project>-<context>`.
+Workers always run in the background. Observe them through:
 
-```bash
-node "$CONTROL/scripts/harness-control.mjs" start --repo "$REPO" --host "$WORKER_HOST" --display herdr
-```
-
-Use `herdr agent list`, `herdr pane read`, and `herdr wait agent-status` from the
-supervisor pane to observe workers. Each pane streams the live agent session
-(thinking, tool calls, verdicts) via a flushed PTY — not only orchestrator phase
-lines. Harness reports `working` while the orchestrator runs; herdr `blocked` or
-an interactive prompt raises `input_required`. Herdr `idle` and merge-lock waits
-are normal between turns and do not stop workers. Herdr panes no longer flood with
-`BUSY` lines — the orchestrator prints a short status line at most every 10s while
-waiting.
-
-**Monorepo (multiple supervisors):** every subproject runs its own supervisor with
-one named tab per worker. Tab/pane cleanup is scoped to `worker-<project>-*`
-agents only — a core supervisor must never close `worker-web-*` / `worker-relay-*`
-tabs (doing so leaves zombie workers: state lists pane IDs herdr no longer has).
-Finished workers close their **tab** immediately when Run State is terminal
-(`complete` / `blocked` / `failed`), the orchestrator/child exits, or the shell
-is idle after the job — finished agents must not linger.
-Each supervisor tick also runs the rate-limited finished-tab reaper (`finished-tab-reaper.mjs`), and `workerClosed` / `workerHealth=done` force an immediate reap via `closeStaleHarnessPanesForProject` (live worker pane ids are always kept).
+- `harness-control status` — `workerHealth`, `workers`, `fleetSnapshot`, capacity
+- `harness-control fleet-snapshot` — monorepo-wide bearings in one call
+- Worker logs under `.git/harness-control/<project>/logs/` and Evidence Artifacts
+  under `.git/harness-evidence/`
 
 **Unattended Input Requests:** each tick auto-writes `retry` for pending context-scoped
 `input_required` events (worker exit, integration failure, claim-lease exhaustion,
@@ -374,7 +352,5 @@ Each supervisor tick also runs the rate-limited finished-tab reaper (`finished-t
 unless that context still has a live worker, is already in the retry queue, or hit the
 crash bound (5). Goal-scoped inputs still need a human.
 
-Workers close when Run State reaches a terminal status, when the pane exits, or when
-the orchestrator heartbeat goes stale. Pass `--display background` to force background
-workers even inside a herdr workspace.
-Remote access uses herdr's SSH and plugin transports.
+Workers close when Run State reaches a terminal status or when the orchestrator
+heartbeat goes stale.

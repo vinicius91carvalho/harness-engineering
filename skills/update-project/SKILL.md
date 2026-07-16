@@ -14,9 +14,7 @@ valid for another. Locate the plugin root through `CLAUDE_PLUGIN_ROOT` (Claude),
 Before writing, show the source and destination inventory and ask through the
 active host's native question facility. Never read or copy credentials, tokens,
 history, conversations, sessions, caches, logs, indexes, telemetry, or installed
-plugin payloads. Preserve `${PLACEHOLDER}` values in committed MCP inventories.
-`codebase-memory-mcp` is a separate optional MCP/tool integration, not a
-marketplace plugin.
+plugin payloads. Preserve `${PLACEHOLDER}` values in committed host MCP backups.
 
 ## Host backups
 
@@ -34,14 +32,14 @@ marketplace plugin.
 
 Keep host MCP shapes distinct: Claude uses `mcpServers`, Codex uses TOML
 `mcp_servers`/native `codex mcp`, and OpenCode uses `mcp` entries whose local
-`command` is an array. Ask for every secret at restore time; Enter skips a server.
+`command` is an array.
 
 ## Reconciliation
 
 Reconcile the Claude and Codex marketplace catalogs, both installers, README,
 AGENTS.md, and CLAUDE.md. Optional tools absent from a live setup are not automatic
-deletions; ask before removing an offering. Never list `codebase-memory-mcp` as a
-marketplace plugin or reintroduce host-specific plugins.
+deletions; ask before removing an offering. Never reintroduce host-specific plugins
+as marketplace entries.
 
 Run the same checks as CI:
 

@@ -27,24 +27,6 @@
       "runtime": { "pip": ["crawl4ai"] }
     },
     {
-      "id": "ponytail",
-      "kind": "external",
-      "optional": true,
-      "hosts": ["claude", "codex", "opencode", "agent"],
-      "description": "Minimal-solution coding skill",
-      "acquisition": { "npm": "@dietrichgebert/ponytail", "github": "DietrichGebert/ponytail" }
-    },
-    {
-      "id": "lavish-axi",
-      "kind": "external",
-      "optional": true,
-      "hosts": ["claude", "codex", "opencode", "agent"],
-      "description": "Lavish Editor for agent HTML artifacts",
-      "acquisition": {
-        "skills": { "repo": "kunchenguid/lavish-axi", "name": "lavish", "global": true }
-      }
-    },
-    {
       "id": "hallmark",
       "kind": "external",
       "optional": true,
@@ -77,32 +59,6 @@
       }
     },
     {
-      "id": "firstmate",
-      "kind": "external",
-      "optional": true,
-      "hosts": ["claude", "codex", "opencode", "pi", "agent"],
-      "description": "Orchestrator agent with a supervised agent crew",
-      "acquisition": {
-        "clone": "https://github.com/kunchenguid/firstmate.git",
-        "cloneDir": ".local/share/firstmate"
-      }
-    },
-    {
-      "id": "codebase-memory-mcp",
-      "kind": "external",
-      "optional": true,
-      "hosts": ["claude", "codex", "opencode", "agent"],
-      "description": "Codebase memory MCP server",
-      "acquisition": { "installer": "https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh" }
-    },
-    {
-      "id": "context7",
-      "kind": "mcp",
-      "optional": true,
-      "hosts": ["claude", "codex", "opencode", "agent"],
-      "description": "Context7 docs MCP"
-    },
-    {
       "id": "playwright",
       "kind": "mcp",
       "optional": true,
@@ -122,13 +78,6 @@
       "optional": true,
       "hosts": ["claude"],
       "description": "Shared Claude settings merge"
-    },
-    {
-      "id": "mcp-servers",
-      "kind": "extra",
-      "optional": true,
-      "hosts": ["claude", "codex", "opencode", "agent"],
-      "description": "Restore MCP inventory with secret prompts"
     }
   ]
 }

@@ -29,17 +29,15 @@ Run these only on disposable user profiles after authenticating each real CLI:
    changes no unrelated configuration.
 2. Run planner, generator, evaluator, learning-loop, and update-project. Confirm
    the configured model is preserved and generator uses an isolated worktree.
-3. Select `codebase-memory-mcp`; verify the binary exists, only the selected host
-   has an MCP entry, and “Index this project” exposes its tools.
-4. Run `--yes --dry-run`; compare the profile tree and config hashes before/after.
-5. Install Context7 and Playwright for each host and verify both appear in its MCP list.
-6. Copy `config/roles.example.json` to `.harness/roles.json` in a disposable repo
+3. Run `--yes --dry-run`; compare the profile tree and config hashes before/after.
+4. Install Playwright for each host and verify it appears in its MCP list.
+5. Copy `config/roles.example.json` to `.harness/roles.json` in a disposable repo
    and run the orchestrator with role routing; confirm route history records the
    selected harness/model pairs.
-7. For the full check, use a disposable Git repository with one Acceptance
+6. For the full check, use a disposable Git repository with one Acceptance
    Check. Route coding to OpenCode and validation, repair planning, and Goal
    Review to Codex via `.harness/roles.json`. Start the supervisor with
    `harness-control.mjs`. The check passes only when all three queue flags are
    `true`, Goal Review is complete, and the control event stream contains
    `run_completed`. The exact commands are in the
-   [README guide](../../README.md#optional-role-routing-and-herdr).
+   [README guide](../../README.md#optional-role-routing).

@@ -51,9 +51,10 @@ dirty worktrees.
 **Resource cleanup (every Work Item, pass or fail):** emit the harness verdict
 FIRST, then tear down every resource this task started — `docker compose down
 --remove-orphans` (or project-scoped `-p`) for stacks you brought up, remove
-named WI/AC containers you created, stop this worktree's server via the exact PID
-in `.harness/app.pid` only (`kill "$(cat .harness/app.pid)"` — never `pkill -f`
-/ `killall` with WORKDIR or PORT substrings).
+named WI/AC containers you created, stop this worktree's server with `./init.sh stop`
+when present (fallback: exact PID in `.harness/app.pid` via
+`kill "$(cat .harness/app.pid)"` — never `pkill -f` / `killall` with WORKDIR or
+PORT substrings).
 Do not leave containers or servers running for a later task.
 Do not tear down stacks you did not start (other subprojects or live sibling contexts).
 When a reusable infra stack is intentionally shared, rely on the harness Shared Runtime Lease; still record and remove private app containers, ports, and PIDs through the owned runtime manifest or `.harness/app.pid`.
@@ -115,19 +116,26 @@ drives repair (switch host / block / repair-plan). Infra and coding exhaustion
 are not auto-retried.
 
 **Lean Cursor agent MCP:** generator `agent` spawns without `--approve-mcps` so
-disabled Playwright/Crawl4AI do not delay first tokens on herdr panes.
+disabled Playwright/Crawl4AI do not delay first tokens on background workers.
 
-**Spawn-silence health:** when a pane shows only orchestrator phase banners
-(`── CODING → …` / `── QA → …`) with no `thinking:` / `tool →` stream for
->60s (`HARNESS_SPAWN_SILENCE_BUDGET_MS`), `assessLive` classifies
-`tailClass=spawn_silence` and recycles like `mcp_warmup` (infra warmup, not a
-product defect).
+**Stuck workers:** the supervisor recycles background workers when their log/
+heartbeat age exceeds `HARNESS_STUCK_TIMEOUT_MS` (default 10 minutes).
 
-Let `PROJECT` be the directory containing `project_specs.xml`, `GIT_ROOT` be its
-Git top-level, `GEN` this skill directory, and `HOST` the current host (`claude`,
-`codex`, `opencode`, or `agent`). If invoked at a monorepo root, resolve a project through
-`.harness/projects.json`; list the choices when more than one is registered. Never
-combine project queues.
+Let `GIT_ROOT` be the Git top-level, `GEN` this skill directory, and `HOST` the
+current host (`claude`, `codex`, `opencode`, or `agent`). Resolve `PROJECT` with:
+
+```bash
+PROJECT=$(node "$GEN/reconcile.mjs" --print-root)
+```
+
+Echo the resolved `PROJECT` so the user can confirm it.
+This walks up from the working directory for the nearest `project_specs.xml`, then
+falls back to `.harness/projects.json` when several projects are registered and
+none is nearer; ambiguity or a missing spec makes it exit non-zero with the
+candidates or a `run /planner or /harness:setup first` message.
+If the user's goal names a different project than what resolved, set `PROJECT` to
+that project's directory explicitly (`PROJECT=/path/to/project`) instead of
+trusting the discovered default. Never combine project queues.
 
 ## 1. Scaffold and reconcile the completion contract
 
@@ -150,7 +158,10 @@ node "$GEN/reconcile.mjs" "$PROJECT"
 Run reconciliation and its commit while holding the merge lock. The reconciler validates stable Acceptance Check IDs and their acyclic dependency
 graph, appends a deterministic Work Item for every unmapped check, and fills
 omitted transitive `depends_on` entries on existing Work Items. Commit
-`project_specs.xml` and `feature_list.json` if reconciliation changed them. Never
+`project_specs.xml` and `feature_list.json` if reconciliation changed them.
+Also commit `.harness/projects.json` and `.harness/integration-branch` if either is
+new or changed - uncommitted `.harness/*` files are invisible in worktrees, so a
+worker checking out a branch will not see them otherwise. Never
 start work when validation fails.
 
 ## 2. Resume before claiming new work

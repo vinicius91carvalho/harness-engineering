@@ -5,7 +5,6 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { progressOf } from './completion-contract.mjs'
 
 /**
@@ -110,9 +109,4 @@ export function readLedgerFile(ledgerPath) {
   } catch {
     return { version: 1, items: {} }
   }
-}
-
-export function defaultLedgerPath(commonGit, projectId) {
-  const id = !projectId || projectId === 'root' ? 'root' : projectId
-  return join(commonGit, 'harness-ledger', `${id}.json`)
 }

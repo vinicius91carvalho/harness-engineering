@@ -36,9 +36,7 @@ is always restored on exit.
 
 OpenCode detection checks `PATH` plus the official installer's user binary
 location (`~/.opencode/bin`), so it remains selectable before the current shell
-reloads its startup file. The MCP inventory is installed into every selected
-host. Secret prompts accept pasted values while keeping them masked (shell input
-is fully hidden; PowerShell displays `*` per character).
+reloads its startup file.
 
 `--scope`/`-Scope` is Claude-only and accepts `user`, `project`, or `local`.
 Codex and OpenCode installs are user-wide.
@@ -53,10 +51,7 @@ clone of this repo under `~/.pi/agent/git/...`, so user-level skills win over
 package skills and avoid Pi skill-name collisions. A piped PowerShell run stages
 the repository before it needs assets, because `$PSScriptRoot` is empty.
 
-`codebase-memory-mcp`, Context7, Playwright, and Crawl4AI are optional integrations on
-all hosts. The memory server's upstream installer runs with `--skip-config`, its
-binary is verified, auto-indexing is enabled, then only selected hosts are configured.
+Playwright and Crawl4AI are optional integrations on all hosts.
 
 Optional role routing uses `config/roles.example.json` copied to `.harness/roles.json`.
-The [complete guide](../../README.md#optional-role-routing-and-herdr)
-shows routing and herdr visibility.
+The [complete guide](../../README.md#optional-role-routing) shows routing and background worker monitoring.

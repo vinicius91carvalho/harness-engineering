@@ -1,4 +1,4 @@
-/** Canonical runtime health vocabulary for Run State, worker rows, and panes. */
+/** Canonical runtime health vocabulary for Run State and background worker rows. */
 
 const TERMINAL_STATUSES = new Set(['complete', 'blocked', 'failed', 'abandoned'])
 const RUNNINGISH_STATUSES = new Set(['running', 'starting', 'resuming'])
@@ -36,9 +36,8 @@ export function classifyRunStateHealth(runState, alive = processAlive) {
 export function resolveWorkerLive(worker = {}, {
   processAlive: alive = processAlive,
   runState = null,
-  paneExists = null,
 } = {}) {
-  return runtimeView({ worker, runState, paneExists, processAlive: alive }).live
+  return runtimeView({ worker, runState, processAlive: alive }).live
 }
 
 export function runtimeView({
@@ -46,7 +45,6 @@ export function runtimeView({
   worker = null,
   runState = null,
   claim = null,
-  paneExists = null,
   localHost = '',
   nowEpoch = Math.floor(Date.now() / 1000),
   leaseSeconds = 60,
@@ -62,7 +60,6 @@ export function runtimeView({
   const childPid = state.childPid ?? row.childPid ?? null
   const workerPid = row.childPid || row.pid || null
   const ownerHost = state.ownerHost || row.ownerHost || null
-  const isHerdr = row.type === 'herdr' || row.display === 'herdr'
   const ownerLive = Boolean(ownerPid && alive(ownerPid))
   const childLive = Boolean(childPid && alive(childPid))
   const workerPidLive = Boolean(workerPid && alive(workerPid))
@@ -76,12 +73,6 @@ export function runtimeView({
   }
   if (row.live === false) {
     return base({ context, status, phase, ownerPid, childPid, ownerHost, health: 'idle', live: false, reason: 'worker-marked-not-live' })
-  }
-  if (isHerdr && row.paneId && paneExists === false) {
-    if (anyLive && !workerOwned && heartbeatAge != null && heartbeatAge >= staleSeconds) {
-      return base({ context, status, phase, ownerPid, childPid, ownerHost, health: 'live_stale', live: true, reason: 'live-pid-stale-missing-pane' })
-    }
-    return base({ context, status, phase, ownerPid, childPid, ownerHost, health: 'idle', live: false, reason: 'herdr-pane-missing' })
   }
   if (ownerHost && localHost && ownerHost !== localHost) {
     if (heartbeatAge != null && heartbeatAge < Math.max(1, Number(leaseSeconds) || 60)) {

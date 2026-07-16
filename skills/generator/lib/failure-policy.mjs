@@ -233,8 +233,6 @@ export function routeRepair(input = {}) {
     phase = '',
     attempt = 1,
     maxAttempts = 3,
-    healthVerdict = '',
-    tailClass = '',
     inputReason = '',
     codingExhausted = false,
   } = input
@@ -248,15 +246,6 @@ export function routeRepair(input = {}) {
       defectClass: defectClass || 'product',
       autoRetry: false,
       guidance: 'Coding exhausted three attempts — pause for operator or stronger-host Repair Plan; do not auto-burn.',
-    }
-  }
-
-  if (healthVerdict === 'stuck' && (tailClass === 'verdict_hung' || tailClass === 'mcp_warmup' || tailClass === 'spawn_silence')) {
-    return {
-      action: 'recycle',
-      defectClass: 'infra',
-      autoRetry: true,
-      guidance: `Auto-recycle: worker ${tailClass}; resume after orchestrator restart (not a product defect).`,
     }
   }
 
@@ -354,7 +343,7 @@ export function autoRetryGuidance(request) {
   } else if (reason.startsWith('Worker exited with code')) {
     base = 'Auto-retry: worker process exited; resume context after confirming worktree is healthy.'
   } else if (reason.startsWith('Harness worker pane ended before run state completed')) {
-    base = 'Auto-retry: herdr pane shell ended before orchestrator wrote terminal run state; resume context.'
+    base = 'Auto-retry: worker process ended before orchestrator wrote terminal run state; resume context.'
   } else if (reason === 'integration could not complete') {
     base = 'Auto-retry: integration merge/checkpoint failure; retry merge and integrated verification.'
   } else if (reason === 'Harness worker is idle or waiting') {
@@ -396,9 +385,9 @@ export function planAutoRetryResponses(pendingInputs, {
   return planned
 }
 
-/** Stuck herdr workers with infra errors must not auto-resume via retryQueue. */
+/** Stuck background workers always get a retry-queue entry (log/heartbeat based). */
 export function shouldEnqueueStuckWorkerRetry(health) {
-  return health?.tailClass !== 'infra_error'
+  return health?.verdict === 'stuck' || health?.recycle === true || health == null
 }
 
 /** Whether a closed worker produced an actionable verdict the supervisor can route on. */
@@ -429,7 +418,6 @@ export function planWorkerClosedActions({
   retryQueue,
   autoRepair,
   logFile,
-  prevTailClass,
 }) {
   const goal = key === 'goal-review'
   const lastLine = tail.trim().split('\n').filter(Boolean).pop()?.slice(0, 200)
@@ -518,7 +506,7 @@ export function planWorkerClosedActions({
     }
   }
 
-  const infraError = isInfraNoise(tail) || prevTailClass === 'infra_error'
+  const infraError = isInfraNoise(tail)
   if (infraError) {
     if (autoRepair && !harnessRepairs?.[key]) {
       return {

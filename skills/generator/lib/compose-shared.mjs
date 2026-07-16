@@ -98,16 +98,23 @@ function withRegistryLock(commonGit, fn) {
 function readRegistry(commonGit) {
   const file = composeSharedPath(commonGit)
   if (!existsSync(file)) return emptyRegistry()
+  let parsed
   try {
-    const parsed = JSON.parse(readFileSync(file, 'utf8'))
-    if (!parsed || typeof parsed !== 'object') return emptyRegistry()
-    return {
-      version: 1,
-      projects: parsed.projects && typeof parsed.projects === 'object' ? parsed.projects : {},
-      updatedAt: parsed.updatedAt || null,
-    }
-  } catch {
-    return emptyRegistry()
+    parsed = JSON.parse(readFileSync(file, 'utf8'))
+  } catch (error) {
+    // Fail closed: a corrupt registry must not be rewritten as empty (that
+    // drops live holders and allows premature full compose down).
+    throw new Error(`compose shared registry unreadable: ${file}: ${error.message || error}`)
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`compose shared registry invalid: ${file}`)
+  }
+  return {
+    version: 1,
+    projects: parsed.projects && typeof parsed.projects === 'object' && !Array.isArray(parsed.projects)
+      ? parsed.projects
+      : {},
+    updatedAt: parsed.updatedAt || null,
   }
 }
 

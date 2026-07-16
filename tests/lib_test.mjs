@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, appendFileSync, chmodSync, existsSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, appendFileSync, chmodSync, existsSync, realpathSync } from 'node:fs'
 import { readFile, writeFile as writeFileAsync, appendFile as appendFileAsync, mkdir as mkdirAsync } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process'
 import { parseVerdict, isProviderQuotaLimited, VERDICT_BEGIN, VERDICT_END, isInfraNoise, stuckThresholdMs, interpretClosed } from '../skills/generator/lib/worker-outcome.mjs'
 import { readyWorkItems, isWorkItemReady, validateDependencyGraph } from '../skills/generator/lib/ready-work-items.mjs'
 import { parseProjectSpecification } from '../skills/generator/lib/project-specification.mjs'
-import { resolveProjectTopology } from '../skills/generator/lib/project-topology.mjs'
+import { resolveProjectRoot, resolveProjectTopology } from '../skills/generator/lib/project-topology.mjs'
 import { claimKey, projectIdFromPrefix, resultFileFromRunState } from '../skills/generator/lib/project-keys.mjs'
 import { pickClaimCandidate, mergeDo, restoreDirtyRuntimeLogs } from '../skills/generator/lib/claim-lease.mjs'
 import { MARKER_PATTERN, hasMergeMarkers, unionAppendOnly } from '../skills/generator/lib/integrate-checkpoint.mjs'
@@ -21,7 +21,7 @@ import {
   isCheckoutCleanForGoalReview,
 } from '../skills/generator/lib/checkout-dirt.mjs'
 import { mkey, strikeOf, buildPlan, buildCandidates, lastCoder, candidatePool, isNoCreditsCandidate } from '../skills/generator/lib/route-plan.mjs'
-import { buildOrchestratorArgv, buildWorkerBase, planWorkerHerdrMeta, planWorkerStop, planWorkerCleanupTargets, terminateProcessTree, processGroupForWorker } from '../skills/generator/lib/worker-lifecycle.mjs'
+import { buildOrchestratorArgv, buildWorkerBase, planWorkerStop, planWorkerCleanupTargets, terminateProcessTree, processGroupForWorker } from '../skills/generator/lib/worker-lifecycle.mjs'
 import { pruneOrphanPendingInputs, isCrashBoundContext, liveClaimContexts } from '../skills/generator/lib/supervisor-claims.mjs'
 import {
   authorizeRecovery,
@@ -55,12 +55,11 @@ import {
 } from '../skills/generator/lib/orphan-claims.mjs'
 import { runtimeView } from '../skills/generator/lib/runtime-view.mjs'
 import { parseMeminfo, readHostResources } from '../skills/generator/lib/host-resources.mjs'
-import { planRuntimeRecovery } from '../skills/generator/lib/runtime-recovery.mjs'
+import { planRuntimeRecovery, shouldEmitEmptyFleet } from '../skills/generator/lib/runtime-recovery.mjs'
 import { nextTickDelay, tickWatchPaths } from '../skills/generator/lib/tick-context.mjs'
 import { appendOwnedRuntime, readOwnedRuntime } from '../skills/generator/lib/runtime-manifest.mjs'
 import { cleanupBrowserOrphans } from '../skills/generator/lib/browser-cleanup.mjs'
 import { mergeAcquire, mergeRelease, clearDeadLock } from '../skills/generator/lib/claim-lease.mjs'
-import { hostSpawnVisible } from '../skills/generator/lib/agent-spawn.mjs'
 
 function withoutIntegrationBranchEnv(fn) {
   const saved = process.env.HARNESS_INTEGRATION_BRANCH
@@ -225,6 +224,64 @@ test('resolveProjectTopology uses flat control root for repo root', () => {
   })
 })
 
+test('resolveProjectRoot finds the root spec from a subdirectory', () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'resolve-root-')))
+  spawnSync('git', ['init', '-b', 'main'], { cwd: root })
+  writeFileSync(join(root, 'project_specs.xml'), '<project_specification/>\n')
+  mkdirSync(join(root, 'a', 'b'), { recursive: true })
+  assert.equal(resolveProjectRoot(join(root, 'a', 'b')), root)
+  assert.equal(resolveProjectRoot(root), root)
+})
+
+test('resolveProjectRoot nearest spec wins over the root spec', () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'resolve-nearest-')))
+  spawnSync('git', ['init', '-b', 'main'], { cwd: root })
+  writeFileSync(join(root, 'project_specs.xml'), '<project_specification/>\n')
+  mkdirSync(join(root, 'packages', 'a', 'src'), { recursive: true })
+  writeFileSync(join(root, 'packages', 'a', 'project_specs.xml'), '<project_specification/>\n')
+  assert.equal(resolveProjectRoot(join(root, 'packages', 'a', 'src')), join(root, 'packages', 'a'))
+  assert.equal(resolveProjectRoot(join(root, 'packages')), root)
+})
+
+test('resolveProjectRoot resolves a single registered project from an unrelated cwd', () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'resolve-registry-')))
+  spawnSync('git', ['init', '-b', 'main'], { cwd: root })
+  mkdirSync(join(root, 'apps', 'web'), { recursive: true })
+  mkdirSync(join(root, 'tools'), { recursive: true })
+  writeFileSync(join(root, 'apps', 'web', 'project_specs.xml'), '<project_specification/>\n')
+  mkdirSync(join(root, '.harness'), { recursive: true })
+  writeFileSync(join(root, '.harness', 'projects.json'), `${JSON.stringify({ projects: [{ id: 'web', path: 'apps/web' }] })}\n`)
+  assert.equal(resolveProjectRoot(join(root, 'tools')), join(root, 'apps', 'web'))
+})
+
+test('resolveProjectRoot throws on registry ambiguity listing every candidate', () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'resolve-ambiguous-')))
+  spawnSync('git', ['init', '-b', 'main'], { cwd: root })
+  mkdirSync(join(root, 'apps', 'web'), { recursive: true })
+  mkdirSync(join(root, 'apps', 'api'), { recursive: true })
+  mkdirSync(join(root, 'tools'), { recursive: true })
+  writeFileSync(join(root, 'apps', 'web', 'project_specs.xml'), '<project_specification/>\n')
+  writeFileSync(join(root, 'apps', 'api', 'project_specs.xml'), '<project_specification/>\n')
+  mkdirSync(join(root, '.harness'), { recursive: true })
+  writeFileSync(join(root, '.harness', 'projects.json'), `${JSON.stringify({
+    projects: [{ id: 'web', path: 'apps/web' }, { id: 'api', path: 'apps/api' }],
+  })}\n`)
+  assert.throws(
+    () => resolveProjectRoot(join(root, 'tools')),
+    /web \(apps\/web\), api \(apps\/api\); pass the project directory explicitly/,
+  )
+})
+
+test('resolveProjectRoot throws when no spec exists up to the git root', () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'resolve-none-')))
+  spawnSync('git', ['init', '-b', 'main'], { cwd: root })
+  mkdirSync(join(root, 'tools'), { recursive: true })
+  assert.throws(
+    () => resolveProjectRoot(join(root, 'tools')),
+    /no project_specs\.xml found from .* up to .*; run \/planner or \/harness:setup first, or pass the project directory explicitly/,
+  )
+})
+
 test('readyWorkItems respects dependency graph', () => {
   const queue = [
     { id: 'WI-1', context: 'a', acceptance_checks: ['AC-1'], depends_on: [], integration: false },
@@ -266,6 +323,7 @@ test('feature prompts require resource cleanup before verdict', async () => {
   const { featurePrompt, RESOURCE_CLEANUP_RULE, NO_REDELEGATE_RULE } = await import('../skills/generator/prompts/feature.mjs')
   assert.match(RESOURCE_CLEANUP_RULE, /RESOURCE CLEANUP/)
   assert.match(RESOURCE_CLEANUP_RULE, /docker compose down/)
+  assert.match(RESOURCE_CLEANUP_RULE, /\.\/init\.sh stop/)
   assert.match(NO_REDELEGATE_RULE, /assigned harness worker/)
   assert.match(NO_REDELEGATE_RULE, /Do NOT spawn Task/)
   const feature = { id: 'WI-1', context: 'core', description: 'x', acceptance_checks: ['AC-1'] }
@@ -273,8 +331,16 @@ test('feature prompts require resource cleanup before verdict', async () => {
     const prompt = featurePrompt(kind, feature, 1, null, '/wt', { port: 5170, integrationBranch: 'plan/x' })
     assert.match(prompt, /RESOURCE CLEANUP/)
     assert.match(prompt, /docker compose down/)
+    assert.match(prompt, /\.\/init\.sh stop/)
     assert.match(prompt, /assigned harness worker|Do NOT spawn Task/)
   }
+})
+
+test('initializer documents init.sh lifecycle subcommands', () => {
+  const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'agents', 'initializer.md'), 'utf8')
+  assert.match(source, /start\|stop\|restart\|status\|help/)
+  assert.match(source, /cmd_start|cmd_stop|cmd_status/)
+  assert.match(source, /\.harness\/app\.pid/)
 })
 
 test('browser cleanup patterns stay scoped to port/workdir/profile', () => {
@@ -309,20 +375,11 @@ test('worker lifecycle builds shared spawn argv for work items and goal review',
   const base = buildWorkerBase({ claim, logFile: '/tmp/x.log', reservationId: 'r1' })
   assert.equal(base.ownedResources.port, 5171)
   assert.equal(base.ownedResources.worktree, '/wt/core')
-
-  const herdr = planWorkerHerdrMeta({ claim, projectId: 'app', retry: 2 })
-  assert.equal(herdr.agentName, 'worker-app-core')
-  assert.equal(herdr.retry, 2)
 })
 
-test('worker lifecycle stop and cleanup plans cover herdr and background', () => {
+test('worker lifecycle stop and cleanup plans cover background workers', () => {
   assert.equal(planWorkerStop(null).kind, 'noop')
-  assert.equal(planWorkerStop({ type: 'herdr', paneId: 'w1:p2' }).kind, 'close_display')
   assert.equal(planWorkerStop({ type: 'background', child: { pid: 4242 } }).kind, 'terminate_tree')
-  assert.equal(processGroupForWorker(
-    { type: 'herdr', pid: 333 },
-    { ownerPid: 111, childPid: 222 },
-  ), 111)
   assert.equal(processGroupForWorker(
     { type: 'background', pid: 333 },
     { ownerPid: 111, childPid: 222 },
@@ -421,7 +478,7 @@ test('browser cleanup returns a killed count on unix', { skip: process.platform 
   assert.ok(result.killed >= 0)
 })
 
-test('merge lock does not spam BUSY on stdout in herdr panes', () => {
+test('merge lock writes BUSY on stdout when contended', () => {
   withoutIntegrationBranchEnv(() => {
     const root = mkdtempSync(join(tmpdir(), 'merge-busy-'))
     spawnSync('git', ['init', '-b', 'main'], { cwd: root })
@@ -440,50 +497,37 @@ test('merge lock does not spam BUSY on stdout in herdr panes', () => {
        if (result.busy) process.exit(0);
        process.stderr.write(JSON.stringify(result));
        process.exit(2);`,
-    ], { env: { ...process.env, HARNESS_HERDR_PANE: '1' }, encoding: 'utf8' })
+    ], { encoding: 'utf8' })
     assert.equal(child.status, 0, child.stderr || child.stdout)
-    assert.equal(child.stdout, '')
+    assert.match(child.stdout, /^BUSY/m)
     mergeRelease(root, process.pid)
   })
 })
 
-test('hostSpawnVisible respects herdr env', () => {
-  assert.equal(hostSpawnVisible(), Boolean(process.env.HARNESS_HERDR_PANE === '1' || process.env.HARNESS_DISPLAY === 'herdr'))
-})
-
-test('visible herdr agent spawn flushes PTY output with script -f', async () => {
-  const { visibleScriptArgv } = await import('../skills/generator/lib/agent-spawn.mjs')
-  const [program, args] = visibleScriptArgv('pi', ['-p', 'hello'])
-  assert.equal(program, 'script')
-  assert.deepEqual(args.slice(0, 3), ['-q', '-e', '-f'])
-  assert.equal(args[3], '-c')
-  assert.match(args[4], /^'pi' '-p' 'hello'$/)
-  assert.equal(args[5], '/dev/null')
-})
-
-test('pi herdr stream uses --mode json and formats thinking/tools', async () => {
-  const { withVisibleAgentMode, createAgentStreamFormatter } = await import('../skills/generator/lib/agent-stream.mjs')
-  assert.deepEqual(
-    withVisibleAgentMode('pi', ['--model', 'x', '-p', 'hi'], true),
-    ['--model', 'x', '--mode', 'json', '-p', 'hi'],
-  )
-  assert.deepEqual(withVisibleAgentMode('pi', ['-p', 'hi'], false), ['-p', 'hi'])
-  assert.deepEqual(withVisibleAgentMode('codex', ['exec', 'hi'], true), ['exec', 'hi'])
-
-  const fmt = createAgentStreamFormatter()
-  const pane = [
-    fmt.push(`${JSON.stringify({ type: 'agent_start' })}\n`),
-    fmt.push(`${JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', delta: 'plan the next verification steps carefully ' } })}\n`),
-    fmt.push(`${JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'thinking_end', content: 'plan the next verification steps carefully then run tools' } })}\n`),
-    fmt.push(`${JSON.stringify({ type: 'tool_execution_start', toolName: 'bash' })}\n`),
-    fmt.push(`${JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '===HARNESS-VERDICT-BEGIN===\n{"ok":true}\n===HARNESS-VERDICT-END===\n' } })}\n`),
-    fmt.flush(),
-  ].join('')
-  assert.match(pane, /agent: working/)
-  assert.match(pane, /thinking: plan the next verification steps carefully then run tools/)
-  assert.match(pane, /tool → bash/)
-  assert.match(pane, /HARNESS-VERDICT-BEGIN/)
-  assert.match(fmt.assistantText(), /"ok":true/)
+test('mergeAcquire anchors the integration worktree as a gitRoot sibling for a subproject', () => {
+  withoutIntegrationBranchEnv(() => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'merge-anchor-')))
+    spawnSync('git', ['init', '-b', 'main'], { cwd: root })
+    spawnSync('git', ['config', 'user.name', 'test'], { cwd: root })
+    spawnSync('git', ['config', 'user.email', 't@example.invalid'], { cwd: root })
+    mkdirSync(join(root, 'packages', 'a'), { recursive: true })
+    writeFileSync(join(root, 'packages', 'a', 'feature_list.json'), '[]\n')
+    spawnSync('git', ['add', '.'], { cwd: root })
+    spawnSync('git', ['commit', '-qm', 'init'], { cwd: root })
+    spawnSync('git', ['branch', 'plan/demo'], { cwd: root })
+    mkdirSync(join(root, '.harness'), { recursive: true })
+    writeFileSync(join(root, '.harness', 'integration-branch'), 'plan/demo\n')
+    const subproject = join(root, 'packages', 'a')
+    const held = mergeAcquire(subproject, process.pid)
+    try {
+      assert.equal(held.integDir, join(`${root}-wt-integration`, 'packages/a'))
+      assert.ok(existsSync(`${root}-wt-integration`))
+      assert.equal(existsSync(`${subproject}-wt-integration`), false)
+    } finally {
+      mergeRelease(subproject, process.pid)
+      spawnSync('git', ['worktree', 'remove', '--force', `${root}-wt-integration`], { cwd: root })
+    }
+  })
 })
 
 test('parseVerdict reports complete vs open verdict', async () => {
@@ -493,35 +537,6 @@ test('parseVerdict reports complete vs open verdict', async () => {
   assert.equal(hasCompleteVerdict(open), false)
   assert.equal(hasCompleteVerdict(closed), true)
   assert.equal(parseVerdict(closed).ok, true)
-})
-
-test('cursor agent herdr stream uses stream-json and formats thinking/tools', async () => {
-  const { withVisibleAgentMode, createAgentStreamFormatter } = await import('../skills/generator/lib/agent-stream.mjs')
-  assert.deepEqual(
-    withVisibleAgentMode('agent', ['-p', '--force', '--trust', '--model', 'composer-2.5', 'hi'], true),
-    ['-p', '--output-format', 'stream-json', '--stream-partial-output', '--force', '--trust', '--model', 'composer-2.5', 'hi'],
-  )
-  assert.deepEqual(withVisibleAgentMode('agent', ['-p', 'hi'], false), ['-p', 'hi'])
-
-  const fmt = createAgentStreamFormatter()
-  const pane = [
-    fmt.push(`${JSON.stringify({ type: 'system', subtype: 'init', model: 'Composer 2.5' })}\n`),
-    fmt.push(`${JSON.stringify({ type: 'thinking', subtype: 'delta', text: 'plan the next verification steps carefully ' })}\n`),
-    fmt.push(`${JSON.stringify({ type: 'thinking', subtype: 'completed' })}\n`),
-    fmt.push(`${JSON.stringify({ type: 'tool_call', subtype: 'started', tool_call: { shellToolCall: { description: 'curl health' } } })}\n`),
-  ]
-  assert.equal(fmt.inFlightTool(), 'shell: curl health')
-  pane.push(fmt.push(`${JSON.stringify({ type: 'tool_call', subtype: 'completed', tool_call: { shellToolCall: { description: 'curl health' } } })}\n`))
-  assert.equal(fmt.inFlightTool(), null)
-  pane.push(fmt.push(`${JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: '===HARNESS-VERDICT-BEGIN===\n{"ok":true}\n===HARNESS-VERDICT-END===\n' }] } })}\n`))
-  pane.push(fmt.flush())
-  const joined = pane.join('')
-  assert.match(joined, /agent: working/)
-  assert.match(joined, /thinking: plan the next verification steps carefully/)
-  assert.match(joined, /tool → shell: curl health/)
-  assert.match(joined, /tool ✓ shell: curl health/)
-  assert.match(joined, /HARNESS-VERDICT-BEGIN/)
-  assert.match(fmt.assistantText(), /"ok":true/)
 })
 
 test('integration branch resolves from file and env', () => {
@@ -568,7 +583,7 @@ test('processAlive treats permission-denied probes as live', () => {
   }
 })
 
-test('runtimeView classifies live-stale, remote-owned, and missing herdr panes', () => {
+test('runtimeView classifies live-stale and remote-owned workers', () => {
   assert.equal(runtimeView({
     runState: { status: 'running', ownerPid: 42, heartbeatEpoch: 10 },
     processAlive: (pid) => pid === 42,
@@ -582,11 +597,6 @@ test('runtimeView classifies live-stale, remote-owned, and missing herdr panes',
     nowEpoch: 200,
     leaseSeconds: 60,
   }).health, 'remote_owned')
-  assert.equal(runtimeView({
-    worker: { type: 'herdr', paneId: '1-2', pid: 42 },
-    processAlive: (pid) => pid === 42,
-    paneExists: false,
-  }).live, false)
 })
 
 test('listGhostClaims finds building contexts with dead PIDs', () => {
@@ -729,22 +739,21 @@ test('interpretClosed context complete when integrated', () => {
   assert.deepEqual(result.stuck, [])
 })
 
-test('worker-outcome canonical API covers harness-control closed and live paths', async () => {
+test('worker-outcome canonical API covers closed paths and stuck helpers', async () => {
   const {
     parseVerdict,
     validateOutcome,
     readDurable,
     writeDurable,
     interpretClosed,
-    assessLive,
     isInfraNoise,
     isWorkerStuckByHealth,
-    classifyPaneTail,
   } = await import('../skills/generator/lib/worker-outcome.mjs')
 
   assert.deepEqual(parseVerdict('===HARNESS-VERDICT-BEGIN===\n{"goal":true}\n===HARNESS-VERDICT-END==='), { goal: true })
   assert.equal(validateOutcome({ goal: true }).valid, true)
   assert.equal(isInfraNoise('orchestrator: cannot read feature_list.json'), true)
+  assert.equal(isWorkerStuckByHealth({ verdict: 'stuck', recycle: true }), true)
 
   const closed = interpretClosed({
     key: 'goal-review',
@@ -766,16 +775,6 @@ test('worker-outcome canonical API covers harness-control closed and live paths'
     integrationHead: 'abc',
   })
   assert.equal(matched.goal, true)
-
-  const health = assessLive({
-    tailText: 'thinking: working\ntool → shell',
-    scrollDelta: 2,
-    childAlive: true,
-    lastAgentOutputAgeMs: 1_000,
-  })
-  assert.equal(health.verdict, 'healthy')
-  assert.equal(classifyPaneTail('orchestrator: waiting for merge lock'), 'merge_lock')
-  assert.equal(isWorkerStuckByHealth({ verdict: 'stuck', recycle: true }), true)
 
   const tmp = mkdtempSync(join(tmpdir(), 'worker-outcome-durable-'))
   const stateFile = join(tmp, 'core.json')
@@ -969,7 +968,6 @@ test('planWorkerClosedActions queues Goal Review retry on stripped flag drift', 
     retryQueue: {},
     autoRepair: false,
     logFile: '/tmp/goal.log',
-    prevTailClass: 'unknown',
   })
   assert.equal(plan.action, 'goal_review_retry')
   assert.equal(plan.clearGoalBlock, true)
@@ -1185,7 +1183,7 @@ test('failure-policy denies durable approval cases and auto-retry', () => {
   assert.equal(isAutoRetryableReason('QA failed after Attempt 3'), false)
 })
 
-test('classifyFailure unifies quota, infra, and observation_mismatch with repair-router recovery', () => {
+test('classifyFailure unifies quota, infra, and observation_mismatch with failure-policy recovery', () => {
   const quota = classifyFailure({ reason: '429 rate limit exceeded' })
   assert.equal(quota.class, 'quota')
   assert.equal(quota.safeRecovery, 'provider_cooldown')
@@ -1210,9 +1208,9 @@ test('classifyFailure unifies quota, infra, and observation_mismatch with repair
   assert.equal(routed.autoRetry, true)
 })
 
-test('shouldEnqueueStuckWorkerRetry skips infra_error tail class', () => {
-  assert.equal(shouldEnqueueStuckWorkerRetry({ tailClass: 'verdict_hung' }), true)
-  assert.equal(shouldEnqueueStuckWorkerRetry({ tailClass: 'infra_error' }), false)
+test('shouldEnqueueStuckWorkerRetry enqueues stuck workers', () => {
+  assert.equal(shouldEnqueueStuckWorkerRetry({ verdict: 'stuck', recycle: true }), true)
+  assert.equal(shouldEnqueueStuckWorkerRetry({ verdict: 'healthy' }), false)
   assert.equal(shouldEnqueueStuckWorkerRetry(null), true)
 })
 
@@ -1228,18 +1226,9 @@ test('planWorkerClosedActions infra crash blocks without auto harness repair', (
     retryQueue: {},
     autoRepair: false,
     logFile: '/tmp/log',
-    prevTailClass: 'infra_error',
   })
   assert.equal(plan.action, 'blocked_input')
   assert.equal(plan.emitHarnessIssue?.reason?.includes('Worker exited with code 1'), true)
-})
-
-test('failure-policy facade modules re-export canonical symbols', async () => {
-  const repairRouter = await import('../skills/generator/lib/repair-router.mjs')
-  const autoRespond = await import('../skills/generator/lib/supervisor-auto-respond.mjs')
-  assert.equal(repairRouter.routeRepair, routeRepair)
-  assert.equal(repairRouter.inferDefectClass, inferDefectClass)
-  assert.equal(autoRespond.planAutoRetryResponses, planAutoRetryResponses)
 })
 
 test('worker-result fences stale invocation and validates verdicts', async () => {
@@ -1350,7 +1339,6 @@ test('planWorkerClosedActions host-death on Goal Review retries operationally', 
     retryQueue: {},
     autoRepair: false,
     logFile: '/tmp/goal.log',
-    prevTailClass: 'unknown',
   })
   assert.equal(plan.action, 'goal_review_retry')
   assert.equal(plan.clearGoalBlock, true)
@@ -1369,7 +1357,6 @@ test('planWorkerClosedActions host-death on context worker queues operational re
     retryQueue: {},
     autoRepair: false,
     logFile: '/tmp/core.log',
-    prevTailClass: 'unknown',
   })
   assert.equal(plan.action, 'operational_retry')
   assert.equal(plan.context, 'core')
@@ -1407,7 +1394,6 @@ test('interpretClosed and planWorkerClosedActions treat empty Goal Review verdic
     retryQueue: {},
     autoRepair: false,
     logFile: '/tmp/goal.log',
-    prevTailClass: 'unknown',
   })
   assert.equal(plan.action, 'goal_review_retry')
   assert.notEqual(plan.action, 'blocked_input')
@@ -1603,104 +1589,6 @@ test('buildHostCommand passes model to pi and agent', async () => {
   )
 })
 
-test('worker-outcome classifies merge lock, verdict hang, and thinking', async () => {
-  const {
-    classifyPaneTail, assessLive, paneReadSource,
-  } = await import('../skills/generator/lib/worker-outcome.mjs')
-  assert.equal(classifyPaneTail('orchestrator: waiting for merge lock (holder pid=1)'), 'merge_lock')
-  assert.equal(classifyPaneTail('thinking: next step\ntool → read'), 'tooling')
-  assert.equal(classifyPaneTail('===HARNESS-VERDICT-END===\nagent: still working (20s since last log)'), 'verdict_hung')
-  // Prior tool lines in the same window must not mask a post-verdict hang.
-  assert.equal(classifyPaneTail([
-    'tool → shell: Run AC-019',
-    'tool ✓ shell: Run AC-019',
-    'thinking: returning verdict',
-    '===HARNESS-VERDICT-BEGIN===',
-    '{"resolved":true,"notes":"ok"}',
-    'agent: still working (35s since last log)',
-  ].join('\n')), 'verdict_hung')
-  assert.equal(paneReadSource(0), 'visible')
-  assert.equal(paneReadSource(12), 'recent')
-
-  const waiting = assessLive({
-    tailText: 'orchestrator: waiting for merge lock…',
-    mergeHolderAlive: true,
-    childAlive: false,
-    runStateAgeMs: 120_000,
-  })
-  assert.equal(waiting.verdict, 'waiting_expected')
-  assert.equal(waiting.recycle, false)
-
-  const stuckLock = assessLive({
-    tailText: 'orchestrator: waiting for merge lock…',
-    mergeHolderAlive: false,
-    childAlive: false,
-    runStateAgeMs: 120_000,
-  })
-  assert.equal(stuckLock.verdict, 'stuck')
-
-  const healthy = assessLive({
-    tailText: 'thinking: working\ntool → shell',
-    scrollDelta: 3,
-    childAlive: true,
-    lastAgentOutputAgeMs: 5_000,
-  })
-  assert.equal(healthy.verdict, 'healthy')
-})
-
-test('assessLive classifies spawn_silence after phase banner without agent stream', async () => {
-  const {
-    classifyPaneTail, assessLive, isPhaseBannerLine, hasAgentStreamSignals,
-  } = await import('../skills/generator/lib/worker-outcome.mjs')
-
-  const bannerTail = [
-    'orchestrator: merge lock acquired',
-    '── CODING → agent attempt 1 ──',
-    'agent: still waiting for first token',
-  ].join('\n')
-  assert.equal(isPhaseBannerLine('── CODING → agent attempt 1 ──'), true)
-  assert.equal(hasAgentStreamSignals(bannerTail), false)
-  assert.equal(classifyPaneTail(bannerTail), 'spawn_silence')
-
-  const withinBudget = assessLive({
-    tailText: bannerTail,
-    childAlive: true,
-    lastAgentOutputAgeMs: 15_000,
-    scrollDelta: 0,
-    thresholds: { spawnSilenceBudgetMs: 60_000 },
-  })
-  assert.equal(withinBudget.verdict, 'waiting_expected')
-  assert.equal(withinBudget.tailClass, 'spawn_silence')
-  assert.equal(withinBudget.recycle, false)
-
-  const overdue = assessLive({
-    tailText: bannerTail,
-    childAlive: true,
-    lastAgentOutputAgeMs: 75_000,
-    scrollDelta: 0,
-    thresholds: { spawnSilenceBudgetMs: 60_000 },
-  })
-  assert.equal(overdue.verdict, 'stuck')
-  assert.equal(overdue.tailClass, 'spawn_silence')
-  assert.equal(overdue.recycle, true)
-
-  const agentStarted = [
-    '── QA → codex attempt 2 ──',
-    'agent: started (codex gpt-5)',
-  ].join('\n')
-  assert.equal(classifyPaneTail(agentStarted), 'mcp_warmup')
-})
-
-test('routeRepair recycles spawn_silence like mcp_warmup', () => {
-  const routed = routeRepair({
-    healthVerdict: 'stuck',
-    tailClass: 'spawn_silence',
-  })
-  assert.equal(routed.action, 'recycle')
-  assert.equal(routed.defectClass, 'infra')
-  assert.equal(routed.autoRetry, true)
-})
-
 test('evidenceGuidanceExcerpt reads expected/observed pairs without mutating artifacts', async () => {
   const { evidenceGuidanceExcerpt, enrichGuidanceWithEvidence } = await import('../skills/generator/lib/evidence-guidance.mjs')
   const { autoRetryGuidance } = await import('../skills/generator/lib/failure-policy.mjs')
@@ -1744,15 +1632,12 @@ test('evidenceGuidanceExcerpt reads expected/observed pairs without mutating art
   assert.match(guidance, /observed: 503 Service Unavailable/)
 })
 
-test('repair-router blocks coding exhaustion and routes quota/infra', async () => {
-  const { inferDefectClass: inferFromFacade, routeRepair: routeFromFacade, routePendingInput: routePendingFromFacade } = await import('../skills/generator/lib/repair-router.mjs')
-  assert.equal(inferFromFacade, inferDefectClass)
-  assert.equal(routeFromFacade, routeRepair)
+test('failure-policy blocks coding exhaustion and routes quota/infra', async () => {
   assert.equal(inferDefectClass({}, 'Codex error: The usage limit has been reached'), 'quota')
   assert.equal(inferDefectClass({}, 'DynamoHypothesisRepository still wired in bootstrap'), 'infra')
   assert.equal(inferDefectClass({ defectClass: 'observation_mismatch' }, ''), 'observation_mismatch')
 
-  const exhausted = routePendingFromFacade({ reason: 'coding agent failed three times' })
+  const exhausted = routePendingInput({ reason: 'coding agent failed three times' })
   assert.equal(exhausted.action, 'pause')
   assert.equal(exhausted.autoRetry, false)
 
@@ -1909,6 +1794,57 @@ test('compose-shared refcount keeps infra up for sibling workers', async () => {
   assert.equal(afterLast.lastHolder, true)
   assert.equal(planComposeTeardown({ shareCount: 0 }).mode, 'full_down')
   assert.equal(planComposeTeardown({ shareCount: 1, force: true }).mode, 'full_down')
+
+  const bad = join(root, 'harness-locks', 'compose-shared.json')
+  writeFileSync(bad, '{not-json')
+  assert.throws(
+    () => composeShareSnapshot(root),
+    /compose shared registry unreadable/,
+  )
+})
+
+test('composeDown refuses full-down when share state is unknown', async () => {
+  const { composeDown } = await import('../skills/generator/lib/worktree-teardown.mjs')
+  const root = mkdtempSync(join(tmpdir(), 'compose-down-refuse-'))
+  writeFileSync(join(root, 'compose.yaml'), 'services:\n  api:\n    image: alpine\n')
+  const refused = composeDown(root)
+  assert.equal(refused.mode, 'refused')
+  assert.equal(refused.skippedFullDown, true)
+  assert.equal(refused.ran, false)
+})
+
+test('stopWorktreeApp prefers init.sh stop over app.pid', async () => {
+  const { stopWorktreeApp } = await import('../skills/generator/lib/worktree-teardown.mjs')
+  const root = mkdtempSync(join(tmpdir(), 'init-stop-'))
+  mkdirSync(join(root, '.harness'), { recursive: true })
+  writeFileSync(join(root, '.harness', 'app.pid'), '999999\n')
+  writeFileSync(join(root, 'init.sh'), `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${1:-}" == "stop" ]]; then
+  echo stopped > "${join(root, 'stopped.flag')}"
+  rm -f .harness/app.pid
+  exit 0
+fi
+exit 2
+`)
+  chmodSync(join(root, 'init.sh'), 0o755)
+  const result = stopWorktreeApp(root)
+  assert.equal(result.stopped, true)
+  assert.equal(result.via, 'init.sh')
+  assert.equal(existsSync(join(root, 'stopped.flag')), true)
+  assert.equal(existsSync(join(root, '.harness', 'app.pid')), false)
+})
+
+test('stopWorktreeApp falls back to app.pid when init.sh missing', async () => {
+  const { stopWorktreeApp } = await import('../skills/generator/lib/worktree-teardown.mjs')
+  const root = mkdtempSync(join(tmpdir(), 'pid-stop-'))
+  mkdirSync(join(root, '.harness'), { recursive: true })
+  // Non-existent PID: stopAppPid still reports stopped after attempting terminate + unlink.
+  writeFileSync(join(root, '.harness', 'app.pid'), '999999999\n')
+  const result = stopWorktreeApp(root)
+  assert.equal(result.stopped, true)
+  assert.equal(result.via, 'app.pid')
+  assert.equal(existsSync(join(root, '.harness', 'app.pid')), false)
 })
 
 test('runtime manifest records exact resources for cleanup', () => {
@@ -1940,6 +1876,33 @@ test('control journal compaction preserves pending input lineage', async () => {
   assert.equal(derived.pendingInputs[input.id].status, 'pending')
 })
 
+test('control journal compaction drops resolved input lineage from snapshot', async () => {
+  const {
+    appendControlEvent, compactControlJournal, readControlEvents,
+  } = await import('../skills/generator/lib/control-journal.mjs')
+  const { readFile } = await import('node:fs/promises')
+  const root = mkdtempSync(join(tmpdir(), 'journal-resolved-'))
+  for (let i = 0; i < 40; i++) {
+    await appendControlEvent(root, { kind: 'progress', workers: i })
+  }
+  const input = await appendControlEvent(root, {
+    kind: 'input_required', scope: 'context', context: 'core', reason: 'blocked', choices: ['retry'],
+  })
+  await appendControlEvent(root, {
+    kind: 'input_received', requestId: input.id, scope: 'context', context: 'core', action: 'retry',
+  })
+  for (let i = 0; i < 20; i++) {
+    await appendControlEvent(root, { kind: 'progress', workers: i })
+  }
+  const compacted = await compactControlJournal(root, { minTail: 10 })
+  assert.equal(compacted.compacted, true)
+  assert.equal(compacted.preservedLineage, 0)
+  const snap = JSON.parse(await readFile(join(root, 'journal-snapshot.json'), 'utf8'))
+  assert.equal(snap.preservedEvents.length, 0)
+  const events = await readControlEvents(root, join(root, 'events.jsonl'))
+  assert.equal(events.some((event) => event.id === input.id), false)
+})
+
 test('control journal maybeCompact gates on cheap metadata', async () => {
   const {
     appendControlEvent, maybeCompactControlJournal, readControlEvents,
@@ -1967,6 +1930,37 @@ test('control journal maybeCompact gates on cheap metadata', async () => {
   }
   const compacted = await maybeCompactControlJournal(above, { minTail: 3 })
   assert.equal(compacted.compacted, true)
+
+  const throttled = await maybeCompactControlJournal(above, {
+    minTail: 3,
+    minIntervalMs: 60_000,
+    lastCompactAt: Date.now(),
+  })
+  assert.equal(throttled.compacted, false)
+  assert.equal(throttled.skipped, true)
+  assert.equal(throttled.reason, 'interval-throttle')
+})
+
+test('state heartbeat escalates after consecutive write failures', async () => {
+  const { startStateHeartbeat } = await import('../skills/generator/lib/state-heartbeat.mjs')
+  let calls = 0
+  let escalated = 0
+  const timer = startStateHeartbeat(
+    async () => {
+      calls += 1
+      throw new Error('fence lost')
+    },
+    {
+      intervalMs: 10,
+      maxConsecutiveFailures: 3,
+      label: 'test-heartbeat',
+      onEscalated: () => { escalated += 1 },
+    },
+  )
+  await new Promise((resolve) => setTimeout(resolve, 80))
+  clearInterval(timer)
+  assert.ok(calls >= 3)
+  assert.equal(escalated, 1)
 })
 
 test('control journal ignores caller id and keeps latest duplicate', async () => {
@@ -2295,7 +2289,7 @@ test('fleet snapshot builds structured multi-project bearings', async () => {
 
   const stateA = {
     status: 'running',
-    workers: { core: { type: 'herdr', paneId: '1-2', pid: 42 } },
+    workers: { core: { type: 'background', pid: 42 } },
     workerHealth: { core: { verdict: 'healthy' }, ghost: { verdict: 'stuck', reason: 'no output' } },
     pendingInputs: { 3: { status: 'pending' } },
     retryQueue: {},
@@ -2365,16 +2359,29 @@ test('runtime recovery planner emits deterministic repair events', () => {
     staleLocks: [{ lock: 'merge', reason: 'dead-holder' }],
     crashCounts: { core: 5 },
     snapshotCounts: { total: 2, integrated: 0 },
+    pressureReason: 'swap',
   })
   assert.equal(plan.repaired, true)
   assert.deepEqual(plan.statePatch.crashCounts, {})
   assert.ok(plan.actions.some((action) => action.kind === 'abandon_ghost'))
   assert.ok(plan.events.some((event) => event.kind === 'dead_runtime'))
-  assert.ok(plan.events.some((event) => event.kind === 'empty_fleet_actionable'))
+  const emptyFleet = plan.events.find((event) => event.kind === 'empty_fleet_actionable')
+  assert.equal(emptyFleet.detail.pressureReason, 'swap')
+  const unpressured = planRuntimeRecovery({ active: 0, fleet: { emptyFleetActionable: true } })
+  assert.equal(unpressured.events.find((event) => event.kind === 'empty_fleet_actionable').detail.pressureReason, null)
+})
+
+test('empty fleet emit debounce suppresses only identical recent detail', () => {
+  const detail = { workers: 0, ghostCount: 0, repaired: false, pressureReason: 'swap', remaining: { total: 2 } }
+  assert.equal(shouldEmitEmptyFleet(null, detail, 1_000), true)
+  const last = { detail, at: 1_000 }
+  assert.equal(shouldEmitEmptyFleet(last, { ...detail }, 30_000), false)
+  assert.equal(shouldEmitEmptyFleet(last, { ...detail, pressureReason: null }, 30_000), true)
+  assert.equal(shouldEmitEmptyFleet(last, { ...detail }, 61_000), true)
 })
 
 test('tick context computes event-driven delay with poll fallback', () => {
-  assert.equal(nextTickDelay({ pollMs: 2000, dirty: true }), 0)
+  assert.equal(nextTickDelay({ pollMs: 2000, dirty: true }), 50)
   assert.equal(nextTickDelay({ pollMs: 2000, eventDriven: false, dirty: true }), 2000)
   assert.ok(tickWatchPaths({ controlRoot: '/c', runsDir: '/r', commonGit: '/g' }).includes('/c/responses'))
 })
@@ -2529,51 +2536,6 @@ test('buildFleetSnapshot supports multi-project inputs', async () => {
   assert.equal(fleet.projects[1].ghostClaims.length, 1)
 })
 
-test('finished tab reaper keeps live panes and rate-limits tick reaps', async () => {
-  const {
-    collectLiveWorkerPaneIds,
-    planFinishedTabReap,
-    DEFAULT_REAP_INTERVAL_MS,
-  } = await import('../skills/generator/lib/finished-tab-reaper.mjs')
-  const workers = new Map([
-    ['core', { type: 'herdr', paneId: '1-2-live' }],
-  ])
-  const keep = collectLiveWorkerPaneIds(workers)
-  assert.equal(keep.has('1-2-live'), true)
-
-  const limited = planFinishedTabReap({
-    workers,
-    workerHealth: { doneCtx: { verdict: 'done' } },
-    now: 120_000,
-    lastReapAt: 100_000,
-    minIntervalMs: DEFAULT_REAP_INTERVAL_MS,
-  })
-  assert.equal(limited.shouldReap, false)
-  assert.equal(limited.reason, 'rate_limited')
-  assert.equal(limited.keepPaneIds.has('1-2-live'), true)
-
-  const tick = planFinishedTabReap({
-    workers,
-    workerHealth: {},
-    now: 200_000,
-    lastReapAt: 100_000,
-    minIntervalMs: DEFAULT_REAP_INTERVAL_MS,
-  })
-  assert.equal(tick.shouldReap, true)
-  assert.equal(tick.reason, 'tick')
-
-  const forced = planFinishedTabReap({
-    workers,
-    workerHealth: { doneCtx: { verdict: 'done' } },
-    now: 105_000,
-    lastReapAt: 100_000,
-    force: true,
-  })
-  assert.equal(forced.shouldReap, true)
-  assert.equal(forced.reason, 'forced')
-  assert.deepEqual(forced.doneContexts, ['doneCtx'])
-})
-
 test('evidence-corpus scans verdicts and proposes skill routes', async () => {
   const {
     scan,
@@ -2690,7 +2652,7 @@ test('control-beacon blocks soft stop and allows force when authorized', async (
   assert.deepEqual(turnEndDrain(), { waitForFinalizers: true })
 })
 
-test('control-beacon herdr without pid and without live run-state is not live', async () => {
+test('control-beacon worker without pid and without live run-state is not live', async () => {
   const {
     resolveWorkerLive,
     beaconSnapshot,
@@ -2698,45 +2660,36 @@ test('control-beacon herdr without pid and without live run-state is not live', 
   } = await import('../skills/generator/lib/control-beacon.mjs')
 
   const dead = () => false
-  const herdrRow = { display: 'herdr', paneId: '1-2', context: 'core' }
+  const workerRow = { type: 'background', context: 'core' }
 
-  assert.equal(resolveWorkerLive(herdrRow, {
+  assert.equal(resolveWorkerLive(workerRow, {
     processAlive: dead,
     runState: {},
-    paneExists: true,
   }), false)
 
-  assert.equal(resolveWorkerLive(herdrRow, {
+  assert.equal(resolveWorkerLive(workerRow, {
     processAlive: dead,
     runState: { ownerPid: 42, status: 'running' },
-    paneExists: true,
   }), false)
 
-  assert.equal(resolveWorkerLive(herdrRow, {
+  assert.equal(resolveWorkerLive(workerRow, {
     processAlive: (pid) => pid === 42,
     runState: { ownerPid: 42, status: 'running' },
-    paneExists: true,
   }), true)
 
-  assert.equal(resolveWorkerLive(herdrRow, {
-    processAlive: (pid) => pid === 42,
-    runState: { ownerPid: 42, status: 'running' },
-    paneExists: false,
-  }), false)
-
-  const staleHerdr = beaconSnapshot({
-    workers: [herdrRow],
+  const staleWorker = beaconSnapshot({
+    workers: [workerRow],
     journalTip: 5,
     consumerCursors: { 'herdr-notify': { eventId: 5 } },
     pendingInputs: {},
     processAlive: dead,
   })
-  assert.equal(staleHerdr.liveWorkerCount, 0)
-  assert.equal(stopAllowed('soft', staleHerdr).allowed, true)
+  assert.equal(staleWorker.liveWorkerCount, 0)
+  assert.equal(stopAllowed('soft', staleWorker).allowed, true)
 
-  const liveHerdr = beaconSnapshot({
+  const liveWorker = beaconSnapshot({
     workers: [{
-      ...herdrRow,
+      ...workerRow,
       runState: { ownerPid: 99, status: 'running' },
     }],
     journalTip: 5,
@@ -2744,6 +2697,6 @@ test('control-beacon herdr without pid and without live run-state is not live', 
     pendingInputs: {},
     processAlive: (pid) => pid === 99,
   })
-  assert.equal(liveHerdr.liveWorkerCount, 1)
-  assert.equal(stopAllowed('soft', liveHerdr).allowed, false)
+  assert.equal(liveWorker.liveWorkerCount, 1)
+  assert.equal(stopAllowed('soft', liveWorker).allowed, false)
 })

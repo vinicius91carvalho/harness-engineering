@@ -173,7 +173,8 @@ An orchestrator-spawned executor with a fixed JSON contract (`agents/coding-agen
 _Avoid_: Skill, subagent, chat session
 
 **Initializer**:
-The scaffold-only agent that maps stable Acceptance Checks into `feature_list.json`, creates a PORT-parameterized `init.sh` and project structure, and makes the first commit on `main`. Idempotent; never implements Work Items.
+The scaffold-only agent that maps stable Acceptance Checks into `feature_list.json`, creates a PORT-parameterized `init.sh` (`start|stop|restart|status|help`) and project structure, and makes the first commit on `main`.
+Idempotent; never implements Work Items.
 _Avoid_: Code Agent, generator skill
 
 **Supervisor**:
@@ -224,11 +225,11 @@ _Avoid_: peer agent bus, supervisor tick replacement, event-driven coding↔QA c
 
 **Evidence Corpus**:
 A read-only index over create-only Evidence Artifacts used by the learning loop to cluster recurring defects and propose workflow-skill patches with operator approval.
-_Avoid_: pane stream mining, auto-applied skill edits, mutable evidence rewrite
+_Avoid_: log stream mining, auto-applied skill edits, mutable evidence rewrite
 
 **Control-host Beacon**:
 The stop policy that blocks blind Control Host exit while workers are live or required journal consumers are behind, with a turn-end backstop that drains finalizers before lease release.
-Herdr workers count as live only with a live pid and/or live Run State owner/child (and pane when applicable); never default-live without evidence.
+Workers count as live only with a live pid and/or live Run State owner/child; never default-live without evidence.
 _Avoid_: second supervisor, auto-ack to unblock stop, lease fence
 
 **Fleet Snapshot**:
@@ -242,8 +243,8 @@ A Claim Lease or Run State that looks active (building/running) but whose ownerP
 _Avoid_: live Claim Lease, successful retry
 
 **Dead Runtime**:
-A worker or orchestrator process/pane that has exited while Control Journal or state still implies it is running; surfaced as a Control Event for hybrid recovery.
-_Avoid_: healthy herdr idle between turns, merge-lock wait
+A worker or orchestrator process that has exited while Control Journal or state still implies it is running; surfaced as a Control Event for hybrid recovery.
+_Avoid_: healthy idle between turns, merge-lock wait
 
 **Empty Fleet Actionable**:
 The condition where workers={} (or equivalent) while remaining Work Items, pending Input Requests, or a stale Goal Review still need progress - fail-closed for the Supervisor tick.

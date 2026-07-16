@@ -160,15 +160,14 @@ updates the changelog) — that's expected, not a side effect to avoid.
 Never push anything from inside `causeflow-ai`.
 
 **Don't run the full interactive installer on every fix.** `install.sh --yes`
-also drives `mcp-servers`, which prompts per-server for secrets — fine once,
-but a hang risk if re-run unattended inside an hours-long loop.
+checks every compatible optional row (hallmark, crawl4ai, Playwright MCP, status line, and more) — fine once,
+but heavier than a surgical copy if re-run inside an hours-long loop.
 For the *repeated* post-fix resync (generator/supervisor/opencode row of the
 table above), prefer the surgical copy — copy the changed file straight into
 `~/.agents/skills/<skill>/` (and the matching OpenCode path under
-`~/.config/opencode/skills/`) yourself, or run the installer with stdin closed
-(`bash install.sh --yes </dev/null`) so a stalled prompt fails fast instead of
-hanging the loop.
-Reserve a real `install.sh --yes` run for when you've actually changed something
+`~/.config/opencode/skills/`) yourself, or run `bash install.sh --cli agent --no </dev/null`
+to refresh only harness.
+Reserve a full `install.sh --yes` run for when you've actually changed something
 outside those paths.
 
 After every fix: **(1)** run the relevant local test(s) in
@@ -200,13 +199,13 @@ one aggregate supervisor for the whole monorepo):
 CONTROL=~/.agents/skills/supervisor/scripts/harness-control.mjs
 for sub in core web relay public-docs; do
   node "$CONTROL" start --repo "/home/vinicius/projects/causeflow-ai/$sub" \
-    --host pi --display herdr --max-workers 4 --quota-workers 2 \
+    --host pi --max-workers 4 --quota-workers 2 \
     --cpu-per-worker 2 --memory-per-worker-mb 1024 --reserve-memory-mb 1024 \
     --summary-minutes 20
 done
 ```
 
-Use `--display background` when not inside a herdr workspace.
+Workers always run in the background.
 Use `--host agent` when driving from Cursor Agent itself instead of `pi`.
 
 Poll status and events out-of-band (no chat REPL required):
@@ -253,14 +252,6 @@ tick (worker exit, integration failure, claim-lease exhaustion, etc.) unless
 the context still has a live worker, is already in the retry queue, or hit the
 crash bound.
 Goal-scoped inputs still require a human.
-Finished harness-worker herdr panes for **this subproject only** close when Run
-State is terminal or the pane is gone.
-
-**Monorepo herdr rule (do not regress):** four supervisors share `harness-workers`
-tabs. Pane cleanup must be scoped per subproject (`worker-core-*`, `worker-web-*`,
-etc.). Never close all non-keep panes on a shared tab — that killed sibling
-workers, left zombie pane IDs in state, and showed "no panes alive" while status
-claimed workers were running.
 
 **Never run an ad-hoc `opencode run`/`claude -p`/`codex exec`/`agent -p` job
 directly against the shared monorepo root while any subproject's orchestrator is
@@ -290,8 +281,8 @@ command.
    alive before assuming it's stuck:
    - Bootstrap phase: `kill -0 $(cat causeflow-ai/.harness/bootstrap.pid)`
    - Main run: `status --repo <subproject> | jq -r '.supervisorPid,
-     (.workers | to_entries[] | .value.pid)'` then `kill -0` each; also check
-     `herdr agent list` when `--display herdr`.
+     (.workers | to_entries[] | .value.pid)'` then `kill -0` each; also tail
+     worker logs under `.git/harness-control/<subproject>/logs/`.
    - **Alive → wait**, don't interrupt it.
      **Dead → that's a stuck signal** — diagnose, fix harness-side if needed,
      respond to pending inputs, restart.
@@ -350,31 +341,32 @@ The `pi` worker host assumes `pi` itself is authenticated/configured (model
 routing in `~/.pi/agent/models.json`, credentials in `~/.pi/agent/auth.json`).
 If `pi` fails to launch, fix credentials/config before switching hosts.
 
-## Cadence — status + pane-log checks
+## Cadence — status + worker log checks
 
 Start each run with `--summary-minutes 20`.
 
-**Every ~10 minutes, read the herdr tab/pane logs** (not only `harness-control
-status`). Status can say `working` while the pane is frozen on heartbeats or a
-hung Cursor agent. For each live worker pane:
+**Every ~10 minutes, tail worker logs** (not only `harness-control status`).
+Status can say `working` while the log is frozen on heartbeats or a hung agent.
+For each live worker:
 
-1. `herdr pane list` — note `scroll.max_offset_from_bottom` and `agent_status`.
-2. Sample scroll twice ~10–15s apart. If scroll does not advance and the tail is
-   only `agent: still working…` (no new `thinking:` / `tool →`), treat as stuck.
-3. `herdr pane read <pane_id> --source recent --lines 40` — look for:
+1. List logs: `ls -lt .git/harness-control/<subproject>/logs/`
+2. `tail -n 40` the active context log — sample twice ~10–15s apart. If the tail
+   does not advance and shows only `agent: still working…` (no new `thinking:` /
+   `tool →`), treat as stuck.
+3. Look for:
    - live `thinking:` / `tool →` / `tool ✓` (healthy),
    - `===HARNESS-VERDICT-BEGIN/END===` followed by endless heartbeats (hung after
      verdict — recycle orchestrator; early-exit should kill the agent),
-   - empty pane after `CODING → agent` with no `agent: started` (spawn/stream
+   - empty log after `CODING → agent` with no `agent: started` (spawn/stream
      broken — check `roles.json` + stream-json flags),
    - repeated rate-limit / usage-limit errors (park or switch host).
-4. Propose and apply a harness-side fix when the pane shows a harness bug; sync
+4. Propose and apply a harness-side fix when the log shows a harness bug; sync
    to `~/.agents/skills/` and recycle that worker. Do not edit causeflow product
    code by hand.
 
 **Every ~20 minutes**, also give the user a concise fleet status (progress
 deltas, pending inputs, memory, what you fixed). Prefer a 10-minute loop whose
-prompt always includes the pane-log checklist above; fold the fuller status into
+prompt always includes the log-tail checklist above; fold the fuller status into
 every other tick if needed.
 
 **Stop the loop when idle.**
@@ -384,7 +376,7 @@ Cancel `/loop` or `ScheduleWakeup` and proceed straight to closeout instead.
 This run kept firing idle 20-minute checks after delivery until the operator manually stopped the loop - treat that as a defect to avoid, not normal cadence.
 
 While work is still active, a Claude Code session with `ScheduleWakeup` can use
-~600s wakeups for the pane-log check; if you were invoked via the `/loop` skill,
+~600s wakeups for the log-tail check; if you were invoked via the `/loop` skill,
 self-pace at that cadence until the idle/complete stop condition above applies.
 
 ## Definition of done
@@ -406,7 +398,7 @@ self-pace at that cadence until the idle/complete stop condition above applies.
 - Every harness-side bug you hit along the way has a durable fix committed in
   `harness-engineering` and synced to the live configs - not just patched around
   for this one run.
-- You've been reading herdr pane logs ~every 10 minutes and reporting fleet
+- You've been tailing worker logs ~every 10 minutes and reporting fleet
   progress ~every 20 minutes throughout.
 - The post-delivery closeout below has been completed (plan branch ownership,
   worktree/branch cleanup, learning-loop, no-mistakes).
@@ -653,7 +645,7 @@ gap.
 - **Fix:** `closeStaleHarnessPanesForProject(tab, projectId, keep)` — only closes
   finished/dangling panes for `worker-<project>-*` agents; sibling subprojects
   untouched. Regression test in `tests/herdr_spawn_test.mjs`.
-- **Also:** `supervisor-auto-respond.mjs` auto-writes `retry` for pending context
+- **Also:** failure-policy auto-writes `retry` for pending context
   `input_required` each tick (worker exit, integration failure, claim lease, etc.).
 - Synced to `~/.agents/skills/`; supervisors restarted. Seven live workers on
   `harness-workers` tab after fix.
@@ -684,7 +676,7 @@ gap.
 ### 2026-07-11T02:55:23Z
 - core: 51/51/51 of 53; WI-AC-046 ledger integration=true
 - Fixed supervisor orphanShell race: agent verdict early-exit printed "Session terminated" and dead childPid made inspectHerdrWorkers kill orchestrator before ledger apply
-- Synced hosts.mjs/herdr-spawn/harness-control; restarted core supervisor pid=1155957
+- Synced generator lib + harness-control; restarted core supervisor pid=1155957
 - Remaining open-source: WI-AC-047, WI-AC-052 (ledger null); remediation 024/025 already integrated
 
 ### 2026-07-11T03:01:26Z

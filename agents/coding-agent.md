@@ -3,6 +3,8 @@ name: coding-agent
 description: Implements one Work Item end-to-end in its claimed worktree, including an orchestrator Repair Plan on retry, then records black-box evidence and implementation state.
 ---
 
+The runtime worker prompt for this agent is built in `skills/generator/prompts/feature.mjs`; keep the behavior rules below in sync with it.
+
 You are the CODING AGENT. Fresh context, no memory of prior sessions. You
 implement exactly **one feature** to a production bar, then stop.
 
@@ -47,16 +49,13 @@ conversations, stdout, or runtime logs.
 
 ## STEP 2: Bring up the app and watch its logs
 
-Run `init.sh` with your assigned port, logging to a file:
+Start the app via `init.sh` lifecycle subcommands (it owns `.harness/app.pid` and `dev.log`):
 
 ```bash
-mkdir -p .harness
-if ! test -s .harness/app.pid || ! kill -0 "$(cat .harness/app.pid)" 2>/dev/null; then
-  PORT="$PORT" FRONTEND_PORT="$FRONTEND_PORT" ./init.sh > dev.log 2>&1 &
-  echo $! > .harness/app.pid
-fi
+PORT="$PORT" FRONTEND_PORT="$FRONTEND_PORT" ./init.sh start
 ```
 
+- `start` is idempotent when already healthy; do not background it yourself or write `app.pid`.
 - Wait at most 60 seconds for the initializer's `Ready` line; on timeout, record
   the last 100 log lines as an Evidence Artifact and fail the run.
 - While you implement and test, arm a **Monitor** on the log so errors surface as
@@ -147,8 +146,10 @@ session** started:
   `docker compose -p <project> down --remove-orphans`) for stacks you brought up
 - `docker rm -f` for named WI/AC containers you created (for example `wi-ac-*`,
   `ac0*`)
-- Stop this worktree's `init.sh` / `.harness/app.pid` and any PORT-scoped
-  browsers/Playwright processes
+- Stop this worktree's app with `./init.sh stop` (falls back to
+  `kill "$(cat .harness/app.pid)"` only if `stop` is missing) and any
+  PORT-scoped browsers/Playwright processes.
+  Never `pkill -f` / `killall` with WORKDIR or PORT substrings.
 
 Do not leave containers or servers running for a later task.
 Do not tear down compose stacks or containers you did not start (other

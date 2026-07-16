@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import {
   sanitizeKey,
@@ -57,7 +57,48 @@ export function readProjectsRegistry(gitRoot) {
 }
 
 /**
+ * Resolve the project root (the directory owning project_specs.xml) for a
+ * working directory: nearest spec on the walk up to the Git root wins, then
+ * the projects registry disambiguates.
+ */
+export function resolveProjectRoot(startDir) {
+  const start = realpathSync(resolve(startDir))
+  const gitRoot = resolveGitRoot(start)
+  let dir = start
+  for (;;) {
+    if (existsSync(join(dir, 'project_specs.xml'))) return dir
+    if (dir === gitRoot || dirname(dir) === dir) break
+    dir = dirname(dir)
+  }
+  const registry = readProjectsRegistry(gitRoot)
+  const candidates = (registry?.projects || []).filter(
+    (project) => project?.path && existsSync(join(gitRoot, project.path, 'project_specs.xml')),
+  )
+  if (candidates.length === 1) return resolve(gitRoot, candidates[0].path)
+  if (candidates.length > 1) {
+    const listed = candidates.map((project) => `${project.id} (${project.path})`).join(', ')
+    throw new Error(`multiple registered projects contain project_specs.xml: ${listed}; pass the project directory explicitly`)
+  }
+  throw new Error(`no project_specs.xml found from ${start} up to ${gitRoot}; run /planner or /harness:setup first, or pass the project directory explicitly`)
+}
+
+function fileMtimeMs(file) {
+  try { return statSync(file).mtimeMs } catch { return 0 }
+}
+
+function topologyCacheStamp(gitRoot, envBranch) {
+  return [
+    envBranch || '',
+    fileMtimeMs(join(gitRoot, '.harness', 'projects.json')),
+    fileMtimeMs(join(gitRoot, '.harness', 'integration-branch')),
+  ].join(':')
+}
+
+const topologyCache = new Map()
+
+/**
  * Resolve project topology for a working directory.
+ * Cached per realpath + registry/branch stamp for the process lifetime.
  * @returns {{
  *   gitRoot: string,
  *   commonGit: string,
@@ -70,7 +111,18 @@ export function readProjectsRegistry(gitRoot) {
  *   registry: object|null,
  * }}
  */
-export function resolveProjectTopology(repo, { env = process.env } = {}) {
+export function resolveProjectTopology(repo, { env = process.env, bustCache = false } = {}) {
+  let abs
+  try { abs = realpathSync(resolve(repo)) } catch { abs = resolve(repo) }
+  const envBranch = env.HARNESS_INTEGRATION_BRANCH?.trim() || ''
+  const cacheKey = abs
+  if (!bustCache) {
+    const hit = topologyCache.get(cacheKey)
+    if (hit) {
+      const stamp = topologyCacheStamp(hit.gitRoot, envBranch)
+      if (hit.stamp === stamp && hit.envBranch === envBranch) return hit.value
+    }
+  }
   const gitRoot = resolveGitRoot(repo)
   const commonGit = resolveCommonGitDir(repo)
   const projectPrefix = resolveProjectPrefix(repo)
@@ -83,7 +135,7 @@ export function resolveProjectTopology(repo, { env = process.env } = {}) {
     : join(commonGit, 'harness-control')
   const runsDir = join(commonGit, 'harness-runs')
   const registry = readProjectsRegistry(gitRoot)
-  return {
+  const value = {
     gitRoot,
     commonGit,
     projectPrefix,
@@ -94,6 +146,13 @@ export function resolveProjectTopology(repo, { env = process.env } = {}) {
     runsDir,
     registry,
   }
+  topologyCache.set(cacheKey, {
+    value,
+    gitRoot,
+    envBranch,
+    stamp: topologyCacheStamp(gitRoot, envBranch),
+  })
+  return value
 }
 
 export function runStatePath(topology, context) {

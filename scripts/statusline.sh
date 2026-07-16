@@ -2,7 +2,9 @@
 # Claude Code status line script
 # Two lines:
 #   line 1: [model] 📁 dir │ 🌿 branch (+worktrees)
-#   line 2: <ctx bar> % (tokens) │ $cost │ ⏱ time-until-5h-reset │ 5h/7d limits │ tmux
+#   line 2: <ctx bar> % (tokens) │ $cost │ ⏱ to 5h │ ⏱ to 7d │ 5h/7d limits │ tmux
+# Context and cost segments are gated on numeric fields so empty/null payload
+# columns cannot shift into the wrong slot (e.g. epoch shown as $cost).
 
 # ── ANSI colors (will be dimmed by Claude Code) ──────────────────────────────
 RESET="\033[0m"
@@ -113,8 +115,9 @@ esac
 EOF
   chmod +x "$tmp_selftest/bin/git"
   reset_epoch=$(( $(date +%s) + 423 ))
+  seven_reset_epoch=$(( $(date +%s) + 86400 ))
   payload=$(cat <<JSON
-{"model":{"display_name":"Test Model"},"workspace":{"current_dir":"$tmp_selftest/repo"},"context_window":{"used_percentage":42,"total_input_tokens":12000,"total_output_tokens":3400,"context_window_size":200000},"cost":{"total_cost_usd":1.23},"rate_limits":{"five_hour":{"resets_at":$reset_epoch,"used_percentage":70},"seven_day":{"used_percentage":20}}}
+{"model":{"display_name":"Test Model"},"workspace":{"current_dir":"$tmp_selftest/repo"},"context_window":{"used_percentage":42,"total_input_tokens":12000,"total_output_tokens":3400,"context_window_size":200000},"cost":{"total_cost_usd":1.23},"rate_limits":{"five_hour":{"resets_at":$reset_epoch,"used_percentage":70},"seven_day":{"resets_at":$seven_reset_epoch,"used_percentage":20}}}
 JSON
 )
   export HARNESS_STATUSLINE_REPO="$tmp_selftest/repo"
@@ -123,29 +126,52 @@ JSON
   printf '%s' "$rendered" | grep -q 'Test Model' || { echo "statusline missing model: $rendered"; exit 1; }
   printf '%s' "$rendered" | grep -q '42%' || { echo "statusline missing context: $rendered"; exit 1; }
   printf '%s' "$rendered" | grep -q '\$1.23' || { echo "statusline missing cost: $rendered"; exit 1; }
+  printf '%s' "$rendered" | grep -q 'to 5h' || { echo "statusline missing 5h timer: $rendered"; exit 1; }
+  printf '%s' "$rendered" | grep -q 'to 7d' || { echo "statusline missing 7d timer: $rendered"; exit 1; }
   printf '%s' "$rendered" | grep -q 'main' || { echo "statusline missing branch: $rendered"; exit 1; }
   ! grep -q 'worktree list' "$tmp_selftest/git.log" || { echo "statusline should skip worktree list for single-worktree repos"; exit 1; }
+
+  null_ctx_payload=$(cat <<JSON
+{"model":{"display_name":"Null Ctx"},"workspace":{"current_dir":"$tmp_selftest/repo"},"context_window":{"total_input_tokens":12000,"total_output_tokens":3400,"context_window_size":200000},"cost":{"total_cost_usd":2.50},"rate_limits":{"five_hour":{"resets_at":$reset_epoch,"used_percentage":70},"seven_day":{"used_percentage":20}}}
+JSON
+)
+  null_ctx_rendered=$(PATH="$tmp_selftest/bin:$PATH" bash "$0" <<<"$null_ctx_payload")
+  printf '%s' "$null_ctx_rendered" | grep -q '\$2.50' || { echo "null context missing cost: $null_ctx_rendered"; exit 1; }
+  printf '%s' "$null_ctx_rendered" | grep -q '42%' && { echo "null context must not show context bar: $null_ctx_rendered"; exit 1; }
+  printf '%s' "$null_ctx_rendered" | grep -qE '\$'"$reset_epoch" && { echo "null context showed epoch as cost: $null_ctx_rendered"; exit 1; }
+
   echo "selftest ok"; exit 0
 fi
 
 input=$(cat)
 
+# One jq parse; use "-" sentinels so empty/null middle columns never shift TSV fields.
 fields=$(printf '%s' "$input" | jq -r '[
-  .model.display_name // "",
-  .workspace.current_dir // .cwd // "",
-  .context_window.used_percentage // "",
-  .context_window.total_input_tokens // 0,
-  .context_window.total_output_tokens // 0,
-  .context_window.context_window_size // 0,
-  .cost.total_cost_usd // "",
-  .rate_limits.five_hour.resets_at // "",
-  .rate_limits.five_hour.used_percentage // "",
-  .rate_limits.seven_day.used_percentage // "",
-  .rate_limits.monthly.used_percentage // ""
+  (.model.display_name // "-"),
+  (.workspace.current_dir // .cwd // "-"),
+  (if (.context_window.used_percentage | type) == "number" then .context_window.used_percentage else "-" end),
+  (.context_window.total_input_tokens // 0),
+  (.context_window.total_output_tokens // 0),
+  (.context_window.context_window_size // 0),
+  (if (.cost.total_cost_usd | type) == "number" then .cost.total_cost_usd else "-" end),
+  (if (.rate_limits.five_hour.resets_at | type) == "number" then .rate_limits.five_hour.resets_at else "-" end),
+  (if (.rate_limits.five_hour.used_percentage | type) == "number" then .rate_limits.five_hour.used_percentage else "-" end),
+  (if (.rate_limits.seven_day.resets_at | type) == "number" then .rate_limits.seven_day.resets_at else "-" end),
+  (if (.rate_limits.seven_day.used_percentage | type) == "number" then .rate_limits.seven_day.used_percentage else "-" end),
+  (if (.rate_limits.monthly.used_percentage | type) == "number" then .rate_limits.monthly.used_percentage else "-" end)
 ] | @tsv')
-IFS=$'\t' read -r model cwd used_pct total_in total_out ctx_size cost five_reset five_pct seven_pct monthly_pct <<EOF
+IFS=$'\t' read -r model cwd used_pct total_in total_out ctx_size cost five_reset five_pct seven_reset seven_pct monthly_pct <<EOF
 $fields
 EOF
+[ "$model" = "-" ] && model=""
+[ "$cwd" = "-" ] && cwd=""
+[ "$used_pct" = "-" ] && used_pct=""
+[ "$cost" = "-" ] && cost=""
+[ "$five_reset" = "-" ] && five_reset=""
+[ "$five_pct" = "-" ] && five_pct=""
+[ "$seven_reset" = "-" ] && seven_reset=""
+[ "$seven_pct" = "-" ] && seven_pct=""
+[ "$monthly_pct" = "-" ] && monthly_pct=""
 
 # ── Model badge ───────────────────────────────────────────────────────────────
 model_part=""
@@ -157,7 +183,7 @@ dir_part=""
 
 # ── Context window (bar + % + tokens) ─────────────────────────────────────────
 ctx_part=""
-if [ -n "$used_pct" ]; then
+if [[ "$used_pct" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
   in_fmt=$(fmt_tokens "$total_in")
   out_fmt=$(fmt_tokens "$total_out")
   size_fmt=$(fmt_tokens "$ctx_size")
@@ -166,15 +192,19 @@ fi
 
 # ── Cost ──────────────────────────────────────────────────────────────────────
 cost_part=""
-if [ -n "$cost" ]; then
+if [[ "$cost" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
   cost_fmt=$(printf "%.2f" "$cost" 2>/dev/null) || cost_fmt="$cost"
   cost_part="${C_GREEN}\$${cost_fmt}${RESET}"
 fi
 
-# ── Time until the 5-hour rate-limit window resets ───────────────────────────
+# ── Time until the 5-hour / 7-day rate-limit windows reset ────────────────────
 reset_part=""
 if [ -n "$five_reset" ]; then
   reset_part="⏱ $(fmt_dur "$(( five_reset - $(date +%s) ))")${DIM} to 5h${RESET}"
+fi
+seven_reset_part=""
+if [ -n "$seven_reset" ]; then
+  seven_reset_part="⏱ $(fmt_dur "$(( seven_reset - $(date +%s) ))")${DIM} to 7d${RESET}"
 fi
 
 # ── Rate-limit percentages ────────────────────────────────────────────────────
@@ -224,9 +254,6 @@ if [ -n "$TMUX" ] && command -v tmux >/dev/null 2>&1; then
 fi
 
 # ── Assemble: two lines (identity, then usage) ───────────────────────────────
-# ponytail: always two lines (matches the screenshot); skipped measuring terminal
-# width to decide 1-vs-2 — the harness has no width in the payload, two lines reads
-# fine at any size.
 join_parts() {
   local out="" p
   for p in "$@"; do
@@ -240,7 +267,7 @@ id_part="$model_part"
 [ -n "$dir_part" ] && id_part="${id_part:+$id_part }$dir_part"
 
 line1=$(join_parts "$id_part" "$git_part")
-line2=$(join_parts "$ctx_part" "$cost_part" "$reset_part" "$rate_part" "$tmux_part")
+line2=$(join_parts "$ctx_part" "$cost_part" "$reset_part" "$seven_reset_part" "$rate_part" "$tmux_part")
 
 if [ -n "$line1" ] && [ -n "$line2" ]; then
   printf "%b\n%b\n" "$line1" "$line2"

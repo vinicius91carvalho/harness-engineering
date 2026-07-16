@@ -23,15 +23,15 @@ const catalogPath = join(root, 'config/installable-catalog.json')
 const MARKETPLACE_HOSTS = {
   claude: {
     file: '.claude-plugin/marketplace.json',
-    plugins: ['harness', 'ponytail'],
+    plugins: ['harness'],
   },
-  codex: { file: '.agents/plugins/marketplace.json', plugins: ['harness', 'ponytail', 'skill-creator'] },
-  cursor: { file: '.cursor-plugin/marketplace.json', plugins: ['harness', 'ponytail', 'skill-creator'] },
+  codex: { file: '.agents/plugins/marketplace.json', plugins: ['harness', 'skill-creator'] },
+  cursor: { file: '.cursor-plugin/marketplace.json', plugins: ['harness', 'skill-creator'] },
 }
 
 const FORBIDDEN_MARKETPLACE = new Set([
   'codebase-memory-mcp', 'context7', 'playwright', 'crawl4ai',
-  'lavish-axi', 'hallmark', 'no-mistakes', 'treehouse', 'firstmate',
+  'lavish-axi', 'hallmark', 'no-mistakes', 'treehouse', 'firstmate', 'ponytail',
   'status-line', 'shared-config', 'mcp-servers',
 ])
 
@@ -70,9 +70,6 @@ function expectedSource(mod, host) {
   }
   if (mod.kind === 'external' && mod.acquisition?.github) {
     return { kind: 'github', repo: mod.acquisition.github }
-  }
-  if (mod.id === 'ponytail') {
-    return { kind: 'github', repo: 'DietrichGebert/ponytail' }
   }
   return null
 }
@@ -150,7 +147,7 @@ export async function validateMarketplaces(repo = root) {
   }
 
   const optional = optionalModuleIds(catalog).sort().join(' ')
-  const fallback = 'codebase-memory-mcp context7 crawl4ai firstmate hallmark lavish-axi mcp-servers no-mistakes playwright ponytail shared-config skill-creator status-line treehouse'
+  const fallback = 'crawl4ai hallmark no-mistakes playwright shared-config skill-creator status-line treehouse'
   const expectedOptional = fallback.split(' ').sort().join(' ')
   if (optional !== expectedOptional) {
     errors.push(`optional module ids drifted from installer fallback (${optional} vs ${expectedOptional})`)

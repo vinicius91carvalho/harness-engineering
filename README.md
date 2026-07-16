@@ -13,7 +13,8 @@
 
 `harness-engineering` is a plugin marketplace plus a **spec → build → QA → Goal Review** workflow.
 The harness owns completion policy; [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://developers.openai.com/codex/), [OpenCode](https://opencode.ai/), [Cursor Agent](https://cursor.com/docs/cli/overview), and [Pi](https://pi.dev/) run it.
-Optional [herdr](https://herdr.dev/) shows workers in terminal panes, auto-selected inside a herdr workspace; optional `.harness/roles.json` routes phases to ordered tool/model candidates.
+Optional [`.harness/roles.json`](config/roles.example.json) routes phases to ordered tool/model candidates.
+Workers always run in the background.
 
 **Done means evidence:** independent QA, integration on the plan branch, and a final Goal Review — not an empty task list.
 
@@ -25,7 +26,7 @@ A local checkout of this repo is different: `./install.sh` uses the working tree
 
 ## Examples
 
-What a live run looks like in practice: supervisor status in chat, and per-Work-Item agent tabs when herdr is enabled.
+What a live run looks like in practice: supervisor status in chat and background workers monitored through `harness-control status` and worker logs.
 
 ### Supervisor status
 
@@ -36,13 +37,13 @@ The same snapshot is available from `harness-control.mjs status`.
   <img src="assets/example-supervisor.png" alt="Supervisor status table showing core progress, merge-lock remediation, and per-context worker rows" width="960">
 </p>
 
-### Agent workers in herdr
+### Agent workers (background)
 
-Each Work Item opens in its own tab while the supervisor keeps the fleet healthy.
-Workers stream live thinking, tool calls, and MCP warmup in the pane.
+Each Work Item runs as a background orchestrator process.
+Monitor progress through `harness-control status`, `fleet-snapshot`, and logs under `.git/harness-control/<project>/logs/`.
 
 <p align="center">
-  <img src="assets/example-agent-herdr.png" alt="herdr workspace with supervisor overview and per-Work-Item agent tabs" width="960">
+  <img src="assets/example-agent-herdr.png" alt="Supervisor status and worker health rows during a live run" width="960">
 </p>
 
 ### Real project: CauseFlow AI
@@ -74,7 +75,7 @@ The installer then clones the **latest GitHub Release tag** (or a pin — see [I
 **Existing repo, no new feature yet?** Run `/harness:setup` (no arguments) instead of planner.
 **Long unattended run?** Use `/harness:supervisor` after planning.
 
-→ **[Complete guide](https://vinicius91carvalho.github.io/harness-engineering/)** — diagrams, worked examples, role routing, herdr, troubleshooting.
+→ **[Complete guide](https://vinicius91carvalho.github.io/harness-engineering/)** — diagrams, worked examples, role routing, troubleshooting.
 
 ## Framework
 
@@ -114,7 +115,7 @@ The orchestrator picks them per phase from `agents/` and optional `.harness/role
 
 | Agent | Phase | Role |
 | --- | --- | --- |
-| `initializer` | Scaffold (once) | Queue + `init.sh` + first commit — never implements features |
+| `initializer` | Scaffold (once) | Queue + `init.sh` (`start|stop|restart|status|help`) + first commit - never implements features |
 | `coding-agent` | Code | Implements one Work Item in its worktree |
 | `qa-agent` | QA / Integrated Verification | Independent browser or HTTP checks |
 
@@ -137,8 +138,8 @@ See [CONTEXT.md](CONTEXT.md) for the full glossary and bounded contexts.
 
 ## How the workflow runs
 
-1. **Specify** — planner grills open product questions, opens a localhost spec review until you submit, then writes the Project Goal, product vocabulary and bounded contexts under `<domain>`, Acceptance Checks, and `<planning_decisions>` (setup maps an existing repo without grilling a new goal).
-2. **Reconcile** — generator maps every check to a Work Item (missing mappings block execution).
+1. **Specify** — planner grills open product questions, opens a localhost spec review until you submit, then writes the Project Goal, product vocabulary and bounded contexts under `<domain>`, Acceptance Checks, and `<planning_decisions>` (setup maps an existing repo without grilling a new goal); finalize also registers the project in `.harness/projects.json` and pins `.harness/integration-branch` when none exists yet.
+2. **Reconcile** — generator maps every check to a Work Item (missing mappings block execution); it resolves `PROJECT` itself, walking up from the working directory for the nearest `project_specs.xml` and falling back to `.harness/projects.json`, so a fresh session run from anywhere in the repo finds the plan.
 3. **Claim** — each ready context gets a lease, branch, worktree, and port.
 4. **Build & inspect** — coding-agent implements; qa-agent tests at a real boundary.
 5. **Repair** — defects produce evidence + Repair Plan; three Attempts then block for input.
@@ -166,8 +167,10 @@ Create one plan branch (for example `plan/opensource-docker`) and pin it at the 
 plan/opensource-docker
 ```
 
+Planner `finalize` creates this pin automatically (`plan/<slug>`, derived from the project name) whenever none exists yet, so most goals never need this step by hand.
 The harness merges each `gen/<project>-<context>` Work Item branch into that plan branch only.
 Goal Review runs on the integrated plan branch.
+Integration checkouts live in one Git-root sibling worktree per plan branch (`<gitRoot>-wt-integration`); a subproject uses its own prefix subdirectory inside it rather than a separate worktree.
 When the plan ships, merge the plan branch to `main` in one deliberate PR — not piecemeal during the run.
 
 Override for a single run with `HARNESS_INTEGRATION_BRANCH=plan/my-feature`.
@@ -192,7 +195,7 @@ The script resolves the latest `vX.Y.Z` release tag (or your pin via `--version`
 A local checkout of this repository installs from the working tree instead (dev mode).
 
 Arrow-key checklist: keep `harness` checked; add MCP or extras if you want them.
-The optional status line reads the CLI payload once per render and only enumerates linked Git worktrees when the repo actually has a worktree registry.
+The optional status line reads the CLI payload once per render, shows 5h and 7d renew countdowns when reset timestamps are present, and only enumerates linked Git worktrees when the repo actually has a worktree registry.
 Windows: [`install.ps1`](install.ps1). Details: [installer docs](docs/installer/README.md).
 
 ## Start a project
@@ -358,7 +361,9 @@ Progress flags (`implementation`, `qa`, `integration`) are defaults in the catal
 
 Dependencies need `integration:true`; Goal Review still runs afterward.
 
-Monorepos: run setup once at the Git root — it writes `.harness/projects.json` and scopes each app. See the [monorepo guide](https://vinicius91carvalho.github.io/harness-engineering/#monorepo).
+Monorepos: run setup once at the Git root — it writes `.harness/projects.json` and scopes each app.
+A goal that spans multiple registered projects anchors `project_specs.xml` at the Git root instead of one subproject, with each Acceptance Check naming the subproject it changes.
+See the [monorepo guide](https://vinicius91carvalho.github.io/harness-engineering/#monorepo).
 
 ## Monitor a run
 
@@ -394,17 +399,15 @@ bash "$GEN/claim.sh" list "$PROJECT"
 | Build says `blocked` | Review journal + evidence; resume with guidance: `bash "$GEN/claim.sh" resume "$PROJECT" "$CONTEXT" $$ force` |
 | Looks done but won't complete | The supervisor is still draining its retry queue (up to 5 attempts per context) — check `status` or answer pending Input Requests |
 | Worker crashed / stale lease | Auto-resume after `HARNESS_LEASE_TIMEOUT_SECONDS` (default 60s); `force` only if the owner process is truly dead. Permission-denied PID probes count as live, and Fleet Snapshot ignores worker rows whose recorded PID is dead. |
-| No progress / workers idle with pending inputs | Context-scoped `input_required` events auto-retry each supervisor tick; if still stuck, check `pendingInputs` and worker logs |
-| `status` lists workers but herdr has no tabs | Monorepo bug if cleanup is not project-scoped — each supervisor must only close `worker-<project>-*` tabs |
-| Finished tab still open after worker ended | Supervisor closes the worker tab when the shell exits or run state is terminal; reattach live tabs after supervisor restart via `rehydrateHerdrWorkers` |
-| Supervisors dead but panes still show workers | Restart all four subproject supervisors; orchestrators survive in panes and `rehydrateHerdrWorkers` reattaches them. Supervisor exit no longer closes herdr panes. |
+| No progress / workers idle with pending inputs | Context-scoped `input_required` events auto-retry each supervisor tick; if still stuck, check `pendingInputs`, `workerHealth`, and worker logs under `.git/harness-control/<project>/logs/` |
+| `status` lists workers but PIDs are dead | Ghost worker row — restart supervisor; check `fleetSnapshot` and `workerHealth` |
 | `supervisor lease was lost` / supervisors exit mid-run | Lease is re-acquired on the next heartbeat instead of fatal-exiting; tick errors are logged and the loop continues |
 | pi `Session terminated…killed` / high swap | Host memory pressure from dockerd, docs builds, or parallel browsers. Resource Governor now reports swap pressure and weighted reservations; restart with lower `--max-workers` or higher `--memory-per-worker-mb` only after checking `fleetSnapshot.projects[].hostResources` and `pressureAdvice`. |
 | Orphan Docker after finished WIs | Coding/QA must tear down compose/containers they started before the verdict. Shared infra containers stay behind a Shared Runtime Lease; private app containers and owned runtime manifest entries are safe to stop (`docker compose -p … down`, `docker rm -f wi-ac-*` / completed stacks). |
 
 Full symptom list: [site troubleshooting](https://vinicius91carvalho.github.io/harness-engineering/#troubleshoot).
 
-## Optional: role routing and herdr
+## Optional: role routing
 
 Role routing is not required to plan, generate, validate, integrate, or review work.
 
@@ -414,17 +417,9 @@ Validation and Goal Review prefer Composer / Codex / Claude first so http/browse
 `reconcile.mjs` stores `observation_method` on Work Items; the orchestrator filters weak harnesses to the end for http/browser QA.
 Supervisor `status` exposes `workerHealth`, `mergeLock`, and Fleet Snapshot resource bearings so 20-minute polls can see real progress vs merge-lock wait vs stuck vs resource pressure.
 Pi stays available as a transport for those expensive rescue models; it is not the everyday coding host.
+Workers always run in the background. Monitor them with `harness-control status`, worker logs under `.git/harness-control/`, and `fleet-snapshot`.
 
-[herdr](https://herdr.dev/) is optional terminal visibility. It's auto-selected when the supervisor starts inside a herdr workspace (`HERDR_ENV=1`) with `herdr` installed; pass `--display background` to force background, or `--display herdr` to force herdr when available.
-See [Examples](#examples) for agent workers in a herdr workspace.
-
-In herdr mode each worker gets its own tab named `{taskId} - {role} - {project} - r{retry}` and streams the live agent session (thinking, tool calls, verdicts) via a flushed PTY (`script -f`). For `pi`, the orchestrator uses `--mode json` and formats thinking/tool events in real time. Finished workers close their tabs immediately — you should not see idle shells after a job ends.
-
-Cursor Task/Subagent mirror tabs use the bundled `skills/supervisor/herdr-cursor/herdr-subagent-logview.py` beside the hook script, with `~/.cursor` only as a local fallback for registry and legacy helper files.
-
-Optional [Collie](https://github.com/AltanS/collie) is a herdr plugin for mobile access over Tailscale — watch panes and reply from your phone when the supervisor needs input.
-
-→ [Routing guide](https://vinicius91carvalho.github.io/harness-engineering/#routing) · [Herdr visibility](https://vinicius91carvalho.github.io/harness-engineering/#herdr)
+→ [Routing guide](https://vinicius91carvalho.github.io/harness-engineering/#routing)
 
 To remove a prior Omnigent install from this machine:
 
@@ -437,7 +432,7 @@ uv tool uninstall omnigent 2>/dev/null || true
 
 | Guide | Contents |
 | --- | --- |
-| [Complete guide](https://vinicius91carvalho.github.io/harness-engineering/) | Full workflow, examples, role routing, herdr |
+| [Complete guide](https://vinicius91carvalho.github.io/harness-engineering/) | Full workflow, examples, role routing |
 | [CONTEXT.md](CONTEXT.md) | Ubiquitous language + bounded contexts |
 | [Plugins](docs/plugins.md) | Optional integrations |
 | [Installer](docs/installer/README.md) | Flags and dry runs |

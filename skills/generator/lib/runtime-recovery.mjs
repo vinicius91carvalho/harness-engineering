@@ -7,6 +7,7 @@ export function planRuntimeRecovery({
   staleLocks = [],
   crashCounts = {},
   snapshotCounts = {},
+  pressureReason = null,
 } = {}) {
   const actions = []
   const events = []
@@ -49,10 +50,16 @@ export function planRuntimeRecovery({
       workers: active,
       ghostCount: ghosts.length,
       repaired,
+      pressureReason: pressureReason ?? null,
       remaining: snapshotCounts || {},
     },
     immediate: !repaired,
   })
 
   return { actions, events, statePatch, repaired, emptyFleetActionable: true }
+}
+
+export function shouldEmitEmptyFleet(last, detail, now, windowMs = 60_000) {
+  if (!last || JSON.stringify(last.detail) !== JSON.stringify(detail)) return true
+  return now - last.at >= windowMs
 }

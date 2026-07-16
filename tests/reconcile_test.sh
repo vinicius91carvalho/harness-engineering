@@ -85,3 +85,35 @@ jq -e '.filledDependsOn == ["WI-AC-002"]' "$TMP/fill-result.json" >/dev/null
 jq -e '.[1].depends_on == ["AC-001"]' "$TMP/fill/feature_list.json" >/dev/null
 node "$ROOT/skills/generator/reconcile.mjs" "$TMP/fill" --check >/dev/null
 echo 'ok - write-mode reconcile auto-fills omitted transitive dependencies on hand-authored Work Items'
+
+MONO="$TMP/mono"
+mkdir -p "$MONO/packages/a/src"
+git -C "$MONO" init -b main -q
+git -C "$MONO" config user.name test
+git -C "$MONO" config user.email test@example.invalid
+cp "$TMP/project_specs.xml" "$MONO/project_specs.xml"
+MONO_REAL=$(cd "$MONO" && pwd -P)
+PRINTED=$(cd "$MONO/packages/a/src" && node "$ROOT/skills/generator/reconcile.mjs" --print-root)
+[ "$PRINTED" = "$MONO_REAL" ]
+echo 'ok - --print-root resolves the root spec from a subdirectory before feature_list.json exists'
+
+printf '[]\n' >"$MONO/feature_list.json"
+(cd "$MONO/packages/a/src" && node "$ROOT/skills/generator/reconcile.mjs") >"$TMP/mono-result.json"
+jq -e --arg root "$MONO_REAL" '.projectRoot == $root and .addedWorkItems == 2' "$TMP/mono-result.json" >/dev/null
+jq -e 'length == 2' "$MONO/feature_list.json" >/dev/null
+echo 'ok - reconcile from a subdirectory with no positional arg resolves to the root spec'
+
+AMB="$TMP/amb"
+mkdir -p "$AMB/apps/web" "$AMB/apps/api" "$AMB/tools" "$AMB/.harness"
+git -C "$AMB" init -b main -q
+cp "$TMP/project_specs.xml" "$AMB/apps/web/project_specs.xml"
+cp "$TMP/project_specs.xml" "$AMB/apps/api/project_specs.xml"
+printf '{"projects":[{"id":"web","path":"apps/web"},{"id":"api","path":"apps/api"}]}\n' >"$AMB/.harness/projects.json"
+set +e
+(cd "$AMB/tools" && node "$ROOT/skills/generator/reconcile.mjs" --print-root) >/dev/null 2>"$TMP/amb-error"
+status=$?
+set -e
+[ "$status" -eq 2 ]
+grep -q 'web (apps/web), api (apps/api)' "$TMP/amb-error"
+grep -q 'pass the project directory explicitly' "$TMP/amb-error"
+echo 'ok - registry ambiguity exits 2 with the candidate list'

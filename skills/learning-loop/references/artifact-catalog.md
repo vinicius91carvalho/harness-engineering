@@ -25,7 +25,7 @@ harness-engineering — not `AGENTS.md` or `CLAUDE.md`.
 
 | Topic | Skill |
 |---|---|
-| Supervisor / herdr / worker health / fail-closed / fleet ops | `skills/supervisor/SKILL.md` and/or `skills/monorepo-supervisor-ops/SKILL.md` |
+| Supervisor / worker health / fail-closed / fleet ops | `skills/supervisor/SKILL.md` and/or `skills/monorepo-supervisor-ops/SKILL.md` |
 | Coding / QA / repair / plan branch / roles / OSS-first | `skills/generator/SKILL.md` |
 | Learning-loop routing itself | `skills/learning-loop/SKILL.md` |
 | Install / backup / host config | `skills/update-project/SKILL.md` or `skills/setup/SKILL.md` |

@@ -1,6 +1,7 @@
 /** Attempt loop for Work Items — coding, QA, integration, repair planning. */
 
 import { classifyFailure } from '../lib/failure-policy.mjs'
+import { startStateHeartbeat } from '../lib/state-heartbeat.mjs'
 
 export async function runAttemptLoop({
   wanted,
@@ -65,7 +66,7 @@ export async function runAttemptLoop({
     commitPaths(options.workdir, [file], `chore(harness): resume ${context}`)
   }
   await writeState({ status: 'running', phase: state.phase || 'starting', nextAction: state.nextAction || 'coding', featureIds: wanted })
-  setHeartbeatTimer(setInterval(() => writeState().catch(() => {}), 15_000))
+  setHeartbeatTimer(startStateHeartbeat(() => writeState(), { label: 'orchestrator' }))
   verifyFirstCache.set(options.workdir, await isVerifyFirst(options.workdir))
   const initial = await readFeatures()
   const selected = wanted.map((id) => initial.list.find((feature) => String(feature.id) === id))

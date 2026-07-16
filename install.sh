@@ -6,13 +6,10 @@ MARKETPLACE_REPO="vinicius91carvalho/harness-engineering"
 CLAUDE_MARKETPLACE="harness-engineering"
 CODEX_MARKETPLACE="harness-engineering"
 REPO_URL="https://github.com/$MARKETPLACE_REPO.git"
-MEMORY_INSTALLER="https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh"
 NO_MISTAKES_INSTALLER="https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh"
 TREEHOUSE_INSTALLER="https://kunchenguid.github.io/treehouse/install.sh"
-FIRSTMATE_REPO="https://github.com/kunchenguid/firstmate.git"
-FIRSTMATE_HOME=${FIRSTMATE_HOME:-$HOME/.local/share/firstmate}
 REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd || true)
-DEFAULT_OPTIONAL="ponytail lavish-axi hallmark no-mistakes treehouse firstmate skill-creator codebase-memory-mcp context7 playwright crawl4ai status-line shared-config mcp-servers"
+DEFAULT_OPTIONAL="hallmark no-mistakes treehouse skill-creator playwright crawl4ai status-line shared-config"
 OPTIONAL=$DEFAULT_OPTIONAL
 if [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/config/installable-catalog.json" ] && command -v node >/dev/null 2>&1; then
   OPTIONAL=$(node "$REPO_ROOT/scripts/install-reconcile.mjs" optional-ids 2>/dev/null) || OPTIONAL=$DEFAULT_OPTIONAL
@@ -124,20 +121,14 @@ menu_item_blurb() {
     host:agent) printf '%s' "Cursor Agent CLI for headless workflows in Cursor." ;;
     host:all) printf '%s' "Install to every detected host above." ;;
     install:harness) printf '%s' "Spec→build→QA pipeline with planner, generator, evaluator, supervisor, learning loop, and project backup." ;;
-    install:ponytail) printf '%s' "Lazy senior-dev mode: YAGNI, stdlib first, no unrequested abstractions." ;;
-    install:lavish-axi) printf '%s' "Lavish Editor for agent HTML artifacts. Installs the lavish skill globally via npx skills." ;;
     install:hallmark) printf '%s' "Anti-AI-slop design skill. Installs the hallmark skill globally via npx skills." ;;
     install:no-mistakes) printf '%s' "Git push gate with AI validation. Installs the upstream binary; run no-mistakes init per repository afterward." ;;
     install:treehouse) printf '%s' "Reusable git worktree pool for agents. Installs the upstream treehouse CLI." ;;
-    install:firstmate) printf '%s' "Orchestrator agent crew home. Clones firstmate to ~/.local/share/firstmate for harness launch." ;;
     install:skill-creator) printf '%s' "Multi-agent pipeline to create, evaluate, benchmark, and refine AI coding skills." ;;
-    install:codebase-memory-mcp) printf '%s' "High-performance code intelligence MCP server. Indexes codebases into a persistent knowledge graph — average repo in milliseconds. 158 languages, sub-ms queries, 99%% fewer tokens." ;;
-    install:context7) printf '%s' "Up-to-date, version-specific library documentation through Upstash remote MCP." ;;
     install:playwright) printf '%s' "Browser automation and E2E testing through Microsoft official Playwright MCP server." ;;
     install:crawl4ai) printf '%s' "Web crawling and structured extraction. Installs the Python package plus a bundled skill per host." ;;
     install:status-line) printf '%s' "Custom status bar for Claude; built-in status items for Codex (model, git branch, context usage)." ;;
     install:shared-config) printf '%s' "Atomically merge the project shareable Claude settings while preserving your existing preferences." ;;
-    install:mcp-servers) printf '%s' "Restore MCP servers from the project inventory. Prompts once for redacted secrets per server." ;;
   esac
 }
 
@@ -264,15 +255,17 @@ catalog_repo() {
   elif [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/config/installable-catalog.json" ]; then
     printf '%s\n' "$REPO_ROOT"
   fi
+  # Always succeed: missing catalog is normal for curl|sh before staging.
+  return 0
 }
 
 record_receipt() {
   module=$1
   json=$2
   [ -n "$DRY" ] && return
-  repo=$(catalog_repo)
-  [ -n "$repo" ] || return
-  [ -f "$repo/scripts/install-reconcile.mjs" ] || return
+  repo=$(catalog_repo) || true
+  [ -n "$repo" ] || return 0
+  [ -f "$repo/scripts/install-reconcile.mjs" ] || return 0
   mkdir -p "$RECEIPT_DIR"
   node "$repo/scripts/install-reconcile.mjs" record-receipt "$RECEIPT_DIR" "$module" "$json" >/dev/null 2>&1 || true
 }
@@ -285,11 +278,12 @@ plugin_clis() {
   fi
   case "$name" in
     harness) echo 'claude codex opencode pi agent' ;;
-    ponytail) echo 'claude codex opencode agent' ;;
     skill-creator) echo 'claude codex opencode pi agent' ;;
-    codebase-memory-mcp|context7|playwright) echo 'claude codex opencode agent' ;;
+    hallmark) echo 'claude codex opencode agent' ;;
+    no-mistakes) echo 'claude codex opencode pi agent' ;;
+    treehouse) echo 'claude codex opencode agent' ;;
+    playwright) echo 'claude codex opencode agent' ;;
     crawl4ai) echo 'claude codex opencode pi agent' ;;
-    mcp-servers) echo 'claude codex opencode agent' ;;
     status-line) echo 'claude codex' ;;
     shared-config) echo claude ;;
   esac
@@ -380,16 +374,7 @@ cleanup_opencode_plugin_files() {
 
 install_opencode_plugin() {
   name=$1
-  [ -n "$DRY" ] && { if [ "$name" = ponytail ]; then echo "DRY RUN — npm install @dietrichgebert/ponytail"; echo "DRY RUN — register ponytail in OpenCode plugin config"; else echo "DRY RUN — install namespaced OpenCode skills, agents, and commands for $name"; fi; return; }
-  if [ "$name" = ponytail ]; then
-    command -v npm >/dev/null 2>&1 || die 'npm is required to install the ponytail OpenCode plugin'
-    npm install -g @dietrichgebert/ponytail || die 'npm install of ponytail failed'
-    ponytail_version=$(npm list -g @dietrichgebert/ponytail --json 2>/dev/null | jq -r '.dependencies["@dietrichgebert/ponytail"].version // empty' || true)
-    record_receipt ponytail "{\"npm\":\"@dietrichgebert/ponytail\",\"version\":\"${ponytail_version:-unknown}\"}"
-    cleanup_opencode_plugin_files ponytail
-    atomic_opencode_plugin_add ponytail "@dietrichgebert/ponytail"
-    return
-  fi
+  [ -n "$DRY" ] && { echo "DRY RUN — install namespaced OpenCode skills, agents, and commands for $name"; return; }
   ensure_repo
   base=${XDG_CONFIG_HOME:-$HOME/.config}/opencode
   mkdir -p "$base/skills" "$base/agents" "$base/commands"
@@ -471,16 +456,7 @@ install_plugin() {
       if [ -n "$DRY" ]; then run claude plugin update "$name@$CLAUDE_MARKETPLACE" --scope "$SCOPE"
       else claude plugin update "$name@$CLAUDE_MARKETPLACE" --scope "$SCOPE" || claude plugin install "$name@$CLAUDE_MARKETPLACE" --scope "$SCOPE"
       fi ;;
-    codex)
-      if [ "$name" = ponytail ]; then
-        if [ -n "$DRY" ]; then run codex plugin marketplace upgrade ponytail
-        else codex plugin marketplace upgrade ponytail >/dev/null 2>&1 || codex plugin marketplace add https://github.com/DietrichGebert/ponytail
-        fi
-        run codex plugin add ponytail@ponytail
-      else
-        run codex plugin add "$name@$CODEX_MARKETPLACE"
-      fi
-      ;;
+    codex) run codex plugin add "$name@$CODEX_MARKETPLACE" ;;
     opencode) install_opencode_plugin "$name" ;;
     pi) [ "$name" = harness ] && install_pi_extension ;;
     agent)
@@ -559,61 +535,6 @@ apply_shared_config() {
   mv "$tmp" "$cfg"
 }
 
-install_mcp_inventory() {
-  [ -n "$DRY" ] && { echo "DRY RUN — prompt for and configure MCP inventory for:$CLI"; return; }
-  tty_available || { echo '   MCP inventory requires a TTY for secret prompts; skipped' >&2; return; }
-  ensure_repo; inventory=$TEMP_REPO/config/mcp.json; ensure_jq
-  [ -f "$inventory" ] || { echo '   no MCP inventory found'; return; }
-  for name in $(jq -r '.mcpServers | keys[]' "$inventory"); do
-    printf 'Configure MCP server %s? [y/N] ' "$name" >/dev/tty
-    IFS= read -r answer </dev/tty || answer=n
-    case "$answer" in y|Y|yes|YES) ;; *) continue ;; esac
-    json=$(jq -c --arg name "$name" '.mcpServers[$name]' "$inventory")
-    for placeholder in $(printf '%s' "$json" | grep -o '\${[A-Za-z0-9_]*}' | sort -u || true); do
-      key=$(printf '%s' "$placeholder" | tr -d '${}')
-      printf 'Value for %s (hidden; paste supported; Enter skips %s): ' "$key" "$name" >/dev/tty
-      # Hidden prompt: stty -echo when a real TTY is available.
-      if [ -t 0 ] || [ -c /dev/tty ]; then
-        stty -echo </dev/tty 2>/dev/null || true
-        IFS= read -r value </dev/tty || value=
-        stty echo </dev/tty 2>/dev/null || true
-        printf '\n' >/dev/tty
-      else
-        IFS= read -r value || value=
-      fi
-      [ -n "$value" ] || { json=; break; }
-      json=$(printf '%s' "$json" | jq -c --arg from "$placeholder" --arg to "$value" 'walk(if type=="string" then split($from) | join($to) else . end)')
-    done
-    [ -n "$json" ] || continue
-    for cli in $CLI; do
-      case "$cli" in
-        claude)
-          claude mcp remove "$name" --scope user >/dev/null 2>&1 || true
-          claude mcp add-json --scope user "$name" "$json" || die "Claude MCP configuration failed for $name" ;;
-        codex)
-          url=$(printf '%s' "$json" | jq -r '.url // empty')
-          if [ -n "$url" ]; then
-            codex mcp remove "$name" >/dev/null 2>&1 || true
-            codex mcp add "$name" --url "$url" >/dev/null 2>&1 || codex mcp get "$name" >/dev/null 2>&1 || die "Codex MCP configuration failed for $name"
-          else
-            command=$(printf '%s' "$json" | jq -r '.command')
-            args=$(printf '%s' "$json" | jq -r '.args[]?' | xargs)
-            # ponytail: env values are tokens (no spaces); simple word-split matches the args handling above
-            envflags=$(printf '%s' "$json" | jq -r '(.env // {}) | to_entries[] | "--env \(.key)=\(.value)"')
-            # shellcheck disable=SC2086
-            codex mcp add "$name" $envflags -- "$command" $args || die "Codex MCP configuration failed for $name"
-          fi ;;
-        opencode)
-          server=$(printf '%s' "$json" | jq -c 'if .url then {type:"remote",url:.url,enabled:true} else {type:"local",command:([.command]+(.args//[])),enabled:true} + (if .env then {environment:.env} else {} end) end')
-          atomic_opencode_mcp "$name" "$server" ;;
-        agent)
-          server=$(printf '%s' "$json" | jq -c 'if .url then {type:"http",url:.url} else {type:"stdio",command:.command,args:(.args//[])} + (if .env then {env:.env} else {} end) end')
-          atomic_cursor_mcp "$name" "$server" ;;
-      esac
-    done
-  done
-}
-
 atomic_opencode_json() {
   filter=$1; shift
   base=${XDG_CONFIG_HOME:-$HOME/.config}/opencode; cfg=$base/opencode.json
@@ -652,37 +573,6 @@ atomic_cursor_mcp() {
     '.mcpServers = (.mcpServers // {}) | .mcpServers[$name] = $server' "$cfg" >"$tmp" \
     || { rm -f "$tmp"; die "invalid Cursor MCP JSON in $cfg (backup retained)"; }
   mv "$tmp" "$cfg"
-}
-
-install_memory() {
-  if [ -n "$DRY" ]; then
-    echo "DRY RUN — download signed codebase-memory-mcp binary with --skip-config"
-    for cli in $CLI; do echo "DRY RUN — configure codebase-memory-mcp for $cli"; done
-    return
-  fi
-  binary=$(command -v codebase-memory-mcp 2>/dev/null || true)
-  if [ -z "$binary" ]; then
-    command -v curl >/dev/null 2>&1 || die 'curl is required to install codebase-memory-mcp'
-    installer=$(mktemp "${TMPDIR:-/tmp}/codebase-memory-install.XXXXXX")
-    curl -fsSL "$MEMORY_INSTALLER" -o "$installer" || die 'codebase-memory-mcp download failed; check network access and retry'
-    sh "$installer" --skip-config || die 'codebase-memory-mcp installer failed; inspect the upstream installer output'
-    rm -f "$installer"
-    binary=$(command -v codebase-memory-mcp 2>/dev/null || true)
-  fi
-  [ -n "$binary" ] && [ -x "$binary" ] || die 'codebase-memory-mcp binary was not found after installation; add it to PATH and retry'
-  memory_version=$("$binary" --version 2>/dev/null || true)
-  record_receipt codebase-memory-mcp "{\"binary\":\"$binary\",\"version\":\"${memory_version:-unknown}\"}"
-  "$binary" config set auto_index true || die 'could not enable codebase-memory-mcp auto-indexing'
-  for cli in $CLI; do
-    case "$cli" in
-      claude)
-        claude mcp remove codebase-memory-mcp --scope user >/dev/null 2>&1 || true
-        claude mcp add-json --scope user codebase-memory-mcp "{\"command\":\"$binary\",\"args\":[]}" || die 'Claude MCP configuration failed' ;;
-      codex) codex mcp add codebase-memory-mcp -- "$binary" || die 'Codex MCP configuration failed' ;;
-      opencode) atomic_opencode_mcp codebase-memory-mcp "$(jq -nc --arg bin "$binary" '{type:"local",command:[$bin],enabled:true}')" ;;
-      agent) atomic_cursor_mcp codebase-memory-mcp "$(jq -nc --arg bin "$binary" '{type:"stdio",command:$bin,args:[]}')" ;;
-    esac
-  done
 }
 
 install_skill_creator() {
@@ -787,16 +677,6 @@ install_crawl4ai() {
   done
 }
 
-install_lavish_axi() {
-  if [ -n "$DRY" ]; then
-    echo 'DRY RUN — npx skills add kunchenguid/lavish-axi --skill lavish -g'
-    return
-  fi
-  command -v npx >/dev/null 2>&1 || die 'npx is required to install the lavish skill'
-  npx skills add kunchenguid/lavish-axi --skill lavish -g || die 'lavish-axi skill install failed'
-  record_receipt lavish-axi '{"skills":"kunchenguid/lavish-axi","skill":"lavish","global":true}'
-}
-
 install_hallmark() {
   if [ -n "$DRY" ]; then
     echo 'DRY RUN - npx skills add nutlope/hallmark --skill hallmark -g'
@@ -833,32 +713,11 @@ install_treehouse() {
   record_receipt treehouse "{\"binary\":\"${binary:-unknown}\",\"version\":\"${version:-unknown}\"}"
 }
 
-install_firstmate() {
-  if [ -n "$DRY" ]; then
-    echo "DRY RUN — git clone --depth 1 $FIRSTMATE_REPO $FIRSTMATE_HOME"
-    echo 'DRY RUN — note: cd into the clone and launch your agent harness (see firstmate README)'
-    return
-  fi
-  command -v git >/dev/null 2>&1 || die 'git is required to install firstmate'
-  if [ -d "$FIRSTMATE_HOME/.git" ]; then
-    git -C "$FIRSTMATE_HOME" pull --ff-only || die 'firstmate update failed'
-  else
-    mkdir -p "$(dirname "$FIRSTMATE_HOME")"
-    git clone --depth 1 "$FIRSTMATE_REPO" "$FIRSTMATE_HOME" || die 'firstmate clone failed'
-  fi
-  revision=$(git -C "$FIRSTMATE_HOME" rev-parse --short HEAD 2>/dev/null || echo unknown)
-  record_receipt firstmate "{\"clone\":\"$FIRSTMATE_HOME\",\"revision\":\"$revision\"}"
-  echo "install.sh: firstmate home at $FIRSTMATE_HOME - cd there and launch your agent harness"
-}
-
-install_portable_mcp() {
-  name=$1
-  ensure_jq
-  case "$name" in
-    context7) json='{"type":"http","url":"https://mcp.context7.com/mcp"}' ;;
-    playwright) json='{"type":"stdio","command":"npx","args":["-y","@playwright/mcp@latest"]}' ;;
-  esac
+install_playwright_mcp() {
+  name=playwright
+  json='{"type":"stdio","command":"npx","args":["-y","@playwright/mcp@latest"]}'
   if [ -n "$DRY" ]; then echo "DRY RUN — configure $name MCP for:$CLI"; return; fi
+  ensure_jq
   for cli in $CLI; do
     case "$cli" in
       claude)
@@ -866,22 +725,20 @@ install_portable_mcp() {
         claude mcp add-json --scope user "$name" "$json" || die "Claude MCP configuration failed for $name" ;;
       codex)
         codex mcp remove "$name" >/dev/null 2>&1 || true
-        url=$(printf '%s' "$json" | jq -r '.url // empty')
-        if [ -n "$url" ]; then codex mcp add "$name" --url "$url"
-        else codex mcp add "$name" -- "$(printf '%s' "$json" | jq -r .command)" -y "$(printf '%s' "$json" | jq -r '.args[-1]')"
-        fi || die "Codex MCP configuration failed for $name" ;;
+        codex mcp add "$name" -- "$(printf '%s' "$json" | jq -r .command)" -y "$(printf '%s' "$json" | jq -r '.args[-1]')" \
+          || die "Codex MCP configuration failed for $name" ;;
       opencode)
-        server=$(printf '%s' "$json" | jq -c 'if .url then {type:"remote",url:.url,enabled:true} else {type:"local",command:([.command]+.args),enabled:true} end')
+        server=$(printf '%s' "$json" | jq -c '{type:"local",command:([.command]+.args),enabled:true}')
         atomic_opencode_mcp "$name" "$server" ;;
       agent)
-        server=$(printf '%s' "$json" | jq -c 'if .url then {type:"http",url:.url} else {type:"stdio",command:.command,args:(.args//[])} end')
+        server=$(printf '%s' "$json" | jq -c '{type:"stdio",command:.command,args:(.args//[])}')
         atomic_cursor_mcp "$name" "$server" ;;
     esac
   done
 }
 
 [ -n "$DRY" ] || case " $SELECTED " in
-  *' status-line '*|*' shared-config '*|*' mcp-servers '*|*' context7 '*|*' playwright '*|*' codebase-memory-mcp '*)
+  *' status-line '*|*' shared-config '*|*' playwright '*)
     ensure_jq ;;
 esac
 
@@ -899,17 +756,13 @@ done
 for item in $SELECTED; do
   case "$item" in
     skill-creator) install_skill_creator ;;
-    codebase-memory-mcp) install_memory ;;
     crawl4ai) install_crawl4ai ;;
-    lavish-axi) install_lavish_axi ;;
     hallmark) install_hallmark ;;
     no-mistakes) install_no_mistakes ;;
     treehouse) install_treehouse ;;
-    firstmate) install_firstmate ;;
-    context7|playwright) install_portable_mcp "$item" ;;
+    playwright) install_playwright_mcp ;;
     status-line) for cli in $CLI; do case "$cli" in claude) enable_status_line ;; codex) enable_codex_status_line ;; esac; done ;;
     shared-config) apply_shared_config ;;
-    mcp-servers) install_mcp_inventory ;;
     *) for cli in $CLI; do install_plugin "$item" "$cli"; done ;;
   esac
 done

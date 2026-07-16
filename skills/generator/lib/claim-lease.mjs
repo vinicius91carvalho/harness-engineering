@@ -56,12 +56,17 @@ function stealDeadStateLock(lockDir) {
   return true
 }
 
+const repoPathsCache = new Map()
+
 export function repoPaths(repo) {
   const topology = resolveProjectTopology(repo)
+  const cacheKey = `${topology.gitRoot}\0${topology.projectPrefix}\0${topology.integrationBranch}`
+  const hit = repoPathsCache.get(cacheKey)
+  if (hit) return hit
   const commonGit = topology.commonGit
   const prefix = topology.projectPrefix
   const projectId = topology.projectId
-  return {
+  const paths = {
     repo,
     commonGit,
     prefix,
@@ -74,6 +79,8 @@ export function repoPaths(repo) {
     runStateFile: (key) => join(topology.runsDir, `${sanitizeKey(key)}.json`),
     claimKey: (context) => claimKey(projectId, context),
   }
+  repoPathsCache.set(cacheKey, paths)
+  return paths
 }
 
 export function readClaims(repo) {
@@ -395,7 +402,6 @@ function stealDeadMergeLock(lockDir) {
 }
 
 function mergeBusySignal() {
-  if (process.env.HARNESS_HERDR_PANE === '1' || process.env.HARNESS_DISPLAY === 'herdr') return
   process.stdout.write('BUSY\n')
 }
 
@@ -451,7 +457,7 @@ export function mergeAcquire(repo, session) {
   }
 
   if (!integ) {
-    integ = `${repoPath.replace(/\/$/, '')}-wt-integration`
+    integ = `${gitRoot(repoPath).replace(/\/$/, '')}-wt-integration`
     if (!existsSync(integ)) {
       git(repoPath, ['worktree', 'add', integ, integrationBranchName(repoPath)])
     }

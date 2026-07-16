@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { appendFile, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
-import { realpathSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { spawn, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { hostname } from 'node:os'
@@ -12,11 +12,11 @@ import { writeDurable } from './lib/worker-result.mjs'
 import { cleanupBrowserOrphans } from './lib/browser-cleanup.mjs'
 import { cleanupWorktreeRuntime } from './lib/worktree-teardown.mjs'
 import { appendOwnedRuntime } from './lib/runtime-manifest.mjs'
-import { buildHostCommand, hostCommands, roleNames, runHostAgentSession, terminateHostProcess, hostSpawnVisible } from './adapters/hosts.mjs'
+import { buildHostCommand, hostCommands, roleNames, runHostAgentSession, terminateHostProcess } from './adapters/hosts.mjs'
 import { integrateCheckpoint } from './lib/integrate-checkpoint.mjs'
 import { featurePrompt as buildFeaturePrompt, RESOURCE_CLEANUP_RULE } from './prompts/feature.mjs'
 import { integrationBranchName } from './lib/integration-branch.mjs'
-import { resolveProjectTopology, runStatePath } from './lib/project-topology.mjs'
+import { resolveProjectRoot, resolveProjectTopology, runStatePath } from './lib/project-topology.mjs'
 import { createWorkflowState } from './lib/workflow-state.mjs'
 import { buildPlan, buildCandidates, lastCoder, mkey, bumpStrike } from './lib/route-plan.mjs'
 import { blockClaim, mergeAcquire, mergeRelease } from './lib/claim-lease.mjs'
@@ -32,6 +32,7 @@ import {
   formatJobsDoneForPrompt,
   incompleteIds,
 } from './lib/jobs-done.mjs'
+import { startStateHeartbeat } from './lib/state-heartbeat.mjs'
 
 function fail(message) {
   process.stderr.write(`orchestrator: ${message}\n`)
@@ -49,7 +50,11 @@ if (!['claude', 'codex', 'opencode', 'pi', 'agent'].includes(options.host)) fail
 if (!options.workdir) fail('--workdir is required')
 
 options.workdir = realpathSync(resolve(options.workdir))
-options.repo = realpathSync(resolve(options.repo || options.workdir))
+try {
+  options.repo = realpathSync(resolveProjectRoot(options.repo || options.workdir))
+} catch (error) {
+  fail(error.message)
+}
 const wanted = (options.features || '').split(',').filter(Boolean)
 const reconcileScript = resolve(dirname(fileURLToPath(import.meta.url)), 'reconcile.mjs')
 const MAX_ATTEMPTS = 3
@@ -80,6 +85,13 @@ function gitTopLevel(cwd) {
 }
 
 const topology = resolveProjectTopology(options.repo)
+if (
+  ['main', 'master'].includes(topology.integrationBranch)
+  && !process.env.HARNESS_INTEGRATION_BRANCH?.trim()
+  && !existsSync(join(topology.gitRoot, '.harness', 'integration-branch'))
+) {
+  process.stderr.write(`orchestrator: integration branch is '${topology.integrationBranch}' (no .harness/integration-branch pin); gen/* will merge directly into ${topology.integrationBranch}\n`)
+}
 const commonGit = topology.commonGit
 const runDir = topology.runsDir
 const context = options.context || 'goal-review'
@@ -175,14 +187,6 @@ async function releaseGovernorAdmission() {
   if (governorReservationId) {
     await releaseAdmission(commonGit, governorReservationId)
     governorReservationId = null
-  }
-}
-
-function logVisible(message) {
-  if (!hostSpawnVisible()) return
-  // Herdr panes are for agent work — keep orchestrator chatter to phase lines only.
-  if (/^(CODING|QA|INTEGRATION_QA|REPAIR_PLAN|MERGE|GOAL_REVIEW)\b/.test(message)) {
-    process.stderr.write(`\n── ${message} ──\n`)
   }
 }
 
@@ -364,9 +368,6 @@ async function runAgent(kind, prompt, id, attempt, cwd = options.workdir) {
     const [program, args] = direct
       ? hostCommands[candidate.harness](referencedPrompt)
       : buildHostCommand(candidate.harness, referencedPrompt, candidate.model)
-    if (hostSpawnVisible()) {
-      process.stderr.write(`\n── ${kind} → ${program} attempt ${attempt} ──\n`)
-    }
     await writeState({ agentRoute: route, childPid: null })
     const result = await spawnAgent(program, args, cwd)
     const reason = !direct && !result.ok ? fallbackReason(result) : null
@@ -449,32 +450,9 @@ async function planRepair(feature, attempt, defectReport) {
 
 async function acquireMergeLock() {
   const tryBudget = Number(process.env.HARNESS_MERGE_LOCK_TRIES || 3600)
-  const visible = hostSpawnVisible()
-  const startedAt = Date.now()
-  let lastLog = 0
   for (let tries = 0; tries < tryBudget; tries++) {
     const result = mergeAcquire(options.repo, process.pid)
-    if (!result.busy && result.integDir) {
-      if (visible) {
-        const waitedSec = Math.round((Date.now() - startedAt) / 1000)
-        process.stderr.write(
-          waitedSec > 0
-            ? `orchestrator: merge lock acquired after ${waitedSec}s — starting agent (thinking/tools will stream here)\n`
-            : 'orchestrator: merge lock acquired\n',
-        )
-      }
-      return result.integDir
-    }
-    if (visible && Date.now() - lastLog >= 15_000) {
-      const waitedSec = Math.round((Date.now() - startedAt) / 1000)
-      const who = result.owner
-        ? `holder pid=${result.owner}${result.host ? ` @${result.host}` : ''}`
-        : 'another context is integrating'
-      process.stderr.write(
-        `orchestrator: waiting for merge lock (${who}; waited ${waitedSec}s) — this tab stays idle until that worker finishes integration; watch the holder pane for thinking/tools\n`,
-      )
-      lastLog = Date.now()
-    }
+    if (!result.busy && result.integDir) return result.integDir
     await new Promise((resolveWait) => setTimeout(resolveWait, 500))
   }
   fail('timed out waiting for merge lock')
@@ -525,7 +503,6 @@ async function integrate(feature, attempt) {
 }
 
 async function runWorkItems() {
-  logVisible(`build context=${context} host=${options.host} port=${options.port} features=${wanted.join(',') || 'all'}`)
   return runAttemptLoop({
     wanted,
     options,
@@ -614,7 +591,7 @@ async function runGoalReviewLocked() {
     fail(`Goal Review requires every Work Item integrated; incomplete: ${incomplete.join(', ')}`)
   }
   await writeState({ status: 'running', phase: 'goal-review', nextAction: 'goal-review', attempt: 1 })
-  heartbeatTimer = setInterval(() => writeState().catch(() => {}), 15_000)
+  heartbeatTimer = startStateHeartbeat(() => writeState(), { label: 'orchestrator' })
   itemPlan = buildPlan(options.repo, await readRoles())
   const integrationBranch = integrationBranchName(options.repo)
   const guidance = options.guidance ? `\nOperator guidance (follow this when deciding pass vs block):\n${options.guidance}\n` : ''
@@ -726,7 +703,6 @@ async function runGoalReviewLocked() {
 }
 
 async function runGoalReview() {
-  logVisible(`goal-review context=${context} host=${options.host} port=${options.port}`)
   const lockedMain = await acquireMergeLock()
   const canonicalLockedMain = realpathSync(lockedMain)
   const canonicalWorkdir = realpathSync(options.workdir)
@@ -741,7 +717,6 @@ async function runGoalReview() {
   }
 }
 
-logVisible(`started pid=${process.pid} workdir=${options.workdir}`)
 setState(await readJson(stateFile, {}))
 // Clear prior-run agent output timestamps so the supervisor does not treat this
 // invocation as already past the MCP warmup budget.

@@ -11,10 +11,18 @@ is not a sweep of unchecked queue flags: it independently evaluates the Project
 Goal, every stable Acceptance Check, and cross-feature journeys on integrated
 `main`.
 
-Let `PROJECT` be the directory containing the selected project's specification,
-`GEN` the generator skill directory, and `HOST` the current host. At a monorepo
-root, resolve the project through `.harness/projects.json`; Goal Review never
-combines independent project queues.
+Let `GEN` be the generator skill directory and `HOST` the current host. Resolve
+`PROJECT` the same way generator does:
+
+```bash
+PROJECT=$(node "$GEN/reconcile.mjs" --print-root)
+```
+
+This walks up from the working directory for the nearest `project_specs.xml`, then
+falls back to `.harness/projects.json` at a monorepo root when more than one
+project is registered. Goal Review never combines independent project queues; if
+the goal names a different project than what resolved, pass its directory
+explicitly.
 
 1. Require the plan integration branch's `feature_list.json` and run
    `node "$GEN/reconcile.mjs" "$PROJECT" --check`. Refuse Goal Review while the

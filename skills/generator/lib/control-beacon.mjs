@@ -15,14 +15,12 @@ export function turnEndDrain() {
 }
 
 /**
- * Pure live check for a persisted worker row plus optional cross-check inputs.
- * Herdr rows without a live pid or Run State owner/child are not live.
+ * Pure live check for a persisted worker row plus optional Run State.
  *
  * @param {object} worker
  * @param {object} [options]
  * @param {(pid: number) => boolean} [options.processAlive]
  * @param {object|null} [options.runState]
- * @param {boolean|null} [options.paneExists] - false when herdr pane is gone
  */
 export { resolveWorkerLive }
 
@@ -67,7 +65,6 @@ export function beaconSnapshot({
   const liveWorkers = workerList.filter((worker) => resolveWorkerLive(worker, {
     processAlive,
     runState: worker.runState ?? null,
-    paneExists: worker.paneExists ?? null,
   }))
   const unackedInputs = pendingInputRows(pendingInputs)
   const behindConsumers = consumersBehindTip(journalTip, consumerCursors, requiredConsumers)

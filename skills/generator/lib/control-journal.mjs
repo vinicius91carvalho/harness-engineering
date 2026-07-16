@@ -258,11 +258,8 @@ export async function compactControlJournal(controlRoot, {
 
     const compactedThroughId = Math.max(...preserved.map((event) => event.id))
     const derived = deriveSnapshot(all)
-    const lineagePreserved = preserved.filter((event) =>
-      event.kind === 'input_required'
-      || event.kind === 'input_received'
-      || event.kind === 'input_auto_responded',
-    )
+    // Keep only pending input lineage (not every historical input_* row).
+    const lineagePreserved = preserved.filter((event) => lineage.has(event.id))
     const snapshotBody = {
       compactedThroughId,
       derived,
@@ -297,7 +294,18 @@ export async function compactControlJournal(controlRoot, {
 export async function maybeCompactControlJournal(controlRoot, {
   minTail = 50,
   lease = null,
+  minIntervalMs = 0,
+  lastCompactAt = 0,
+  now = Date.now(),
 } = {}) {
+  if (minIntervalMs > 0 && lastCompactAt > 0 && (now - lastCompactAt) < minIntervalMs) {
+    return {
+      compacted: false,
+      skipped: true,
+      reason: 'interval-throttle',
+      kept: null,
+    }
+  }
   const paths = journalPaths(controlRoot)
   try {
     const meta = existsSync(paths.meta) ? JSON.parse(await readFile(paths.meta, 'utf8')) : null

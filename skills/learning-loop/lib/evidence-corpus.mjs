@@ -231,7 +231,7 @@ const ROUTE_BY_CLASS = {
 }
 
 const ROUTE_BY_TOPIC = [
-  { pattern: /\b(herdr|pane|supervisor|fleet|worker health|stuck)\b/i, route: 'skills/supervisor/SKILL.md' },
+  { pattern: /\b(supervisor|fleet|worker health|stuck|worker log)\b/i, route: 'skills/supervisor/SKILL.md' },
   { pattern: /\b(monorepo|sibling|cross-project|fleet-ops)\b/i, route: 'skills/monorepo-supervisor-ops/SKILL.md' },
   { pattern: /\b(install|backup|host config|cursor|codex|claude)\b/i, route: 'skills/update-project/SKILL.md' },
   { pattern: /\b(learning|retrospective|skill)\b/i, route: 'skills/learning-loop/SKILL.md' },

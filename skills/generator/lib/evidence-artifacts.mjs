@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, writeFile, access } from 'node:fs/promises'
+import { mkdir, open } from 'node:fs/promises'
 import { join } from 'node:path'
 import { sanitizeKey } from './project-keys.mjs'
 
@@ -36,11 +36,6 @@ export async function putEvidenceArtifact({
     digest,
   ].join('-')
   const file = join(dir, `${base}.log`)
-  try {
-    await access(file)
-    // Collision on same digest is fine (identical bytes); different content must not overwrite.
-    return { path: file, digest, immutable: true }
-  } catch {}
   const header = [
     `project=${projectId}`,
     `run=${runId || ''}`,
@@ -52,13 +47,16 @@ export async function putEvidenceArtifact({
     route ? `route=${JSON.stringify(route)}` : '',
     `at=${new Date().toISOString()}`,
   ].filter(Boolean).join('\n')
-  // wx: fail if exists (create-only)
-  const { open } = await import('node:fs/promises')
-  const handle = await open(file, 'wx')
+  // wx: create-only; concurrent same-digest writers treat EEXIST as success.
   try {
-    await handle.writeFile(`${header}\n\n${detail}`)
-  } finally {
-    await handle.close()
+    const handle = await open(file, 'wx')
+    try {
+      await handle.writeFile(`${header}\n\n${detail}`)
+    } finally {
+      await handle.close()
+    }
+  } catch (error) {
+    if (error?.code !== 'EEXIST') throw error
   }
   return { path: file, digest, immutable: true }
 }

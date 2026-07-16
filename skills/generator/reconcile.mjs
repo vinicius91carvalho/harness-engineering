@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { readFile } from 'node:fs/promises'
-import { spawnSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { atomicJson } from './lib/fs-json.mjs'
-import { integrationBranchName } from './lib/integration-branch.mjs'
+import { readFeatureListFromIntegration } from './lib/git-repo.mjs'
+import { resolveProjectRoot } from './lib/project-topology.mjs'
 import { inferObservationMethod, workItemObservationMethods } from './lib/observation-method.mjs'
 import {
   parseProjectSpecification,
@@ -16,29 +16,26 @@ function fail(message) {
 }
 
 const args = process.argv.slice(2)
-const repo = resolve(args.find((arg) => !arg.startsWith('--')) || '.')
+let repo
+try {
+  repo = resolveProjectRoot(args.find((arg) => !arg.startsWith('--')) || process.cwd())
+} catch (error) {
+  fail(error.message)
+}
 const checkOnly = args.includes('--check')
+if (args.includes('--print-root')) {
+  process.stdout.write(`${repo}\n`)
+  process.exit(0)
+}
 const specFile = resolve(repo, 'project_specs.xml')
 const queueFile = resolve(repo, 'feature_list.json')
-
-function gitOutput(args) {
-  const result = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' })
-  return result.status === 0 ? result.stdout.trim() : ''
-}
-
-function integrationQueueFallback() {
-  const prefix = gitOutput(['rev-parse', '--show-prefix'])
-  const branch = integrationBranchName(repo)
-  const source = gitOutput(['show', `${branch}:${prefix}feature_list.json`])
-  if (!source) return null
-  try { return JSON.parse(source) } catch { return null }
-}
 
 async function readQueue() {
   try {
     return JSON.parse(await readFile(queueFile, 'utf8'))
   } catch (error) {
-    const fallback = integrationQueueFallback()
+    let fallback = null
+    try { fallback = readFeatureListFromIntegration(repo) } catch { /* fall through to the read error */ }
     if (!fallback) throw error
     await atomicJson(queueFile, fallback)
     return fallback
@@ -149,4 +146,4 @@ if (!checkOnly && (missing.length || filled.length || observationFilled || decis
   await atomicJson(queueFile, queue)
 }
 
-process.stdout.write(`${JSON.stringify({ acceptanceChecks: checks.length, addedWorkItems: missing.length, addedIds: missing.map((check) => check.id), filledDependsOn: filled })}\n`)
+process.stdout.write(`${JSON.stringify({ projectRoot: repo, acceptanceChecks: checks.length, addedWorkItems: missing.length, addedIds: missing.map((check) => check.id), filledDependsOn: filled })}\n`)
