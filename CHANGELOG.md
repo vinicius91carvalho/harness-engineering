@@ -11,6 +11,25 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [2.10.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.9.0...v2.10.0) (2026-07-16)
+
+
+### Features
+
+* harden planner review and CauseFlow ops learnings ([ef0ff9e](https://github.com/vinicius91carvalho/harness-engineering/commit/ef0ff9e0b1d126bb86ad7b6e5279337173d3b8f6))
+* **supervisor:** harden runtime recovery and hot paths ([8f8f03b](https://github.com/vinicius91carvalho/harness-engineering/commit/8f8f03b5f2e8c268c8acd706c40c23c51f13f4ab))
+* **supervisor:** hybrid empty-fleet recovery and fleet snapshot ops ([1f6e407](https://github.com/vinicius91carvalho/harness-engineering/commit/1f6e407a263214f50887997036ce4bbc497336a0))
+* **supervisor:** Phase A orphan claims and re-export collapse ([da55995](https://github.com/vinicius91carvalho/harness-engineering/commit/da55995b2e3750957631269f73e282220051aa85))
+* **supervisor-phase-c:** completion contract, host-death routing, malformed verdict retry ([30d625a](https://github.com/vinicius91carvalho/harness-engineering/commit/30d625ac87008cee118ec21678f3f1cc4479cdb6))
+
+
+### Bug Fixes
+
+* **supervisor:** close finished Cursor Task herdr tabs automatically ([df2059b](https://github.com/vinicius91carvalho/harness-engineering/commit/df2059b0c92e833c80b39305ddd427dc3a11dde7))
+* **supervisor:** stop treating empty ghosts as repaired ([7cda64d](https://github.com/vinicius91carvalho/harness-engineering/commit/7cda64d29d118a22983327463b330b257fb4ffad))
+* **tests:** tighten Integrated Verification match in shared role stubs ([6744ba7](https://github.com/vinicius91carvalho/harness-engineering/commit/6744ba75957145d169ed8e6cd0649cebc377ba6b))
+* **tests:** tighten Integrated Verification stub match in orchestrator test ([e9a8d81](https://github.com/vinicius91carvalho/harness-engineering/commit/e9a8d8101ed3fb7fd202c3c1702755a976ec5977))
+
 ## [2.9.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.8.1...v2.9.0) (2026-07-11)
 
 
