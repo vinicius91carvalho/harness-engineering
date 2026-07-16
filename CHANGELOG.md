@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [3.1.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v3.0.0...v3.1.0) (2026-07-16)
+
+
+### Features
+
+* **installer:** isolate project scope and exit cleanly on interrupt ([ed3d5fb](https://github.com/vinicius91carvalho/harness-engineering/commit/ed3d5fbda217681a5851e8048cb8231573e2d26a))
+
 ## [3.0.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.11.0...v3.0.0) (2026-07-16)
 
 
