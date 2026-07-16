@@ -852,6 +852,7 @@ bash "$GEN/claim.sh" list "$PROJECT"</code></pre>
               <tr><td>Worker crashed / stale lease</td><td>Recovery reclaims a <code>stale</code> context automatically once its heartbeat passes the lease timeout (<code>HARNESS_LEASE_TIMEOUT_SECONDS</code>, default 60s) — including one owned by a different host. Force only once you're sure the owning process is actually dead: <code>bash "$GEN/claim.sh" resume "$PROJECT" "$CONTEXT" $$ force</code></td></tr>
               <tr><td>No progress / pending inputs pile up</td><td>Context-scoped <code>input_required</code> events auto-retry each supervisor tick. If still stuck, inspect <code>pendingInputs</code> in <code>status</code> and the worker log under <code>.git/harness-control/&lt;project&gt;/logs/</code>.</td></tr>
               <tr><td><code>status</code> lists workers but herdr has no tabs</td><td>In a monorepo, cleanup must be scoped per subproject (<code>worker-&lt;project&gt;-*</code>). Cross-closing sibling tabs leaves zombie pane IDs. Restart supervisors after upgrading harness; check <code>herdr agent list</code>.</td></tr>
+              <tr><td>Cursor Task/Subagent tab stays <code>working</code></td><td>Cursor mirror tabs are <code>cursor-sub-*</code>, not harness worker tabs. The supervisor reaps finished mirrors automatically; if a stale tab remains, run <code>node "$CONTROL" reap-cursor-subagents --repo "$PROJECT"</code> or close only the specific <code>cursor-sub-*</code> tab after confirming the main agent tab is live.</td></tr>
             </tbody>
           </table>
           <p>To abandon a context instead of resuming it:</p>
@@ -955,6 +956,7 @@ node "$CONTROL/scripts/harness-control.mjs" start --repo "$PROJECT" --host codex
 # force herdr panes outside a herdr workspace's auto-detection
 node "$CONTROL/scripts/harness-control.mjs" start --repo "$PROJECT" --host codex --display herdr</code></pre>
           <p>Use <code>herdr agent list</code>, <code>herdr pane read</code>, and <code>herdr wait agent-status</code> to coordinate from the supervisor pane. Each tab streams the live agent session (thinking, tool calls, verdicts) via a flushed PTY. Finished workers close their tabs immediately. Event relay (<code>events</code>, <code>ack</code>, <code>respond</code>) is unchanged for phone or plugin consumers.</p>
+          <p>Cursor Task/Subagent mirrors use <code>cursor-sub-*</code> tabs and the bundled <code>skills/supervisor/herdr-cursor/herdr-subagent-logview.py</code>. They are separate from harness <code>worker-&lt;project&gt;-*</code> tabs; the supervisor reaps finished mirrors automatically, with <code>reap-cursor-subagents</code> available as a manual cleanup command.</p>
           <p><strong>Monorepo:</strong> multiple supervisors (e.g. four subprojects) each open named worker tabs. Finished tabs are closed per subproject only (<code>worker-&lt;project&gt;-*</code>) so one supervisor never kills another's live workers.</p>
           <p>For remote access, use herdr's SSH and plugin transports — see the <a href="https://herdr.dev/docs/">herdr documentation</a>.</p>
 
