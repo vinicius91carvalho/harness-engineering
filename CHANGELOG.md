@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [2.11.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.10.0...v2.11.0) (2026-07-16)
+
+
+### Features
+
+* **installer:** add optional hallmark skill via npx skills ([1771f45](https://github.com/vinicius91carvalho/harness-engineering/commit/1771f452e685a85bed3463cb8e6bfec617e97560))
+
 ## [2.10.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.9.0...v2.10.0) (2026-07-16)
 
 
