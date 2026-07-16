@@ -19,28 +19,13 @@
  *   node scripts/install-reconcile.mjs record-receipt <receiptDir> <moduleId> <json>
  */
 import { readFile, writeFile, mkdir, cp, readdir, rm, stat, symlink } from 'node:fs/promises'
-import { existsSync, realpathSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { canonicalPath, isCliEntry } from '../skills/generator/lib/canonical-path.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const catalogPath = join(root, 'config/installable-catalog.json')
-
-/** Match CLI entry even when argv uses /var/... and import.meta.url uses /private/var/... on macOS. */
-function canonicalPath(pathLike) {
-  const abs = resolve(pathLike)
-  if (!existsSync(abs)) return abs
-  try {
-    return realpathSync(abs)
-  } catch {
-    return abs
-  }
-}
-
-function isCliEntry(argvPath, modulePath) {
-  if (!argvPath) return false
-  return canonicalPath(argvPath) === canonicalPath(modulePath)
-}
 
 const MARKETPLACE_HOSTS = {
   claude: {
@@ -100,13 +85,7 @@ export function skillsAddArgs(catalog, id) {
 }
 
 function canonicalProjectDir(projectDir) {
-  const abs = resolve(projectDir)
-  if (!existsSync(abs)) return abs
-  try {
-    return realpathSync(abs)
-  } catch {
-    return abs
-  }
+  return canonicalPath(projectDir)
 }
 
 export function resolveInstallBases(scope, projectDir = '', home = process.env.HOME || '', xdgConfigHome = process.env.XDG_CONFIG_HOME || '') {

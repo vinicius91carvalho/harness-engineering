@@ -9,6 +9,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { isCliEntry } from '../../generator/lib/canonical-path.mjs'
 import { readProjectsRegistry, resolveGitRoot, upsertProject } from '../../generator/lib/project-topology.mjs'
 
 function readJsonSafe(file) {
@@ -217,5 +218,4 @@ function main() {
   process.stdout.write(`${JSON.stringify(output, null, 2)}\n`)
 }
 
-const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)
-if (isMain) main()
+if (isCliEntry(process.argv[1], fileURLToPath(import.meta.url))) main()

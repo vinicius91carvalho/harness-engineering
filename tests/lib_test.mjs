@@ -69,6 +69,7 @@ import {
   DEFAULT_INTEGRATION_BRANCH,
   pinIntegrationBranchIfAbsent,
 } from '../skills/generator/lib/integration-branch.mjs'
+import { canonicalPath } from '../skills/generator/lib/canonical-path.mjs'
 import { detectProjectBoundaries } from '../skills/setup/lib/detect-boundaries.mjs'
 import {
   isLiveRunOwner,
@@ -655,7 +656,7 @@ test('detectProjectBoundaries finds workspaces, compose, and registry', () => {
     projects: [{ id: 'web', path: 'apps/web', description: 'Customer UI' }],
   }, null, 2)}\n`)
   const { gitRoot, projects } = detectProjectBoundaries(root)
-  assert.equal(gitRoot, root)
+  assert.equal(gitRoot, canonicalPath(root))
   assert.ok(projects.some((p) => p.path === 'apps/web' && p.sources.includes('.harness/projects.json')))
   assert.ok(projects.some((p) => p.path === 'apps/api' && p.sources.includes('package.json#workspaces')))
   assert.ok(projects.some((p) => p.path === '' && p.sources.includes('docker-compose.yml')))

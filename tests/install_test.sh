@@ -186,10 +186,11 @@ pass 'install-reconcile resolves scope bases and module scopes'
 # Regression: macOS TMPDIR is /var/folders/... while Node resolves import.meta.url
 # to /private/var/...; install-reconcile must still execute as a CLI.
 var_sim=$TMP/var-path-sim
-mkdir -p "$var_sim/private/var/repo/config" "$var_sim/private/var/repo/scripts"
+mkdir -p "$var_sim/private/var/repo/config" "$var_sim/private/var/repo/scripts" "$var_sim/private/var/repo/skills/generator/lib"
 ln -sfn "$var_sim/private/var" "$var_sim/var"
 cp "$ROOT/config/installable-catalog.json" "$var_sim/private/var/repo/config/"
 cp "$ROOT/scripts/install-reconcile.mjs" "$var_sim/private/var/repo/scripts/"
+cp "$ROOT/skills/generator/lib/canonical-path.mjs" "$var_sim/private/var/repo/skills/generator/lib/"
 script=$var_sim/var/repo/scripts/install-reconcile.mjs
 test -f "$script" || fail 'install-reconcile regression fixture is missing'
 hallmark_args=$("$SYSTEM_NODE" "$script" skills-add-args hallmark) \

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
+import { canonicalPath } from './canonical-path.mjs'
 import {
   sanitizeKey,
   projectIdFromPrefix,
@@ -31,7 +32,8 @@ function git(repo, args) {
 }
 
 export function resolveGitRoot(repo) {
-  return git(repo, ['rev-parse', '--show-toplevel']) || repo
+  const base = canonicalPath(repo)
+  return git(base, ['rev-parse', '--show-toplevel']) || base
 }
 
 export function resolveCommonGitDir(repo) {
