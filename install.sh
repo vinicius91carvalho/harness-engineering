@@ -578,7 +578,7 @@ clean_stale_agent_plugin_pollution() {
   [ -d "$dest" ] || return 0
   [ -n "$DRY" ] && return 0
   polluted=0
-  if [ -d "$dest/skills/supervisor" ]; then polluted=1; fi
+  if [ -d "$dest/skills/supervisor" ] || [ -d "$dest/skills/harness-supervisor" ]; then polluted=1; fi
   manifest=$dest/.cursor-plugin/plugin.json
   if [ -f "$manifest" ] && [ "$(jq -r .name "$manifest" 2>/dev/null || echo)" = harness ]; then
     polluted=1
@@ -592,7 +592,7 @@ install_agent_plugin() {
   skills=$(cursor_skills_root)
   if [ -n "$DRY" ]; then
     echo "DRY RUN — install agent/cursor plugin at $dest"
-    echo "DRY RUN — link $name skills into $skills for Agent CLI discovery"
+    echo "DRY RUN — copy $name skills into $skills for Agent CLI discovery"
     return
   fi
   command -v agent >/dev/null 2>&1 || cli_installed agent || die 'agent is required to install the harness agent/cursor plugin'
@@ -805,7 +805,7 @@ install_crawl4ai() {
         else install_crawl4ai_skill "$dest"
         fi ;;
       agent)
-        # Dual-path: local plugin (IDE) + linked .cursor/skills (Agent CLI).
+        # Dual-path: local plugin (IDE) + copied .cursor/skills (Agent CLI).
         install_agent_plugin crawl4ai ;;
     esac
   done

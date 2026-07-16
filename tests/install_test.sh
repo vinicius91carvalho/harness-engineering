@@ -140,8 +140,8 @@ grep -q 'skipping treehouse (user scope only)' "$TMP/out" || fail 'project scope
 "$ROOT/install.sh" --cli agent --scope project --project-dir "$PROJECT" --no --dry-run </dev/null >"$TMP/out"
 grep -q "install agent/cursor plugin at $PROJECT/.cursor/plugins/local/harness" "$TMP/out" \
   || fail 'agent/cursor project dry-run should target plugins/local'
-grep -q "link harness skills into $PROJECT/.cursor/skills" "$TMP/out" \
-  || fail 'agent/cursor project dry-run should link .cursor/skills'
+grep -q "copy harness skills into $PROJECT/.cursor/skills" "$TMP/out" \
+  || fail 'agent/cursor project dry-run should copy .cursor/skills'
 pass 'project-scope dry-run targets project paths and skips user-only extras'
 
 : >"$HARNESS_TEST_LOG"
@@ -156,15 +156,24 @@ pass 'OpenCode project scope installs under .opencode'
 "$ROOT/install.sh" --cli agent --scope project --project-dir "$PROJECT" --no </dev/null >"$TMP/out"
 test -f "$PROJECT/.cursor/plugins/local/harness/.cursor-plugin/plugin.json" \
   || fail 'Cursor project plugin missing'
-test -e "$PROJECT/.cursor/skills/supervisor/SKILL.md" \
-  || fail 'Cursor project skill link for supervisor missing'
-test -e "$PROJECT/.cursor/skills/generator/SKILL.md" \
-  || fail 'Cursor project skill link for generator missing'
+test -f "$PROJECT/.cursor/skills/harness-supervisor/SKILL.md" \
+  || fail 'Cursor project skill copy for harness-supervisor missing'
+test -f "$PROJECT/.cursor/skills/harness-generator/SKILL.md" \
+  || fail 'Cursor project skill copy for harness-generator missing'
+grep -q '^name: harness-supervisor$' "$PROJECT/.cursor/skills/harness-supervisor/SKILL.md" \
+  || fail 'Cursor project harness-supervisor frontmatter name must be harness-supervisor'
+# Real directories (not symlinks): Cursor Agent CLI slash menu is unreliable on links.
+[ ! -L "$PROJECT/.cursor/skills/harness-supervisor" ] \
+  || fail 'Cursor project harness-supervisor skill must be a real directory, not a symlink'
+[ ! -L "$PROJECT/.cursor/skills/harness-generator" ] \
+  || fail 'Cursor project harness-generator skill must be a real directory, not a symlink'
+test ! -e "$PROJECT/.cursor/skills/supervisor" \
+  || fail 'Cursor project must not leave unprefixed supervisor skill'
 test -f "$PROJECT/.cursor/skills/.harness-owned-harness-skills.json" \
-  || fail 'Cursor project skill-link ownership marker missing'
+  || fail 'Cursor project skill-copy ownership marker missing'
 test ! -e "$HOME/.cursor/plugins/local/harness/.cursor-plugin/plugin.json" \
   || fail 'Cursor project install must not write user plugin dir'
-test ! -e "$HOME/.cursor/skills/supervisor" \
+test ! -e "$HOME/.cursor/skills/harness-supervisor" \
   || fail 'Cursor project install must not write user skills dir'
 pass 'Cursor project scope installs under .cursor/plugins/local and .cursor/skills'
 
@@ -266,35 +275,45 @@ pass 'harness-only install excludes optional package roots'
 : >"$HARNESS_TEST_LOG"
 "$ROOT/install.sh" --cli agent --no </dev/null >"$TMP/out"
 test -f "$HOME/.cursor/plugins/local/harness/.cursor-plugin/plugin.json" || fail 'Cursor Agent plugin manifest missing'
-test -f "$HOME/.cursor/plugins/local/harness/skills/generator/SKILL.md" || fail 'Cursor Agent generator skill missing'
+test -f "$HOME/.cursor/plugins/local/harness/skills/harness-generator/SKILL.md" || fail 'Cursor Agent generator skill missing'
 test -f "$HOME/.cursor/plugins/local/harness/commands/harness-generator.md" || fail 'Cursor Agent harness command missing'
-test -e "$HOME/.cursor/skills/supervisor/SKILL.md" || fail 'Cursor Agent CLI supervisor skill link missing'
-test -e "$HOME/.cursor/skills/generator/SKILL.md" || fail 'Cursor Agent CLI generator skill link missing'
+test -f "$HOME/.cursor/skills/harness-supervisor/SKILL.md" || fail 'Cursor Agent CLI harness-supervisor skill copy missing'
+test -f "$HOME/.cursor/skills/harness-generator/SKILL.md" || fail 'Cursor Agent CLI harness-generator skill copy missing'
+grep -q '^name: harness-supervisor$' "$HOME/.cursor/skills/harness-supervisor/SKILL.md" \
+  || fail 'Cursor Agent CLI harness-supervisor frontmatter name must be harness-supervisor'
+[ ! -L "$HOME/.cursor/skills/harness-supervisor" ] \
+  || fail 'Cursor Agent CLI harness-supervisor skill must be a real directory, not a symlink'
+test ! -e "$HOME/.cursor/skills/supervisor" \
+  || fail 'Cursor Agent CLI must not leave unprefixed supervisor skill'
 first=$(find "$HOME/.cursor/plugins/local/harness" -type f -exec shasum -a 256 {} \; | sort | shasum -a 256)
 "$ROOT/install.sh" --cli agent --no </dev/null >"$TMP/out"
 second=$(find "$HOME/.cursor/plugins/local/harness" -type f -exec shasum -a 256 {} \; | sort | shasum -a 256)
 [ "$first" = "$second" ] || fail 'repeated Cursor Agent install is not idempotent'
 [ ! -s "$HARNESS_TEST_LOG" ] || fail 'Cursor Agent asset install should not invoke another host'
-pass 'Cursor Agent assets are local-plugin + skills-linked and idempotent'
+pass 'Cursor Agent assets are local-plugin + skills-copied and idempotent'
 
 : >"$HARNESS_TEST_LOG"
 rm -rf "$HOME/.cursor/plugins/local"
 # Simulate prior harness pollution under optional plugin dirs.
 mkdir -p "$HOME/.cursor/plugins/local/crawl4ai/.cursor-plugin" \
-  "$HOME/.cursor/plugins/local/crawl4ai/skills/supervisor"
+  "$HOME/.cursor/plugins/local/crawl4ai/skills/harness-supervisor"
 printf '%s\n' '{"name":"harness"}' >"$HOME/.cursor/plugins/local/crawl4ai/.cursor-plugin/plugin.json"
 # --yes would also run crawl4ai pip/setup; project-bundle the skill path directly.
 node "$ROOT/scripts/install-reconcile.mjs" project-agent crawl4ai "$ROOT" \
   "$HOME/.cursor/plugins/local/crawl4ai" >/dev/null
 "$ROOT/install.sh" --cli agent --no </dev/null >"$TMP/out"
-test -f "$HOME/.cursor/plugins/local/harness/skills/supervisor/SKILL.md" \
-  || fail 'harness supervisor skill missing after agent install'
+test -f "$HOME/.cursor/plugins/local/harness/skills/harness-supervisor/SKILL.md" \
+  || fail 'harness-supervisor skill missing after agent install'
+test ! -e "$HOME/.cursor/plugins/local/crawl4ai/skills/harness-supervisor" \
+  || fail 'crawl4ai must not retain harness-supervisor skill'
 test ! -e "$HOME/.cursor/plugins/local/crawl4ai/skills/supervisor" \
-  || fail 'crawl4ai must not retain harness supervisor skill'
+  || fail 'crawl4ai must not retain unprefixed supervisor skill'
 test -f "$HOME/.cursor/plugins/local/crawl4ai/skills/crawl4ai/SKILL.md" \
   || fail 'crawl4ai skill missing after agent optional-bundle install'
-test -e "$HOME/.cursor/skills/crawl4ai/SKILL.md" \
-  || fail 'crawl4ai skill link missing after agent optional-bundle install'
+test -f "$HOME/.cursor/skills/crawl4ai/SKILL.md" \
+  || fail 'crawl4ai skill copy missing after agent optional-bundle install'
+[ ! -L "$HOME/.cursor/skills/crawl4ai" ] \
+  || fail 'crawl4ai skill must be a real directory, not a symlink'
 c4_name=$(jq -r .name "$HOME/.cursor/plugins/local/crawl4ai/.cursor-plugin/plugin.json")
 [ "$c4_name" = crawl4ai ] || fail "crawl4ai manifest must be crawl4ai, got $c4_name"
 if node "$ROOT/scripts/install-reconcile.mjs" project-agent hallmark "$ROOT" "$HOME/.cursor/plugins/local/hallmark" 2>"$TMP/err"; then
@@ -607,12 +626,16 @@ for host in claude codex opencode pi agent; do
     agent)
       test -f "$MATRIX_PROJECT/.cursor/plugins/local/harness/.cursor-plugin/plugin.json" \
         || fail 'Cursor project matrix missing harness plugin'
-      test -e "$MATRIX_PROJECT/.cursor/skills/supervisor/SKILL.md" \
-        || fail 'Cursor project matrix missing supervisor skill link'
+      test -f "$MATRIX_PROJECT/.cursor/skills/harness-supervisor/SKILL.md" \
+        || fail 'Cursor project matrix missing harness-supervisor skill copy'
+      [ ! -L "$MATRIX_PROJECT/.cursor/skills/harness-supervisor" ] \
+        || fail 'Cursor project matrix harness-supervisor skill must not be a symlink'
+      test ! -e "$MATRIX_PROJECT/.cursor/skills/supervisor" \
+        || fail 'Cursor project matrix must not leave unprefixed supervisor skill'
       test -f "$MATRIX_PROJECT/.cursor/plugins/local/crawl4ai/.cursor-plugin/plugin.json" \
         || fail 'Cursor project matrix missing crawl4ai plugin'
-      test -e "$MATRIX_PROJECT/.cursor/skills/crawl4ai/SKILL.md" \
-        || fail 'Cursor project matrix missing crawl4ai skill link'
+      test -f "$MATRIX_PROJECT/.cursor/skills/crawl4ai/SKILL.md" \
+        || fail 'Cursor project matrix missing crawl4ai skill copy'
       test -f "$MATRIX_PROJECT/.claude/skills/hallmark/SKILL.md" \
         || fail 'Cursor project matrix missing hallmark skill'
       jq -e '.mcpServers.playwright' "$MATRIX_PROJECT/.cursor/mcp.json" >/dev/null \

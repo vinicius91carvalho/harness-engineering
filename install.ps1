@@ -391,7 +391,9 @@ function Remove-StaleAgentPluginPollution([string]$Name) {
   $dest = Get-CursorPluginDir $Name
   if (-not (Test-Path $dest)) { return }
   $polluted = $false
-  if (Test-Path (Join-Path $dest "skills/supervisor")) { $polluted = $true }
+  if ((Test-Path (Join-Path $dest "skills/supervisor")) -or (Test-Path (Join-Path $dest "skills/harness-supervisor"))) {
+    $polluted = $true
+  }
   $manifest = Join-Path $dest ".cursor-plugin/plugin.json"
   if (Test-Path $manifest) {
     try {
@@ -407,7 +409,7 @@ function Install-AgentPlugin([string]$Name) {
   $skills = Get-CursorSkillsRoot
   if ($DryRun) {
     Write-Host "DRY RUN - install agent/cursor plugin at $dest"
-    Write-Host "DRY RUN - link $Name skills into $skills for Agent CLI discovery"
+    Write-Host "DRY RUN - copy $Name skills into $skills for Agent CLI discovery"
     return
   }
   if (-not (Test-CliInstalled agent)) { throw "agent is required to install the harness agent/cursor plugin" }
@@ -633,7 +635,7 @@ function Install-Crawl4Ai {
         Install-Crawl4AiSkill $dest
       }
       agent {
-        # Dual-path: local plugin (IDE) + linked .cursor/skills (Agent CLI).
+        # Dual-path: local plugin (IDE) + copied .cursor/skills (Agent CLI).
         Install-AgentPlugin "crawl4ai"
       }
     }

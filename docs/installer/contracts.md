@@ -38,7 +38,7 @@ Host × scope destinations (project root = `--project-dir` or cwd):
 | Codex | `codex plugin marketplace add owner/repo` + plugin add | project marketplace layout + `marketplace add $PROJECT` + plugin add |
 | OpenCode | `~/.config/opencode/{skills,agents,commands}/` | `$PROJECT/.opencode/{skills,agents,commands}/` |
 | Pi | `~/.agents/skills/` | `$PROJECT/.agents/skills/` |
-| Cursor (`agent` / agent/cursor) | Plugin: `~/.cursor/plugins/local/<name>/`; CLI skills: `~/.cursor/skills/<skill>/` (linked from the plugin) | Plugin: `$PROJECT/.cursor/plugins/local/<name>/`; CLI skills: `$PROJECT/.cursor/skills/<skill>/` |
+| Cursor (`agent` / agent/cursor) | Plugin: `~/.cursor/plugins/local/<name>/`; CLI skills: `~/.cursor/skills/<skill>/` (copied from the plugin; real dirs, not symlinks) | Plugin: `$PROJECT/.cursor/plugins/local/<name>/`; CLI skills: `$PROJECT/.cursor/skills/<skill>/` (copied) |
 
 Maintained decisions:
 

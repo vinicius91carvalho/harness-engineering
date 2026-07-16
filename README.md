@@ -95,6 +95,8 @@ The installer then clones the **latest GitHub Release tag** (or a pin — see [I
 | Capture lessons | `/harness:learning-loop` | `/harness-learning-loop` | `/harness-learning-loop` |
 | Back up configuration | `/harness:update-project` | `/harness-update-project` | `/harness-update-project` |
 
+Default harness form is `/harness:<command>` (Claude Code / Codex). OpenCode and Cursor Agent use `/harness-<command>` because those hosts do not support `:` in skill names.
+
 **Grilling** (built into planner): before `/harness:generator` runs, the planner asks one product question at a time about ambiguous requirements (two readers could disagree), architectural trade-offs (two viable approaches), and edge cases (empty input, expired session, not-found, and similar).
 Each answer is recorded in the spec draft under `<planning_decisions>` and proved by Acceptance Checks.
 After reconcile, Work Items in `feature_list.json` carry `planning_decision_ids`.
@@ -208,7 +210,7 @@ The script resolves the latest `vX.Y.Z` release tag (or your pin via `--version`
 A local checkout of this repository installs from the working tree instead (dev mode).
 
 Interactively the installer asks for host (Claude, Codex, OpenCode, Pi, agent/cursor), then install scope (`user` global vs `project` folder; Claude also offers `local`), then the checklist.
-For Cursor, harness lands as a local plugin under `.cursor/plugins/local/harness/` (IDE) and links each skill into `.cursor/skills/` so the `agent` CLI slash menu can see `/supervisor` and the rest.
+For Cursor, harness lands as a local plugin under `.cursor/plugins/local/harness/` (IDE) and copies each skill into `.cursor/skills/` as real `harness-*` directories (not symlinks) so the `agent` CLI slash menu can see `/harness-supervisor` and the rest.
 `--scope` / `--project-dir` (PowerShell: `-Scope` / `-ProjectDir`) skip the scope menu.
 Arrow-key checklist: keep `harness` checked; add MCP or extras if you want them.
 User-only modules (`status-line`, `shared-config`, `treehouse`) are skipped for project scope.

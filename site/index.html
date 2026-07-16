@@ -258,7 +258,7 @@ claude --version  # or: codex --version / opencode --version / pi --version</cod
         <section class="topic compact-table" id="commands">
           <p class="step">Step 2</p>
           <h2>Use the command name for your tool</h2>
-          <p>Claude Code and Codex use the plugin's colon form. OpenCode and Cursor Agent use hyphenated names. <a href="https://pi.dev/">Pi</a> registers each skill's own name as a <code>/skill:</code> command.</p>
+          <p>Default harness form is <code>/harness:&lt;command&gt;</code> (Claude Code / Codex). OpenCode and Cursor Agent use <code>/harness-&lt;command&gt;</code> because those hosts disallow <code>:</code> in skill names. <a href="https://pi.dev/">Pi</a> registers each skill's own name as a <code>/skill:</code> command.</p>
           <table>
             <thead><tr><th>Task</th><th>Claude Code / Codex</th><th>OpenCode</th><th>Cursor Agent</th><th><a href="https://pi.dev/">Pi</a></th></tr></thead>
             <tbody>
