@@ -4,7 +4,7 @@
 # Local Playwright MCP session artifacts (page snapshots, console logs)
 .playwright-mcp/
 
-# Python bytecode from packages/skill-creator scripts
+# Python bytecode from bundled package scripts
 **/__pycache__/
 
 # Project-local npx skills installs (global installs use ~/.agents/skills instead)

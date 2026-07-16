@@ -9,7 +9,7 @@ REPO_URL="https://github.com/$MARKETPLACE_REPO.git"
 NO_MISTAKES_INSTALLER="https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh"
 TREEHOUSE_INSTALLER="https://kunchenguid.github.io/treehouse/install.sh"
 REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd || true)
-DEFAULT_OPTIONAL="hallmark no-mistakes treehouse skill-creator playwright crawl4ai status-line shared-config"
+DEFAULT_OPTIONAL="hallmark no-mistakes treehouse playwright crawl4ai status-line shared-config"
 OPTIONAL=$DEFAULT_OPTIONAL
 if [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/config/installable-catalog.json" ] && command -v node >/dev/null 2>&1; then
   OPTIONAL=$(node "$REPO_ROOT/scripts/install-reconcile.mjs" optional-ids 2>/dev/null) || OPTIONAL=$DEFAULT_OPTIONAL
@@ -25,7 +25,12 @@ PROJECT_DIR=""
 TEMP_REPO=""
 OWN_TEMP_REPO=""
 VERSION=${VERSION:-${HARNESS_INSTALL_REF:-}}
-USER_ONLY_MODULES="status-line shared-config"
+# Modules whose catalog scopes are user-only (also kept as installer fallback).
+DEFAULT_USER_ONLY="shared-config status-line treehouse"
+USER_ONLY_MODULES=$DEFAULT_USER_ONLY
+if [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/config/installable-catalog.json" ] && command -v node >/dev/null 2>&1; then
+  USER_ONLY_MODULES=$(node "$REPO_ROOT/scripts/install-reconcile.mjs" user-only-ids 2>/dev/null) || USER_ONLY_MODULES=$DEFAULT_USER_ONLY
+fi
 
 usage() {
   cat <<'EOF'
@@ -39,14 +44,21 @@ Usage: install.sh [--yes|--no] [--dry-run]
 --version pins the GitHub release tag to stage (e.g. v2.0.0); default is latest.
 --scope user installs to per-user host directories; project installs under
 --project-dir (default: current directory); local is Claude-only.
-User-only extras (status-line, shared-config) are skipped for project scope.
+User-only modules (status-line, shared-config, treehouse) are skipped for project scope.
 EOF
 }
 
 die() { echo "install.sh: $*" >&2; exit 1; }
 has_word() { case " $1 " in *" $2 "*) return 0 ;; *) return 1 ;; esac; }
 cleanup() { [ -z "$OWN_TEMP_REPO" ] || rm -rf "$OWN_TEMP_REPO"; }
-trap cleanup EXIT HUP INT TERM
+# EXIT cleans temp staging. HUP/INT/TERM must exit after cleanup - otherwise an
+# interrupted install can keep running and print a false completion banner.
+on_signal() { cleanup; exit 130; }
+install_traps() {
+  trap cleanup EXIT
+  trap on_signal HUP INT TERM
+}
+install_traps
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -135,7 +147,6 @@ menu_item_blurb() {
     install:hallmark) printf '%s' "Anti-AI-slop design skill via npx skills (-g for user/global scope; project dir without -g)." ;;
     install:no-mistakes) printf '%s' "Git push gate with AI validation. Installs the upstream binary; project scope also runs no-mistakes init in the project." ;;
     install:treehouse) printf '%s' "Reusable git worktree pool for agents. Installs the upstream treehouse CLI." ;;
-    install:skill-creator) printf '%s' "Multi-agent pipeline to create, evaluate, benchmark, and refine AI coding skills." ;;
     install:playwright) printf '%s' "Browser automation and E2E testing through Microsoft official Playwright MCP server." ;;
     install:crawl4ai) printf '%s' "Web crawling and structured extraction. Installs the Python package plus a bundled skill per host." ;;
     install:status-line) printf '%s' "Custom status bar for Claude; built-in status items for Codex (model, git branch, context usage)." ;;
@@ -191,7 +202,7 @@ select_menu() {
   cursor=1; checked=" $MENU_CHECKED "
   saved=$(stty -g </dev/tty)
   menu_restore() { stty "$saved" </dev/tty 2>/dev/null || true; printf '\033[?1049l' >/dev/tty; }
-  trap 'menu_restore; cleanup; exit 130' HUP INT TERM
+  trap 'menu_restore; on_signal' HUP INT TERM
   stty -echo -icanon min 1 </dev/tty
   printf '\033[?1049h' >/dev/tty
   while :; do
@@ -231,11 +242,11 @@ select_menu() {
         n=${key#num:}
         if [ "$n" -le "$total" ]; then cursor=$n; [ "$MENU_MODE" = single ] && break; fi ;;
       enter) break ;;
-      quit) menu_restore; trap cleanup EXIT HUP INT TERM; die 'cancelled' ;;
+      quit) menu_restore; install_traps; die 'cancelled' ;;
     esac
   done
   menu_restore
-  trap cleanup EXIT HUP INT TERM
+  install_traps
   if [ "$MENU_MODE" = multi ]; then MENU_RESULT=$(echo $checked); else MENU_RESULT=$(word_at "$MENU_ITEMS" "$cursor"); fi
 }
 
@@ -375,7 +386,6 @@ plugin_clis() {
   fi
   case "$name" in
     harness) echo 'claude codex opencode pi agent' ;;
-    skill-creator) echo 'claude codex opencode pi agent' ;;
     hallmark) echo 'claude codex opencode agent' ;;
     no-mistakes) echo 'claude codex opencode pi agent' ;;
     treehouse) echo 'claude codex opencode agent' ;;
@@ -707,37 +717,6 @@ atomic_cursor_mcp() {
   mv "$tmp" "$cfg"
 }
 
-install_skill_creator() {
-  for cli in $CLI; do
-    has_word "$(plugin_clis "skill-creator")" "$cli" || continue
-    case "$cli" in
-      claude)
-        root=$(claude_skills_root)
-        if [ -n "$DRY" ]; then echo "DRY RUN — install skill-creator to $root/"
-        else
-          ensure_repo
-          dest="$root/skill-creator"
-          mkdir -p "$root"
-          node "$TEMP_REPO/scripts/install-reconcile.mjs" project-bundle skill-creator "$dest" \
-            || die 'skill-creator projection failed'
-        fi ;;
-      opencode) install_opencode_plugin skill-creator ;;
-      codex) install_plugin skill-creator "$cli" ;;
-      pi)
-        root=$(agents_skills_root)
-        if [ -n "$DRY" ]; then echo "DRY RUN — install skill-creator to $root/skill-creator"
-        else
-          ensure_repo
-          dest="$root/skill-creator"
-          mkdir -p "$(dirname "$dest")"
-          node "$TEMP_REPO/scripts/install-reconcile.mjs" project-bundle skill-creator "$dest" \
-            || die 'skill-creator projection failed'
-        fi ;;
-      agent) install_agent_plugin skill-creator ;;
-    esac
-  done
-}
-
 install_crawl4ai_skill() {
   dest=$1
   ensure_repo
@@ -785,7 +764,14 @@ install_crawl4ai_pip() {
 }
 
 install_crawl4ai() {
-  install_crawl4ai_pip
+  # Pip/setup writes user-global tooling; project scope only projects the skill.
+  if [ "$SCOPE" = project ]; then
+    if [ -n "$DRY" ]; then echo 'DRY RUN — skip crawl4ai pip under project scope (skill only)'
+    else echo 'install.sh: project scope installs crawl4ai skill only (use --scope user for pip/runtime)'
+    fi
+  else
+    install_crawl4ai_pip
+  fi
   for cli in $CLI; do
     has_word "$(plugin_clis crawl4ai)" "$cli" || continue
     case "$cli" in
@@ -874,28 +860,34 @@ install_hallmark() {
 }
 
 install_no_mistakes() {
+  # Upstream installer always writes a user-global binary. Project scope only
+  # runs `no-mistakes init` in --project-dir and requires the binary already.
+  if [ "$SCOPE" = project ]; then
+    if [ -n "$DRY" ]; then
+      echo 'DRY RUN — skip no-mistakes upstream installer under project scope (global binary)'
+      echo "DRY RUN — (cd $PROJECT_DIR && no-mistakes init)"
+      return
+    fi
+    command -v no-mistakes >/dev/null 2>&1 \
+      || die 'no-mistakes binary missing; install it with --scope user first, then re-run project scope for init'
+    binary=$(command -v no-mistakes 2>/dev/null || true)
+    version=$([ -n "$binary" ] && "$binary" --version 2>/dev/null || true)
+    (CDPATH= cd -- "$PROJECT_DIR" && no-mistakes init) \
+      || die "no-mistakes init failed in $PROJECT_DIR"
+    record_receipt no-mistakes "{\"binary\":\"${binary:-unknown}\",\"version\":\"${version:-unknown}\",\"init\":\"$PROJECT_DIR\"}"
+    return
+  fi
   if [ -n "$DRY" ]; then
     echo "DRY RUN — curl -fsSL $NO_MISTAKES_INSTALLER | sh"
-    if [ "$SCOPE" = project ]; then
-      echo "DRY RUN — (cd $PROJECT_DIR && no-mistakes init)"
-    else
-      echo 'DRY RUN — note: run no-mistakes init in each repository you want to gate'
-    fi
+    echo 'DRY RUN — note: run no-mistakes init in each repository you want to gate'
     return
   fi
   command -v curl >/dev/null 2>&1 || die 'curl is required to install no-mistakes'
   curl -fsSL "$NO_MISTAKES_INSTALLER" | sh || die 'no-mistakes installer failed; inspect the upstream installer output'
   binary=$(command -v no-mistakes 2>/dev/null || true)
   version=$([ -n "$binary" ] && "$binary" --version 2>/dev/null || true)
-  if [ "$SCOPE" = project ]; then
-    command -v no-mistakes >/dev/null 2>&1 || die 'no-mistakes binary missing after install'
-    (CDPATH= cd -- "$PROJECT_DIR" && no-mistakes init) \
-      || die "no-mistakes init failed in $PROJECT_DIR"
-    record_receipt no-mistakes "{\"binary\":\"${binary:-unknown}\",\"version\":\"${version:-unknown}\",\"init\":\"$PROJECT_DIR\"}"
-  else
-    record_receipt no-mistakes "{\"binary\":\"${binary:-unknown}\",\"version\":\"${version:-unknown}\"}"
-    echo 'install.sh: run no-mistakes init in each repository you want to gate'
-  fi
+  record_receipt no-mistakes "{\"binary\":\"${binary:-unknown}\",\"version\":\"${version:-unknown}\"}"
+  echo 'install.sh: run no-mistakes init in each repository you want to gate'
 }
 
 install_treehouse() {
@@ -923,6 +915,10 @@ install_playwright_mcp() {
         claude mcp remove "$name" --scope "$claude_mcp_scope" >/dev/null 2>&1 || true
         claude mcp add-json --scope "$claude_mcp_scope" "$name" "$json" || die "Claude MCP configuration failed for $name" ;;
       codex)
+        if [ "$SCOPE" = project ]; then
+          echo 'install.sh: skipping playwright MCP for Codex under project scope (Codex MCP is user-global only)'
+          continue
+        fi
         codex mcp remove "$name" >/dev/null 2>&1 || true
         codex mcp add "$name" -- "$(printf '%s' "$json" | jq -r .command)" -y "$(printf '%s' "$json" | jq -r '.args[-1]')" \
           || die "Codex MCP configuration failed for $name" ;;
@@ -955,7 +951,6 @@ done
 for item in $SELECTED; do
   skip_user_only_module "$item" && continue
   case "$item" in
-    skill-creator) install_skill_creator ;;
     crawl4ai) install_crawl4ai ;;
     hallmark) install_hallmark ;;
     no-mistakes) install_no_mistakes ;;

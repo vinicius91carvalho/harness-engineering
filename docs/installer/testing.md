@@ -18,9 +18,11 @@ The fake-CLI tests cover non-TTY host selection, OpenCode detection before its
 user install directory reaches `PATH`, multi-host install scope (`user` /
 `project`, Claude-only `local`), selected-host command isolation, zero-write dry
 runs, catalog policy, retry behavior, `feature_list.json` verification, and the
-blocking localhost spec-review submit flow. CI installs Chromium for the browser
-E2E on Ubuntu, runs shell tests on Ubuntu and macOS, and runs PowerShell
-parsing/tests on Windows.
+blocking localhost spec-review submit flow. Project-scope coverage includes a
+host × plugin matrix that installs every project-capable module into a temp
+folder and asserts user skill/plugin/MCP trees stay untouched. CI installs
+Chromium for the browser E2E on Ubuntu, runs shell tests on Ubuntu and macOS,
+and runs PowerShell parsing/tests on Windows.
 
 ## Authenticated smoke tests
 

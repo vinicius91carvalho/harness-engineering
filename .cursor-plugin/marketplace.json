@@ -7,10 +7,6 @@
     {
       "name": "harness",
       "source": "./"
-    },
-    {
-      "name": "skill-creator",
-      "source": "./packages/skill-creator"
     }
   ]
 }

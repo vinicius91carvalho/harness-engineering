@@ -11,15 +11,6 @@
       "description": "Spec→build→QA→Goal Review workflow plugin"
     },
     {
-      "id": "skill-creator",
-      "kind": "optional-bundle",
-      "sourceRoot": "packages/skill-creator",
-      "optional": true,
-      "hosts": ["claude", "codex", "opencode", "pi", "agent"],
-      "scopes": ["user", "project"],
-      "description": "Create and evaluate agent skills"
-    },
-    {
       "id": "crawl4ai",
       "kind": "optional-bundle",
       "sourceRoot": "packages/crawl4ai",
@@ -57,7 +48,7 @@
       "kind": "external",
       "optional": true,
       "hosts": ["claude", "codex", "opencode", "agent"],
-      "scopes": ["user", "project"],
+      "scopes": ["user"],
       "description": "Reusable git worktree pool for agents",
       "acquisition": {
         "installer": "https://kunchenguid.github.io/treehouse/install.sh",

@@ -32,8 +32,8 @@ const MARKETPLACE_HOSTS = {
     file: '.claude-plugin/marketplace.json',
     plugins: ['harness'],
   },
-  codex: { file: '.agents/plugins/marketplace.json', plugins: ['harness', 'skill-creator'] },
-  cursor: { file: '.cursor-plugin/marketplace.json', plugins: ['harness', 'skill-creator'] },
+  codex: { file: '.agents/plugins/marketplace.json', plugins: ['harness'] },
+  cursor: { file: '.cursor-plugin/marketplace.json', plugins: ['harness'] },
 }
 
 const FORBIDDEN_MARKETPLACE = new Set([
@@ -55,6 +55,16 @@ export function moduleById(catalog, id) {
 
 export function optionalModuleIds(catalog) {
   return catalog.modules.filter((row) => row.optional && row.id !== 'harness').map((row) => row.id)
+}
+
+/** Modules whose catalog scopes are only `user` (skipped under project scope). */
+export function userOnlyModuleIds(catalog) {
+  return catalog.modules
+    .filter((row) => {
+      const scopes = scopesForModule(catalog, row.id)
+      return scopes.length > 0 && scopes.every((scope) => scope === 'user')
+    })
+    .map((row) => row.id)
 }
 
 export function hostsForModule(catalog, id) {
@@ -351,10 +361,17 @@ export async function validateMarketplaces(repo = root) {
   }
 
   const optional = optionalModuleIds(catalog).sort().join(' ')
-  const fallback = 'crawl4ai hallmark no-mistakes playwright shared-config skill-creator status-line treehouse'
+  const fallback = 'crawl4ai hallmark no-mistakes playwright shared-config status-line treehouse'
   const expectedOptional = fallback.split(' ').sort().join(' ')
   if (optional !== expectedOptional) {
     errors.push(`optional module ids drifted from installer fallback (${optional} vs ${expectedOptional})`)
+  }
+
+  const userOnly = userOnlyModuleIds(catalog).sort().join(' ')
+  const userOnlyFallback = 'shared-config status-line treehouse'
+  const expectedUserOnly = userOnlyFallback.split(' ').sort().join(' ')
+  if (userOnly !== expectedUserOnly) {
+    errors.push(`user-only module ids drifted from installer fallback (${userOnly} vs ${expectedUserOnly})`)
   }
 
   return errors
@@ -646,7 +663,7 @@ async function main() {
   const positional = args.filter((arg) => arg !== '--dry-run')
 
   if (!cmd || cmd === 'help' || cmd === '--help') {
-    console.error('usage: install-reconcile.mjs <validate|generate-marketplaces|sync-agent-docs|generate|optional-ids|hosts|scopes|skills-add-args|describe|resolve-install-bases|project-bundle|project-harness-opencode|project-agent|record-receipt> ...')
+    console.error('usage: install-reconcile.mjs <validate|generate-marketplaces|sync-agent-docs|generate|optional-ids|user-only-ids|hosts|scopes|skills-add-args|describe|resolve-install-bases|project-bundle|project-harness-opencode|project-agent|record-receipt> ...')
     process.exit(cmd ? 0 : 2)
   }
 
@@ -680,6 +697,10 @@ async function main() {
     }
     case 'optional-ids': {
       console.log(optionalModuleIds(catalog).join(' '))
+      break
+    }
+    case 'user-only-ids': {
+      console.log(userOnlyModuleIds(catalog).join(' '))
       break
     }
     case 'hosts': {

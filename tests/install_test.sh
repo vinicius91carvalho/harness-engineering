@@ -124,9 +124,19 @@ if grep -q 'npx skills add nutlope/hallmark --skill hallmark -g' "$TMP/out"; the
 fi
 grep -q "cd $PROJECT && no-mistakes init" "$TMP/out" \
   || fail 'project scope should run no-mistakes init in project dir'
+grep -q 'skip no-mistakes upstream installer under project scope' "$TMP/out" \
+  || fail 'project scope must not run the global no-mistakes installer'
+grep -q 'skip crawl4ai pip under project scope' "$TMP/out" \
+  || fail 'project scope must not run crawl4ai pip'
+if grep -q 'curl -fsSL' "$TMP/out"; then
+  fail 'project-scope dry-run must not invoke global curl installers'
+fi
+grep -q "install crawl4ai skill to $PROJECT/.opencode/skills/crawl4ai" "$TMP/out" \
+  || fail 'project-scope crawl4ai skill should target project .opencode'
 "$ROOT/install.sh" --cli claude --scope project --project-dir "$PROJECT" --yes --dry-run </dev/null >"$TMP/out"
 grep -q 'skipping status-line (user scope only)' "$TMP/out" || fail 'project scope should skip status-line for Claude'
 grep -q 'skipping shared-config (user scope only)' "$TMP/out" || fail 'project scope should skip shared-config'
+grep -q 'skipping treehouse (user scope only)' "$TMP/out" || fail 'project scope should skip treehouse'
 pass 'project-scope dry-run targets project paths and skips user-only extras'
 
 : >"$HARNESS_TEST_LOG"
@@ -178,6 +188,11 @@ node "$ROOT/scripts/install-reconcile.mjs" scopes hallmark | grep -Eq '(^| )proj
   || fail 'hallmark scopes should include project'
 node "$ROOT/scripts/install-reconcile.mjs" scopes 'status-line' | grep -qx user \
   || fail 'status-line scopes should be user-only'
+node "$ROOT/scripts/install-reconcile.mjs" scopes treehouse | grep -qx user \
+  || fail 'treehouse scopes should be user-only'
+user_only=$(node "$ROOT/scripts/install-reconcile.mjs" user-only-ids)
+printf '%s' "$user_only" | grep -Eq '(^| )treehouse( |$)' || fail 'user-only-ids should include treehouse'
+printf '%s' "$user_only" | grep -Eq '(^| )status-line( |$)' || fail 'user-only-ids should include status-line'
 node "$ROOT/scripts/install-reconcile.mjs" skills-add-args hallmark | jq -e '
   .repo == "nutlope/hallmark" and .skill == "hallmark" and .globalWhenUserScope == true
 ' >/dev/null || fail 'skills-add-args should project hallmark acquisition from catalog'
@@ -229,8 +244,6 @@ pass 'OpenCode assets are namespaced and idempotent'
 
 : >"$HARNESS_TEST_LOG"
 "$ROOT/install.sh" --cli opencode --no </dev/null >"$TMP/out"
-test ! -e "$HOME/.config/opencode/skills/skill-creator/SKILL.md" \
-  || fail 'harness-only install must not include skill-creator'
 test ! -e "$HOME/.config/opencode/skills/crawl4ai/SKILL.md" \
   || fail 'harness-only install must not include crawl4ai'
 test ! -e "$HOME/.config/opencode/skills/crawl4ai" \
@@ -252,18 +265,21 @@ pass 'Cursor Agent assets are local-plugin installed and idempotent'
 : >"$HARNESS_TEST_LOG"
 rm -rf "$HOME/.cursor/plugins/local"
 # Simulate prior harness pollution under optional plugin dirs.
-mkdir -p "$HOME/.cursor/plugins/local/skill-creator/.cursor-plugin" \
-  "$HOME/.cursor/plugins/local/skill-creator/skills/supervisor"
-printf '%s\n' '{"name":"harness"}' >"$HOME/.cursor/plugins/local/skill-creator/.cursor-plugin/plugin.json"
-"$ROOT/install.sh" --cli agent --yes </dev/null >"$TMP/out"
+mkdir -p "$HOME/.cursor/plugins/local/crawl4ai/.cursor-plugin" \
+  "$HOME/.cursor/plugins/local/crawl4ai/skills/supervisor"
+printf '%s\n' '{"name":"harness"}' >"$HOME/.cursor/plugins/local/crawl4ai/.cursor-plugin/plugin.json"
+# --yes would also run crawl4ai pip/setup; project-bundle the skill path directly.
+node "$ROOT/scripts/install-reconcile.mjs" project-agent crawl4ai "$ROOT" \
+  "$HOME/.cursor/plugins/local/crawl4ai" >/dev/null
+"$ROOT/install.sh" --cli agent --no </dev/null >"$TMP/out"
 test -f "$HOME/.cursor/plugins/local/harness/skills/supervisor/SKILL.md" \
   || fail 'harness supervisor skill missing after agent install'
-test ! -e "$HOME/.cursor/plugins/local/skill-creator/skills/supervisor" \
-  || fail 'skill-creator must not retain harness supervisor skill'
-test -f "$HOME/.cursor/plugins/local/skill-creator/skills/skill-creator/SKILL.md" \
-  || fail 'skill-creator skill missing after agent install'
-sc_name=$(jq -r .name "$HOME/.cursor/plugins/local/skill-creator/.cursor-plugin/plugin.json")
-[ "$sc_name" = skill-creator ] || fail "skill-creator manifest must be skill-creator, got $sc_name"
+test ! -e "$HOME/.cursor/plugins/local/crawl4ai/skills/supervisor" \
+  || fail 'crawl4ai must not retain harness supervisor skill'
+test -f "$HOME/.cursor/plugins/local/crawl4ai/skills/crawl4ai/SKILL.md" \
+  || fail 'crawl4ai skill missing after agent optional-bundle install'
+c4_name=$(jq -r .name "$HOME/.cursor/plugins/local/crawl4ai/.cursor-plugin/plugin.json")
+[ "$c4_name" = crawl4ai ] || fail "crawl4ai manifest must be crawl4ai, got $c4_name"
 if node "$ROOT/scripts/install-reconcile.mjs" project-agent hallmark "$ROOT" "$HOME/.cursor/plugins/local/hallmark" 2>"$TMP/err"; then
   fail 'project-agent must fail closed for external hallmark'
 fi
@@ -317,7 +333,7 @@ node -e '
 const fs = require("fs");
 const catalog = JSON.parse(fs.readFileSync("config/installable-catalog.json", "utf8"));
 const md = fs.readFileSync("docs/plugins.md", "utf8");
-const ids = ["harness", "hallmark", "no-mistakes", "treehouse", "skill-creator", "playwright", "crawl4ai"];
+const ids = ["harness", "hallmark", "no-mistakes", "treehouse", "playwright", "crawl4ai"];
 for (const id of ids) {
   const mod = catalog.modules.find((row) => row.id === id);
   if (!mod) throw new Error("catalog missing " + id);
@@ -433,3 +449,184 @@ first=$(shasum -a 256 "$HOME/.codex/config.toml")
 second=$(shasum -a 256 "$HOME/.codex/config.toml")
 [ "$first" = "$second" ] || fail 'repeated Codex status-line install is not idempotent'
 pass 'Codex status line install is idempotent'
+
+# Regression: HUP/INT/TERM must exit after cleanup. A cleanup-only INT trap lets
+# the installer resume after CTRL+C and print a false completion banner.
+if grep -E 'trap cleanup EXIT HUP INT TERM' "$ROOT/install.sh" >/dev/null; then
+  fail 'install.sh must not use a cleanup-only HUP/INT/TERM trap'
+fi
+grep -q 'on_signal()' "$ROOT/install.sh" || fail 'install.sh must define on_signal'
+grep -Eq 'trap on_signal HUP INT TERM' "$ROOT/install.sh" || fail 'install.sh must trap signals with on_signal'
+grep -q 'exit 130' "$ROOT/install.sh" || fail 'install.sh signal trap must exit 130'
+pass 'signal traps exit instead of resuming into the completion banner'
+
+# Project-scope isolation matrix: every host × every project-capable plugin must
+# land under --project-dir and must not write user skill/plugin/MCP trees.
+assert_no_global_host_trees() {
+  host=$1
+  for path in \
+    "$HOME/.claude/skills" \
+    "$HOME/.config/opencode" \
+    "$HOME/.agents/skills" \
+    "$HOME/.cursor/plugins/local" \
+    "$HOME/.cursor/skills"
+  do
+    if [ -e "$path" ] && [ -n "$(find "$path" -type f 2>/dev/null | head -n 1)" ]; then
+      fail "project scope ($host) wrote global host tree: $path"
+    fi
+  done
+  if [ -f "$HOME/.cursor/mcp.json" ]; then
+    fail "project scope ($host) wrote global Cursor MCP config"
+  fi
+  if [ -d "$HOME/.local/bin" ] && [ -n "$(find "$HOME/.local/bin" -type f 2>/dev/null | head -n 1)" ]; then
+    fail "project scope ($host) wrote global ~/.local/bin"
+  fi
+  if [ -d "$HOME/.local/share/harness/crawl4ai-venv" ]; then
+    fail "project scope ($host) created global crawl4ai venv"
+  fi
+}
+
+cat >"$TMP/bin/npx" <<'EOF'
+#!/bin/sh
+printf '%s\n' "npx $*" >>"$HARNESS_TEST_LOG"
+case " $* " in
+  *" skills add "*)
+    case " $* " in *" -g "*|*" -g")
+      echo "npx skills must not use -g under project scope" >&2
+      exit 1
+      ;;
+    esac
+    mkdir -p .claude/skills/hallmark
+    printf '# hallmark\n' >.claude/skills/hallmark/SKILL.md
+    ;;
+esac
+exit 0
+EOF
+chmod +x "$TMP/bin/npx"
+
+cat >"$TMP/bin/no-mistakes" <<'EOF'
+#!/bin/sh
+printf '%s\n' "no-mistakes $*" >>"$HARNESS_TEST_LOG"
+if [ "$1" = init ]; then
+  mkdir -p .no-mistakes
+  printf 'ok\n' >.no-mistakes/initialized
+fi
+exit 0
+EOF
+chmod +x "$TMP/bin/no-mistakes"
+
+cat >"$TMP/bin/curl" <<'EOF'
+#!/bin/sh
+printf '%s\n' "curl $*" >>"$HARNESS_TEST_LOG"
+echo "project scope must not curl global installers" >&2
+exit 1
+EOF
+chmod +x "$TMP/bin/curl"
+
+for tool in pip pip3 crawl4ai-setup crawl4ai-doctor; do
+  cat >"$TMP/bin/$tool" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$(basename "$0") $*" >>"$HARNESS_TEST_LOG"
+echo "project scope must not run global crawl4ai runtime tooling" >&2
+exit 1
+EOF
+  chmod +x "$TMP/bin/$tool"
+done
+
+for host in claude codex opencode pi agent; do
+  MATRIX_PROJECT=$TMP/matrix-$host
+  rm -rf "$MATRIX_PROJECT" \
+    "$HOME/.claude" "$HOME/.codex" "$HOME/.config" "$HOME/.agents" "$HOME/.cursor" \
+    "$HOME/.local/bin" "$HOME/.local/share/harness/crawl4ai-venv"
+  mkdir -p "$MATRIX_PROJECT"
+  if MATRIX_PROJECT=$(CDPATH= cd -- "$MATRIX_PROJECT" && pwd -P 2>/dev/null); then
+    :
+  else
+    MATRIX_PROJECT=$(CDPATH= cd -- "$MATRIX_PROJECT" && pwd)
+  fi
+  : >"$HARNESS_TEST_LOG"
+  "$ROOT/install.sh" --cli "$host" --scope project --project-dir "$MATRIX_PROJECT" --yes \
+    </dev/null >"$TMP/matrix-$host.out" 2>"$TMP/matrix-$host.err" \
+    || fail "project-scope --yes failed for $host"
+  assert_no_global_host_trees "$host"
+
+  case "$host" in
+    claude)
+      grep -q '^claude plugin update harness@harness-engineering --scope project$' "$HARNESS_TEST_LOG" \
+        || fail 'Claude project matrix must refresh harness with --scope project'
+      grep -q '^claude mcp add-json --scope project playwright ' "$HARNESS_TEST_LOG" \
+        || fail 'Claude project matrix must configure playwright MCP with --scope project'
+      test -f "$MATRIX_PROJECT/.claude/skills/crawl4ai/SKILL.md" \
+        || fail 'Claude project matrix missing crawl4ai skill'
+      test -f "$MATRIX_PROJECT/.claude/skills/hallmark/SKILL.md" \
+        || fail 'Claude project matrix missing hallmark skill'
+      ;;
+    codex)
+      test -f "$MATRIX_PROJECT/.codex-plugin/plugin.json" || fail 'Codex project matrix missing plugin manifest'
+      test -f "$MATRIX_PROJECT/.agents/plugins/marketplace.json" || fail 'Codex project matrix missing marketplace'
+      test -f "$MATRIX_PROJECT/.agents/skills/crawl4ai/SKILL.md" || fail 'Codex project matrix missing crawl4ai skill'
+      test -f "$MATRIX_PROJECT/.claude/skills/hallmark/SKILL.md" || fail 'Codex project matrix missing hallmark skill'
+      if grep -Eq '^codex mcp ' "$HARNESS_TEST_LOG"; then
+        fail 'Codex project matrix must not configure global playwright MCP'
+      fi
+      grep -q 'skipping playwright MCP for Codex under project scope' "$TMP/matrix-$host.out" \
+        || fail 'Codex project matrix should announce playwright skip'
+      ;;
+    opencode)
+      test -f "$MATRIX_PROJECT/.opencode/skills/harness-generator/SKILL.md" \
+        || fail 'OpenCode project matrix missing harness skill'
+      test -f "$MATRIX_PROJECT/.opencode/skills/crawl4ai/SKILL.md" \
+        || fail 'OpenCode project matrix missing crawl4ai skill'
+      test -f "$MATRIX_PROJECT/.claude/skills/hallmark/SKILL.md" \
+        || fail 'OpenCode project matrix missing hallmark skill'
+      jq -e '.mcp.playwright' "$MATRIX_PROJECT/.opencode/opencode.json" >/dev/null \
+        || fail 'OpenCode project matrix missing playwright MCP'
+      ;;
+    pi)
+      test -f "$MATRIX_PROJECT/.agents/skills/planner/SKILL.md" || fail 'Pi project matrix missing planner skill'
+      test -f "$MATRIX_PROJECT/.agents/skills/crawl4ai/SKILL.md" || fail 'Pi project matrix missing crawl4ai skill'
+      test ! -e "$MATRIX_PROJECT/.claude/skills/hallmark" || fail 'Pi project matrix must not install hallmark'
+      ;;
+    agent)
+      test -f "$MATRIX_PROJECT/.cursor/plugins/local/harness/.cursor-plugin/plugin.json" \
+        || fail 'Cursor project matrix missing harness plugin'
+      test -f "$MATRIX_PROJECT/.cursor/skills/crawl4ai/SKILL.md" \
+        || fail 'Cursor project matrix missing crawl4ai skill'
+      test -f "$MATRIX_PROJECT/.claude/skills/hallmark/SKILL.md" \
+        || fail 'Cursor project matrix missing hallmark skill'
+      jq -e '.mcpServers.playwright' "$MATRIX_PROJECT/.cursor/mcp.json" >/dev/null \
+        || fail 'Cursor project matrix missing playwright MCP'
+      ;;
+  esac
+
+  test -f "$MATRIX_PROJECT/.no-mistakes/initialized" \
+    || fail "project matrix ($host) must run no-mistakes init in the project"
+  grep -q '^no-mistakes init$' "$HARNESS_TEST_LOG" \
+    || fail "project matrix ($host) must invoke no-mistakes init"
+  if grep -Eq '^(curl|pip|pip3|crawl4ai-setup|crawl4ai-doctor) ' "$HARNESS_TEST_LOG"; then
+    fail "project matrix ($host) must not invoke global installers"
+  fi
+  if grep -Eq 'npx skills add .* -g' "$HARNESS_TEST_LOG"; then
+    fail "project matrix ($host) must not pass -g to npx skills"
+  fi
+  case "$host" in
+    claude|codex|opencode|agent)
+      grep -q 'skipping treehouse (user scope only)' "$TMP/matrix-$host.out" \
+        || fail "project matrix ($host) must skip treehouse"
+      ;;
+  esac
+  case "$host" in
+    claude|codex)
+      grep -q 'skipping status-line (user scope only)' "$TMP/matrix-$host.out" \
+        || fail "project matrix ($host) must skip status-line"
+      ;;
+  esac
+  case "$host" in
+    claude)
+      grep -q 'skipping shared-config (user scope only)' "$TMP/matrix-$host.out" \
+        || fail 'project matrix (claude) must skip shared-config'
+      ;;
+  esac
+  pass "project-scope matrix keeps $host installs inside the project folder"
+done
+pass 'project-scope matrix installs every host/plugin without global host trees'

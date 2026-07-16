@@ -50,10 +50,12 @@ after host selection. `project` writes under `--project-dir` (default: current
 directory) for OpenCode (`.opencode/`), Pi (`.agents/skills/`), Cursor
 (`.cursor/`), Claude skills (`.claude/skills/`), and Claude plugins
 (`--scope project`). `local` is valid only when Claude is the sole selected host.
-User-only extras (`status-line`, `shared-config`) are hidden from the checklist
-and skipped under `project` scope. `hallmark` uses `npx skills add` with `-g` for
-user/global scope, and without `-g` (in `--project-dir`) for project scope.
-`no-mistakes` project scope also runs `no-mistakes init` in the project.
+User-only modules (`status-line`, `shared-config`, `treehouse`) are hidden from
+the checklist and skipped under `project` scope. `hallmark` uses `npx skills add`
+with `-g` for user/global scope, and without `-g` (in `--project-dir`) for
+project scope. `no-mistakes` project scope only runs `no-mistakes init` (binary
+must already exist from a prior user-scope install). Crawl4AI project scope
+copies the skill only; pip/runtime stays user-scope.
 Codex `project` scope copies `.codex-plugin/plugin.json` and
 `.agents/plugins/marketplace.json` into the project, registers that directory as
 a marketplace, then runs `codex plugin add`. Receipts stay under

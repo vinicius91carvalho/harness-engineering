@@ -210,7 +210,7 @@ A local checkout of this repository installs from the working tree instead (dev 
 Interactively the installer asks for host (Claude, Codex, OpenCode, Pi, Cursor Agent), then install scope (`user` global vs `project` folder; Claude also offers `local`), then the checklist.
 `--scope` / `--project-dir` (PowerShell: `-Scope` / `-ProjectDir`) skip the scope menu.
 Arrow-key checklist: keep `harness` checked; add MCP or extras if you want them.
-User-only extras (`status-line`, `shared-config`) are skipped for project scope.
+User-only modules (`status-line`, `shared-config`, `treehouse`) are skipped for project scope.
 The optional status line reads the CLI payload once per render, shows 5h and 7d renew countdowns when reset timestamps are present, and only enumerates linked Git worktrees when the repo actually has a worktree registry.
 Windows: [`install.ps1`](install.ps1). Details: [installer docs](docs/installer/README.md).
 

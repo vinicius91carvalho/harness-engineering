@@ -14,7 +14,7 @@
   -Version pins the GitHub release tag to stage; default is latest.
   -Scope user installs to host user directories; project installs under -ProjectDir
   (default: current directory); local is Claude-only (plugin scope under the project).
-  User-only extras (status-line, shared-config) are skipped for project scope.
+  User-only modules (status-line, shared-config, treehouse) are skipped for project scope.
 #>
 [CmdletBinding()]
 param(
@@ -60,7 +60,12 @@ if (-not $Scope) {
   elseif ($Local) { $Scope = "local" }
 }
 $script:ScopeExplicit = $PSBoundParameters.ContainsKey("Scope") -or $User -or $Project -or $Local
-$UserOnlyModules = @("status-line", "shared-config")
+$DefaultUserOnly = @("shared-config", "status-line", "treehouse")
+$UserOnlyModules = $DefaultUserOnly
+if ($RepoRoot -and (Test-Path (Join-Path $RepoRoot "config/installable-catalog.json")) -and (Get-Command node -ErrorAction SilentlyContinue)) {
+  $catalogUserOnly = & node (Join-Path $RepoRoot "scripts/install-reconcile.mjs") user-only-ids 2>$null
+  if ($LASTEXITCODE -eq 0 -and $catalogUserOnly) { $UserOnlyModules = @($catalogUserOnly -split '\s+' | Where-Object { $_ }) }
+}
 
 $MarketplaceRepo = "vinicius91carvalho/harness-engineering"
 $ClaudeMarketplace = "harness-engineering"
@@ -68,7 +73,7 @@ $CodexMarketplace = "harness-engineering"
 $NoMistakesInstaller = "https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.ps1"
 $TreehouseInstaller = "https://kunchenguid.github.io/treehouse/install.ps1"
 $RepoRoot = if ($PSScriptRoot) { $PSScriptRoot } else { $null }
-$DefaultOptional = @("hallmark", "no-mistakes", "treehouse", "skill-creator", "playwright", "crawl4ai", "status-line", "shared-config")
+$DefaultOptional = @("hallmark", "no-mistakes", "treehouse", "playwright", "crawl4ai", "status-line", "shared-config")
 $Optional = $DefaultOptional
 if ($RepoRoot -and (Test-Path (Join-Path $RepoRoot "config/installable-catalog.json")) -and (Get-Command node -ErrorAction SilentlyContinue)) {
   $catalogOptional = & node (Join-Path $RepoRoot "scripts/install-reconcile.mjs") optional-ids 2>$null
@@ -77,7 +82,6 @@ if ($RepoRoot -and (Test-Path (Join-Path $RepoRoot "config/installable-catalog.j
 $ReceiptDir = Join-Path $HOME ".local/share/harness"
 $PluginClis = @{
   harness = @("claude", "codex", "opencode", "pi", "agent")
-  "skill-creator" = @("claude", "codex", "opencode", "pi", "agent")
   hallmark = @("claude", "codex", "opencode", "agent")
   "no-mistakes" = @("claude", "codex", "opencode", "pi", "agent")
   treehouse = @("claude", "codex", "opencode", "agent")
@@ -134,7 +138,6 @@ function Get-MenuBlurb([string]$Kind, [string]$Item) {
     "install:hallmark" { return "Anti-AI-slop design skill via npx skills (-g for user/global scope; project dir without -g)." }
     "install:no-mistakes" { return "Git push gate with AI validation. Installs the upstream binary; project scope also runs no-mistakes init in the project." }
     "install:treehouse" { return "Reusable git worktree pool for agents. Installs the upstream treehouse CLI." }
-    "install:skill-creator" { return "Multi-agent pipeline to create, evaluate, benchmark, and refine AI coding skills." }
     "install:playwright" { return "Browser automation and E2E testing through Microsoft official Playwright MCP server." }
     "install:crawl4ai" { return "Web crawling and structured extraction. Installs the Python package plus a bundled skill per host." }
     "install:status-line" { return "Custom status bar for Claude; built-in status items for Codex (model, git branch, context usage)." }
@@ -533,29 +536,6 @@ function Apply-ClaudeSharedConfig {
   Write-ClaudeSettings { param($json) foreach ($property in $shared.PSObject.Properties) { $json | Add-Member -Force NoteProperty $property.Name $property.Value } }
 }
 
-function Install-SkillCreator {
-  foreach ($target in $Targets) {
-    if ((Get-ModuleHosts "skill-creator") -notcontains $target) { continue }
-    switch ($target) {
-      claude {
-        $dest = Join-Path (Get-ClaudeSkillsRoot) "skill-creator"
-        if ($DryRun) { Write-Host "DRY RUN - install skill-creator to $dest"; continue }
-        New-Item -ItemType Directory -Force (Split-Path $dest -Parent) | Out-Null
-        Invoke-Reconcile @("project-bundle", "skill-creator", $dest)
-      }
-      opencode { Install-OpenCodePlugin "skill-creator" }
-      codex { Invoke-Native codex @("plugin", "add", "skill-creator@$CodexMarketplace") }
-      pi {
-        $dest = Join-Path (Get-AgentsSkillsRoot) "skill-creator"
-        if ($DryRun) { Write-Host "DRY RUN - install skill-creator to $dest"; continue }
-        New-Item -ItemType Directory -Force (Split-Path $dest -Parent) | Out-Null
-        Invoke-Reconcile @("project-bundle", "skill-creator", $dest)
-      }
-      agent { Install-AgentPlugin "skill-creator" }
-    }
-  }
-}
-
 function Install-Crawl4AiSkill([string]$Destination) {
   New-Item -ItemType Directory -Force (Split-Path $Destination -Parent) | Out-Null
   Invoke-Reconcile @("project-bundle", "crawl4ai", $Destination)
@@ -610,7 +590,12 @@ function Install-Crawl4AiPip {
 }
 
 function Install-Crawl4Ai {
-  Install-Crawl4AiPip
+  if ($script:Scope -eq "project") {
+    if ($DryRun) { Write-Host "DRY RUN - skip crawl4ai pip under project scope (skill only)" }
+    else { Write-Host "install.ps1: project scope installs crawl4ai skill only (use -Scope user for pip/runtime)" }
+  } else {
+    Install-Crawl4AiPip
+  }
   foreach ($target in $Targets) {
     if ((Get-ModuleHosts "crawl4ai") -notcontains $target) { continue }
     switch ($target) {
@@ -691,21 +676,17 @@ function Install-Hallmark {
 }
 
 function Install-NoMistakes {
-  if ($DryRun) {
-    Write-Host "DRY RUN - irm $NoMistakesInstaller | iex"
-    if ($script:Scope -eq "project") {
-      Write-Host "DRY RUN - (cd $script:ProjectDir; no-mistakes init)"
-    } else {
-      Write-Host "DRY RUN - note: run no-mistakes init in each repository you want to gate"
-    }
-    return
-  }
-  try { Invoke-Expression (Invoke-WebRequest $NoMistakesInstaller -UseBasicParsing).Content }
-  catch { throw "no-mistakes installer failed: $_" }
-  $binary = Get-Command no-mistakes -ErrorAction SilentlyContinue
-  $version = if ($binary) { try { & $binary.Source --version 2>$null } catch { "unknown" } } else { "unknown" }
   if ($script:Scope -eq "project") {
-    if (-not $binary) { throw "no-mistakes binary missing after install" }
+    if ($DryRun) {
+      Write-Host "DRY RUN - skip no-mistakes upstream installer under project scope (global binary)"
+      Write-Host "DRY RUN - (cd $script:ProjectDir; no-mistakes init)"
+      return
+    }
+    $binary = Get-Command no-mistakes -ErrorAction SilentlyContinue
+    if (-not $binary) {
+      throw "no-mistakes binary missing; install it with -Scope user first, then re-run project scope for init"
+    }
+    $version = try { & $binary.Source --version 2>$null } catch { "unknown" }
     Push-Location $script:ProjectDir
     try {
       Invoke-Native no-mistakes @("init")
@@ -717,10 +698,19 @@ function Install-NoMistakes {
       version = ($version ?? "unknown")
       init = $script:ProjectDir
     }
-  } else {
-    Write-InstallReceipt no-mistakes @{ binary = ($binary.Source ?? "unknown"); version = ($version ?? "unknown") }
-    Write-Host "install.ps1: run no-mistakes init in each repository you want to gate"
+    return
   }
+  if ($DryRun) {
+    Write-Host "DRY RUN - irm $NoMistakesInstaller | iex"
+    Write-Host "DRY RUN - note: run no-mistakes init in each repository you want to gate"
+    return
+  }
+  try { Invoke-Expression (Invoke-WebRequest $NoMistakesInstaller -UseBasicParsing).Content }
+  catch { throw "no-mistakes installer failed: $_" }
+  $binary = Get-Command no-mistakes -ErrorAction SilentlyContinue
+  $version = if ($binary) { try { & $binary.Source --version 2>$null } catch { "unknown" } } else { "unknown" }
+  Write-InstallReceipt no-mistakes @{ binary = ($binary.Source ?? "unknown"); version = ($version ?? "unknown") }
+  Write-Host "install.ps1: run no-mistakes init in each repository you want to gate"
 }
 
 function Install-Treehouse {
@@ -747,6 +737,10 @@ function Install-PlaywrightMcp {
         Invoke-Native claude @("mcp", "add-json", "--scope", $script:Scope, $Name, $json)
       }
       codex {
+        if ($script:Scope -eq "project") {
+          Write-Host "install.ps1: skipping playwright MCP for Codex under project scope (Codex MCP is user-global only)"
+          continue
+        }
         & codex mcp remove $Name *> $null
         Invoke-Native codex (@("mcp", "add", $Name, "--", $server.command) + @($server.args))
       }
@@ -843,7 +837,6 @@ if ($DryRun) {
 
 foreach ($item in $Selected) {
   if (Skip-UserOnlyModule $item) { continue }
-  if ($item -eq "skill-creator") { Install-SkillCreator; continue }
   if ($item -eq "crawl4ai") { Install-Crawl4Ai; continue }
   if ($item -eq "hallmark") { Install-Hallmark; continue }
   if ($item -eq "no-mistakes") { Install-NoMistakes; continue }
