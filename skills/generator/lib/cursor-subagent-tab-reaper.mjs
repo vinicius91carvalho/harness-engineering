@@ -92,11 +92,6 @@ export function shouldCloseCursorSubagentEntry(entry, {
     return { close: true, reason: 'missing_pane_orphan' }
   }
 
-  // Still marked working but ancient — force reap (stuck logview / no turn_ended).
-  if (age >= orphanGraceMs) {
-    return { close: true, reason: 'orphan_grace' }
-  }
-
   return { close: false, reason: 'live' }
 }
 

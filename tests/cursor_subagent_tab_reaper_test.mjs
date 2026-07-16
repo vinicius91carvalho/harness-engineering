@@ -21,7 +21,7 @@ test('isCursorSubagentAgent matches cursor-sub prefix', () => {
   assert.equal(isCursorSubagentAgent('worker-causeflow-core'), false)
 })
 
-test('shouldCloseCursorSubagentEntry closes on orphan grace', () => {
+test('shouldCloseCursorSubagentEntry keeps old live working entry', () => {
   const entry = entryAt(DEFAULT_ORPHAN_GRACE_MS + 1_000)
   const pane = { pane_id: 'pane-1', tab_id: 'tab-1', agent_status: 'working', cwd: '/tmp/proj' }
   const decision = shouldCloseCursorSubagentEntry(entry, {
@@ -29,8 +29,31 @@ test('shouldCloseCursorSubagentEntry closes on orphan grace', () => {
     logviewAlive: true,
     now: NOW,
   })
+  assert.equal(decision.close, false)
+  assert.equal(decision.reason, 'live')
+})
+
+test('shouldCloseCursorSubagentEntry keeps old working entry when logview is unknown', () => {
+  const entry = entryAt(DEFAULT_ORPHAN_GRACE_MS + 1_000)
+  const pane = { pane_id: 'pane-1', tab_id: 'tab-1', agent_status: 'working', cwd: '/tmp/proj' }
+  const decision = shouldCloseCursorSubagentEntry(entry, {
+    pane,
+    logviewAlive: null,
+    now: NOW,
+  })
+  assert.equal(decision.close, false)
+  assert.equal(decision.reason, 'live')
+})
+
+test('shouldCloseCursorSubagentEntry closes missing pane on orphan grace', () => {
+  const entry = entryAt(DEFAULT_ORPHAN_GRACE_MS + 1_000)
+  const decision = shouldCloseCursorSubagentEntry(entry, {
+    pane: null,
+    logviewAlive: null,
+    now: NOW,
+  })
   assert.equal(decision.close, true)
-  assert.equal(decision.reason, 'orphan_grace')
+  assert.equal(decision.reason, 'missing_pane_orphan')
 })
 
 test('shouldCloseCursorSubagentEntry keeps young live entry', () => {
@@ -70,7 +93,7 @@ test('shouldCloseCursorSubagentEntry closes cwd_deleted panes', () => {
   assert.equal(decision.reason, 'cwd_deleted')
 })
 
-test('planCursorSubagentTabReap closes registry entry past orphan grace', () => {
+test('planCursorSubagentTabReap keeps live registry entry past orphan grace', () => {
   const registry = {
     sub1: {
       tab_id: 'tab-reg',
@@ -92,10 +115,9 @@ test('planCursorSubagentTabReap closes registry entry past orphan grace', () => 
     now: NOW,
     isLogviewAlive: () => true,
   })
-  assert.equal(plan.shouldReap, true)
-  assert.equal(plan.closes.length, 1)
-  assert.equal(plan.closes[0].reason, 'orphan_grace')
-  assert.equal(plan.closes[0].registryId, 'sub1')
+  assert.equal(plan.shouldReap, false)
+  assert.equal(plan.closes.length, 0)
+  assert.equal(plan.keepRegistryIds.has('sub1'), true)
 })
 
 test('planCursorSubagentTabReap keeps active registry entry with live logview', () => {
@@ -142,7 +164,7 @@ test('planCursorSubagentTabReap closes stray cursor-sub panes not in registry', 
   assert.equal(plan.closes.length, 1)
   assert.equal(plan.closes[0].registryId, null)
   assert.equal(plan.closes[0].tabId, 'tab-stray')
-  assert.ok(['logview_dead', 'orphan_grace', 'stray_cursor_sub'].includes(plan.closes[0].reason))
+  assert.ok(['logview_dead', 'stray_cursor_sub'].includes(plan.closes[0].reason))
 })
 
 test('logviewAliveForMeta detects meta path in ps output', () => {
