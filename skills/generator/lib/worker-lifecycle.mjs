@@ -1,5 +1,4 @@
-import { spawnSync } from 'node:child_process'
-import { dirname } from 'node:path'
+import { spawn, spawnSync } from 'node:child_process'
 
 /**
  * Shared supervisor worker runtime plans.
@@ -107,4 +106,72 @@ export function killMatchingPatterns(patterns) {
     if (pkill.status === 0) killed += 1
   }
   return killed
+}
+
+/** Kill a host agent child and its process group. */
+export function terminateHostProcess(child, signal = 'SIGTERM') {
+  if (!child?.pid) return
+  terminateProcessTree(child.pid, signal)
+  try { child.kill(signal === 'SIGKILL' ? 'SIGKILL' : 'SIGTERM') } catch {}
+}
+
+/** Spawn a host CLI as a detached background child with piped stdout/stderr. */
+export function spawnHostAgent(program, args, { cwd, env = {} } = {}) {
+  return spawn(program, args, {
+    cwd,
+    detached: process.platform !== 'win32',
+    env: { ...process.env, ...env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+}
+
+/**
+ * Tear down browsers owned by this run only.
+ * Requires port and/or workdir; never matches global headless chromium.
+ */
+export function cleanupBrowserOrphans({ port, workdir, profileDir } = {}) {
+  if (process.platform === 'win32') return { killed: 0 }
+  if (!port && !workdir && !profileDir) return { killed: 0 }
+  const patterns = [
+    port && `-remote-debugging-port=${port}`,
+    port && `--remote-debugging-port=${port}`,
+    port && `playwright.*${port}`,
+    profileDir && `chrome.*--user-data-dir=${profileDir}`,
+    profileDir && `chromium.*--user-data-dir=${profileDir}`,
+    workdir && `chrome.*${workdir}`,
+    workdir && `chromium.*${workdir}`,
+    workdir && `playwright.*${workdir}`,
+  ]
+  return { killed: killMatchingPatterns(patterns) }
+}
+
+/**
+ * Periodic Run State heartbeat with consecutive-failure escalation.
+ * Clears the interval after maxConsecutiveFailures so a dead fence/IO path
+ * cannot silently look like a live owner forever.
+ */
+export function startStateHeartbeat(writeState, {
+  intervalMs = 15_000,
+  maxConsecutiveFailures = 3,
+  label = 'harness',
+  onEscalated = null,
+} = {}) {
+  let failures = 0
+  const timer = setInterval(() => {
+    Promise.resolve()
+      .then(() => writeState())
+      .then(() => { failures = 0 })
+      .catch((error) => {
+        failures += 1
+        const detail = error?.message || String(error)
+        process.stderr.write(
+          `${label} heartbeat write failed (${failures}/${maxConsecutiveFailures}): ${detail}\n`,
+        )
+        if (failures < maxConsecutiveFailures) return
+        clearInterval(timer)
+        try { onEscalated?.(error) } catch {}
+      })
+  }, intervalMs)
+  if (typeof timer.unref === 'function') timer.unref()
+  return timer
 }

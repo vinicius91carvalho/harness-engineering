@@ -14,9 +14,9 @@ import { dirname, join, basename } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { hostname } from 'node:os'
 
-import { isLiveRunOwner, abandonGhostRun, listGhostClaims, processAlive } from '../../generator/lib/orphan-claims.mjs'
+import { isLiveRunOwner, abandonGhostRun, listGhostClaims, processAlive } from './orphan-claims.mjs'
 import { readJsonFile, writeJsonAtomic } from '../../generator/lib/git-repo.mjs'
-import { journalLockHolderAlive, journalPaths } from '../../generator/lib/control-journal.mjs'
+import { journalLockHolderAlive, journalPaths } from './control-journal.mjs'
 
 const GENERIC_RETRY = /^Auto-retry:/i
 

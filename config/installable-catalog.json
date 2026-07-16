@@ -7,6 +7,7 @@
       "sourceRoot": ".",
       "optional": false,
       "hosts": ["claude", "codex", "opencode", "pi", "agent"],
+      "scopes": ["user", "project"],
       "description": "Spec→build→QA→Goal Review workflow plugin"
     },
     {
@@ -15,6 +16,7 @@
       "sourceRoot": "packages/skill-creator",
       "optional": true,
       "hosts": ["claude", "codex", "opencode", "pi", "agent"],
+      "scopes": ["user", "project"],
       "description": "Create and evaluate agent skills"
     },
     {
@@ -23,6 +25,7 @@
       "sourceRoot": "packages/crawl4ai",
       "optional": true,
       "hosts": ["claude", "codex", "opencode", "pi", "agent"],
+      "scopes": ["user", "project"],
       "description": "Crawl4AI web extraction skill",
       "runtime": { "pip": ["crawl4ai"] }
     },
@@ -31,9 +34,10 @@
       "kind": "external",
       "optional": true,
       "hosts": ["claude", "codex", "opencode", "agent"],
+      "scopes": ["user", "project"],
       "description": "Anti-AI-slop design skill",
       "acquisition": {
-        "skills": { "repo": "nutlope/hallmark", "name": "hallmark", "global": true }
+        "skills": { "repo": "nutlope/hallmark", "name": "hallmark", "globalWhenUserScope": true }
       }
     },
     {
@@ -41,6 +45,7 @@
       "kind": "external",
       "optional": true,
       "hosts": ["claude", "codex", "opencode", "pi", "agent"],
+      "scopes": ["user", "project"],
       "description": "Git push gate with AI validation pipeline",
       "acquisition": {
         "installer": "https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh",
@@ -52,6 +57,7 @@
       "kind": "external",
       "optional": true,
       "hosts": ["claude", "codex", "opencode", "agent"],
+      "scopes": ["user", "project"],
       "description": "Reusable git worktree pool for agents",
       "acquisition": {
         "installer": "https://kunchenguid.github.io/treehouse/install.sh",
@@ -63,6 +69,7 @@
       "kind": "mcp",
       "optional": true,
       "hosts": ["claude", "codex", "opencode", "agent"],
+      "scopes": ["user", "project"],
       "description": "Playwright browser MCP"
     },
     {
@@ -70,6 +77,7 @@
       "kind": "extra",
       "optional": true,
       "hosts": ["claude", "codex"],
+      "scopes": ["user"],
       "description": "Status line helpers"
     },
     {
@@ -77,6 +85,7 @@
       "kind": "extra",
       "optional": true,
       "hosts": ["claude"],
+      "scopes": ["user"],
       "description": "Shared Claude settings merge"
     }
   ]

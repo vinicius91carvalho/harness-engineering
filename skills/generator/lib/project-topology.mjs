@@ -10,6 +10,7 @@ import {
   scopeClaims,
 } from './project-keys.mjs'
 import { integrationBranchName, integrationBranchRef, DEFAULT_INTEGRATION_BRANCH } from './integration-branch.mjs'
+import { writeJsonAtomic } from './git-repo.mjs'
 
 export {
   sanitizeKey,
@@ -43,9 +44,14 @@ export function resolveProjectPrefix(repo) {
   return git(repo, ['rev-parse', '--show-prefix'])
 }
 
+/** Path to `.harness/projects.json` at Git root. */
+export function projectsRegistryPath(gitRoot) {
+  return join(gitRoot, '.harness', 'projects.json')
+}
+
 /** Read `.harness/projects.json` at Git root when present. */
 export function readProjectsRegistry(gitRoot) {
-  const file = join(gitRoot, '.harness', 'projects.json')
+  const file = projectsRegistryPath(gitRoot)
   if (!existsSync(file)) return null
   try {
     const data = JSON.parse(readFileSync(file, 'utf8'))
@@ -54,6 +60,51 @@ export function readProjectsRegistry(gitRoot) {
   } catch {
     throw new Error(`malformed projects registry: ${file}`)
   }
+}
+
+/**
+ * Sole writer for `.harness/projects.json`.
+ * Upserts `{ id, path }` (and optional description) while preserving unknown fields
+ * and other project entries. Paths are Git-root-relative without a trailing slash;
+ * the Git-root project uses `path: ""` and `id: "root"` when prefix is empty.
+ *
+ * @returns {{ file: string, id: string, path: string, created: boolean }}
+ */
+export function upsertProject(gitRoot, { id, path, description } = {}) {
+  if (!gitRoot) throw new Error('upsertProject: gitRoot is required')
+  const projectId = String(id || '').trim()
+  if (!projectId) throw new Error('upsertProject: id is required')
+  const projectPath = String(path ?? '').replace(/\/$/, '')
+  const file = projectsRegistryPath(gitRoot)
+  const registry = readProjectsRegistry(gitRoot) || {}
+  const projects = Array.isArray(registry.projects) ? [...registry.projects] : []
+  const index = projects.findIndex((entry) => entry && entry.id === projectId)
+  const created = index < 0
+  const previous = created ? {} : { ...projects[index] }
+  const next = { ...previous, id: projectId, path: projectPath }
+  if (description != null && String(description).trim()) {
+    next.description = String(description).trim()
+  }
+  if (created) projects.push(next)
+  else projects[index] = next
+  registry.projects = projects
+  writeJsonAtomic(file, registry)
+  return { file, id: projectId, path: projectPath, created }
+}
+
+/**
+ * Register the project owning `projectDir` (must be inside a git work tree).
+ * No-op when not inside a git repository.
+ */
+export function registerProjectAt(projectDir) {
+  const root = resolve(projectDir)
+  const inside = spawnSync('git', ['-C', root, 'rev-parse', '--is-inside-work-tree'], { encoding: 'utf8' })
+  if (inside.status !== 0 || (inside.stdout || '').trim() !== 'true') return null
+  const gitRoot = resolveGitRoot(root)
+  const prefix = resolveProjectPrefix(root) || ''
+  const id = projectIdFromPrefix(prefix) || 'root'
+  const path = prefix.replace(/\/$/, '')
+  return upsertProject(gitRoot, { id, path })
 }
 
 /**

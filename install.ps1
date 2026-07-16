@@ -1,14 +1,66 @@
 # Native Windows installer for Claude Code, Codex, OpenCode, Pi, and Cursor Agent.
+<#
+.SYNOPSIS
+  Install the harness plugin and optional integrations for supported AI CLIs.
+
+.DESCRIPTION
+  Usage: install.ps1 [-Yes|-No] [-DryRun]
+                     [-Version <tag>]
+                     [-Cli claude|codex|opencode|pi|agent|all]
+                     [-Scope user|project|local] [-ProjectDir <path>]
+                     [-User|-Project|-Local]
+
+  -Yes/-No choose checklist contents; -Cli chooses target hosts.
+  -Version pins the GitHub release tag to stage; default is latest.
+  -Scope user installs to host user directories; project installs under -ProjectDir
+  (default: current directory); local is Claude-only (plugin scope under the project).
+  User-only extras (status-line, shared-config) are skipped for project scope.
+#>
 [CmdletBinding()]
 param(
   [switch]$Yes,
   [switch]$No,
   [switch]$DryRun,
+  [switch]$Help,
   [string]$Version,
   [ValidateSet("claude", "codex", "opencode", "pi", "agent", "all")][string]$Cli,
-  [ValidateSet("user", "project", "local")][string]$Scope = "user"
+  [ValidateSet("user", "project", "local")][string]$Scope,
+  [string]$ProjectDir,
+  [Alias("user")][switch]$User,
+  [Alias("project")][switch]$Project,
+  [Alias("local")][switch]$Local
 )
 $ErrorActionPreference = "Stop"
+
+if ($Help) {
+  Get-Help $PSCommandPath -Full | Out-String | Write-Host
+  exit 0
+}
+
+function Show-Usage {
+  @'
+Usage: install.ps1 [-Yes|-No] [-DryRun]
+                   [-Version <tag>]
+                   [-Cli claude|codex|opencode|pi|agent|all]
+                   [-Scope user|project|local] [-ProjectDir <path>]
+                   [-User|-Project|-Local]
+
+-Yes/-No choose checklist contents; -Cli chooses target hosts.
+-Version pins the GitHub release tag to stage; default is latest.
+-Scope user installs to per-user host directories; project installs under -ProjectDir
+(or the current directory); local is valid only when Claude is the sole selected host.
+'@ | Write-Host
+}
+
+$scopeSwitchCount = @($User.IsPresent, $Project.IsPresent, $Local.IsPresent) | Where-Object { $_ }
+if ($scopeSwitchCount.Count -gt 1) { throw "Only one of -User, -Project, or -Local may be set." }
+if (-not $Scope) {
+  if ($User) { $Scope = "user" }
+  elseif ($Project) { $Scope = "project" }
+  elseif ($Local) { $Scope = "local" }
+}
+$script:ScopeExplicit = $PSBoundParameters.ContainsKey("Scope") -or $User -or $Project -or $Local
+$UserOnlyModules = @("status-line", "shared-config")
 
 $MarketplaceRepo = "vinicius91carvalho/harness-engineering"
 $ClaudeMarketplace = "harness-engineering"
@@ -79,8 +131,8 @@ function Get-MenuBlurb([string]$Kind, [string]$Item) {
     "host:agent" { return "Cursor Agent CLI for headless workflows in Cursor." }
     "host:all" { return "Install to every detected host above." }
     "install:harness" { return "Spec→build→QA pipeline with planner, generator, evaluator, supervisor, learning loop, and project backup." }
-    "install:hallmark" { return "Anti-AI-slop design skill. Installs the hallmark skill globally via npx skills." }
-    "install:no-mistakes" { return "Git push gate with AI validation. Installs the upstream binary; run no-mistakes init per repository afterward." }
+    "install:hallmark" { return "Anti-AI-slop design skill via npx skills (-g for user/global scope; project dir without -g)." }
+    "install:no-mistakes" { return "Git push gate with AI validation. Installs the upstream binary; project scope also runs no-mistakes init in the project." }
     "install:treehouse" { return "Reusable git worktree pool for agents. Installs the upstream treehouse CLI." }
     "install:skill-creator" { return "Multi-agent pipeline to create, evaluate, benchmark, and refine AI coding skills." }
     "install:playwright" { return "Browser automation and E2E testing through Microsoft official Playwright MCP server." }
@@ -162,8 +214,71 @@ function Select-Host {
 }
 
 $Targets = @(Select-Host)
-if ($PSBoundParameters.ContainsKey("Scope") -and ($Targets.Count -ne 1 -or $Targets[0] -ne "claude")) {
-  throw "-Scope is only valid when Claude is the sole selected host."
+
+function Resolve-ProjectDir {
+  $candidate = if ($ProjectDir) { $ProjectDir } else { (Get-Location).Path }
+  if (-not (Test-Path $candidate -PathType Container)) {
+    throw "project scope requires an existing directory (use -ProjectDir or run from the project root)"
+  }
+  $script:ProjectDir = (Resolve-Path $candidate).Path
+}
+
+function Select-Scope {
+  if ($script:ScopeExplicit) {
+    if ($Scope -eq "local" -and ($Targets.Count -ne 1 -or $Targets[0] -ne "claude")) {
+      throw "-Scope local is only valid when Claude is the sole selected host."
+    }
+    return $Scope
+  }
+  if ([Console]::IsInputRedirected -or $Yes -or $No) { return "user" }
+  $items = @("user", "project")
+  if ($Targets.Count -eq 1 -and $Targets[0] -eq "claude") { $items += "local" }
+  return @(Select-Menu -Mode single -Items $items -Title "Select install scope:")[0]
+}
+
+$script:Scope = Select-Scope
+$script:ProjectDir = $null
+if ($script:Scope -eq "project") { Resolve-ProjectDir }
+
+function Get-OpenCodeBase {
+  if ($script:Scope -eq "project") { return Join-Path $script:ProjectDir ".opencode" }
+  if ($env:XDG_CONFIG_HOME) { return Join-Path $env:XDG_CONFIG_HOME "opencode" }
+  return Join-Path $HOME ".config/opencode"
+}
+
+function Get-AgentsSkillsRoot {
+  if ($script:Scope -eq "project") { return Join-Path $script:ProjectDir ".agents/skills" }
+  return Join-Path $HOME ".agents/skills"
+}
+
+function Get-ClaudeSkillsRoot {
+  if ($script:Scope -eq "project") { return Join-Path $script:ProjectDir ".claude/skills" }
+  return Join-Path $HOME ".claude/skills"
+}
+
+function Get-CursorSkillsRoot {
+  if ($script:Scope -eq "project") { return Join-Path $script:ProjectDir ".cursor/skills" }
+  return Join-Path $HOME ".cursor/skills"
+}
+
+function Get-CursorPluginDir([string]$Name) {
+  if ($script:Scope -eq "project") { return Join-Path $script:ProjectDir ".cursor/plugins/local/$Name" }
+  return Join-Path $HOME ".cursor/plugins/local/$Name"
+}
+
+function Get-CursorMcpPath {
+  if ($script:Scope -eq "project") { return Join-Path $script:ProjectDir ".cursor/mcp.json" }
+  return Join-Path $HOME ".cursor/mcp.json"
+}
+
+function Test-UserOnlyModule([string]$Name) {
+  return $UserOnlyModules -contains $Name
+}
+
+function Skip-UserOnlyModule([string]$Name) {
+  if ($script:Scope -ne "project" -or -not (Test-UserOnlyModule $Name)) { return $false }
+  Write-Host "install.ps1: skipping $Name (user scope only)"
+  return $true
 }
 
 function Invoke-Native([string]$Exe, [string[]]$Arguments) {
@@ -211,7 +326,15 @@ function Write-InstallReceipt([string]$Module, $Payload) {
   if ($DryRun) { return }
   $repo = Get-CatalogRepo
   if (-not $repo) { return }
-  $json = ($Payload | ConvertTo-Json -Compress)
+  $enriched = [ordered]@{}
+  if ($Payload -is [hashtable]) {
+    foreach ($key in $Payload.Keys) { $enriched[$key] = $Payload[$key] }
+  } else {
+    foreach ($property in $Payload.PSObject.Properties) { $enriched[$property.Name] = $property.Value }
+  }
+  $enriched.scope = $script:Scope
+  if ($script:ProjectDir) { $enriched.projectDir = $script:ProjectDir }
+  $json = ($enriched | ConvertTo-Json -Compress)
   New-Item -ItemType Directory -Force $ReceiptDir | Out-Null
   & node (Join-Path $repo "scripts/install-reconcile.mjs") record-receipt $ReceiptDir $Module $json *> $null
 }
@@ -244,7 +367,7 @@ function Get-Repository {
 }
 
 function Remove-OpenCodePluginFiles([string]$Name) {
-  $base = Join-Path $HOME ".config/opencode"
+  $base = Get-OpenCodeBase
   foreach ($dir in @("skills", "agents", "commands")) {
     $dirPath = Join-Path $base $dir
     if (-not (Test-Path $dirPath)) { continue }
@@ -254,7 +377,7 @@ function Remove-OpenCodePluginFiles([string]$Name) {
 
 function Remove-StaleAgentPluginPollution([string]$Name) {
   if ($DryRun) { return }
-  $dest = Join-Path $HOME ".cursor/plugins/local/$Name"
+  $dest = Get-CursorPluginDir $Name
   if (-not (Test-Path $dest)) { return }
   $polluted = $false
   if (Test-Path (Join-Path $dest "skills/supervisor")) { $polluted = $true }
@@ -269,15 +392,16 @@ function Remove-StaleAgentPluginPollution([string]$Name) {
 }
 
 function Install-AgentPlugin([string]$Name) {
-  if ($DryRun) { Write-Host "DRY RUN - install Cursor Agent plugin at $HOME/.cursor/plugins/local/$Name"; return }
+  $dest = Get-CursorPluginDir $Name
+  if ($DryRun) { Write-Host "DRY RUN - install Cursor Agent plugin at $dest"; return }
   if (-not (Test-CliInstalled agent)) { throw "agent is required to install the harness Cursor Agent plugin" }
   $source = Get-Repository
-  $dest = Join-Path $HOME ".cursor/plugins/local/$Name"
   Invoke-Reconcile @("project-agent", $Name, $source, $dest)
 }
 
 function Set-CursorMcp([string]$Name, $Entry) {
-  $dir = Join-Path $HOME ".cursor"; $config = Join-Path $dir "mcp.json"
+  $config = Get-CursorMcpPath
+  $dir = Split-Path $config -Parent
   New-Item -ItemType Directory -Force $dir | Out-Null
   if (-not (Test-Path $config)) { "{}" | Set-Content $config -Encoding utf8 }
   Copy-Item $config "$config.pre-harness.bak" -Force
@@ -290,12 +414,12 @@ function Set-CursorMcp([string]$Name, $Entry) {
 }
 
 function Install-OpenCodePlugin([string]$Name) {
+  $base = Get-OpenCodeBase
   if ($DryRun) {
-    Write-Host "DRY RUN - install namespaced OpenCode skills, agents, and commands for $Name"
+    Write-Host "DRY RUN - install namespaced OpenCode skills, agents, and commands for $Name at $base"
     return
   }
   $source = Get-Repository
-  $base = Join-Path $HOME ".config/opencode"
   @("skills", "agents", "commands") | ForEach-Object { New-Item -ItemType Directory -Force (Join-Path $base $_) | Out-Null }
   if (Test-Path (Join-Path $source "packages/$Name")) {
     Invoke-Reconcile @("project-bundle", $Name, (Join-Path $base "skills/$Name"))
@@ -317,7 +441,7 @@ function Install-OpenCodePlugin([string]$Name) {
 }
 
 function Set-OpenCodeConfig([scriptblock]$Update) {
-  $base = Join-Path $HOME ".config/opencode"; $config = Join-Path $base "opencode.json"
+  $base = Get-OpenCodeBase; $config = Join-Path $base "opencode.json"
   New-Item -ItemType Directory -Force $base | Out-Null
   $jsonc = Join-Path $base "opencode.jsonc"; if (Test-Path $jsonc) { $config = $jsonc }
   if (-not (Test-Path $config)) { "{}" | Set-Content $config -Encoding utf8 }
@@ -414,19 +538,16 @@ function Install-SkillCreator {
     if ((Get-ModuleHosts "skill-creator") -notcontains $target) { continue }
     switch ($target) {
       claude {
-        if ($DryRun) { Write-Host "DRY RUN - install skill-creator to ~/.claude/skills/"; continue }
-        $dest = Join-Path $HOME ".claude/skills/skill-creator"
+        $dest = Join-Path (Get-ClaudeSkillsRoot) "skill-creator"
+        if ($DryRun) { Write-Host "DRY RUN - install skill-creator to $dest"; continue }
         New-Item -ItemType Directory -Force (Split-Path $dest -Parent) | Out-Null
         Invoke-Reconcile @("project-bundle", "skill-creator", $dest)
       }
       opencode { Install-OpenCodePlugin "skill-creator" }
-      codex {
-        & codex plugin marketplace upgrade $CodexMarketplace *> $null
-        Invoke-Native codex @("plugin", "add", "skill-creator@$CodexMarketplace")
-      }
+      codex { Invoke-Native codex @("plugin", "add", "skill-creator@$CodexMarketplace") }
       pi {
-        if ($DryRun) { Write-Host "DRY RUN - install skill-creator to ~/.agents/skills/skill-creator"; continue }
-        $dest = Join-Path $HOME ".agents/skills/skill-creator"
+        $dest = Join-Path (Get-AgentsSkillsRoot) "skill-creator"
+        if ($DryRun) { Write-Host "DRY RUN - install skill-creator to $dest"; continue }
         New-Item -ItemType Directory -Force (Split-Path $dest -Parent) | Out-Null
         Invoke-Reconcile @("project-bundle", "skill-creator", $dest)
       }
@@ -494,48 +615,112 @@ function Install-Crawl4Ai {
     if ((Get-ModuleHosts "crawl4ai") -notcontains $target) { continue }
     switch ($target) {
       claude {
-        if ($DryRun) { Write-Host "DRY RUN - install crawl4ai skill to ~/.claude/skills/crawl4ai"; continue }
-        Install-Crawl4AiSkill (Join-Path $HOME ".claude/skills/crawl4ai")
+        $dest = Join-Path (Get-ClaudeSkillsRoot) "crawl4ai"
+        if ($DryRun) { Write-Host "DRY RUN - install crawl4ai skill to $dest"; continue }
+        Install-Crawl4AiSkill $dest
       }
       opencode {
-        if ($DryRun) { Write-Host "DRY RUN - install crawl4ai skill to ~/.config/opencode/skills/crawl4ai"; continue }
-        $base = if ($env:XDG_CONFIG_HOME) { Join-Path $env:XDG_CONFIG_HOME "opencode" } else { Join-Path $HOME ".config/opencode" }
-        Install-Crawl4AiSkill (Join-Path $base "skills/crawl4ai")
+        $dest = Join-Path (Get-OpenCodeBase) "skills/crawl4ai"
+        if ($DryRun) { Write-Host "DRY RUN - install crawl4ai skill to $dest"; continue }
+        Install-Crawl4AiSkill $dest
       }
-      { $_ -in @("codex", "pi") } {
-        if ($DryRun) { Write-Host "DRY RUN - install crawl4ai skill to ~/.agents/skills/crawl4ai"; continue }
-        Install-Crawl4AiSkill (Join-Path $HOME ".agents/skills/crawl4ai")
+      codex {
+        $dest = Join-Path (Get-AgentsSkillsRoot) "crawl4ai"
+        if ($DryRun) { Write-Host "DRY RUN - install crawl4ai skill to $dest"; continue }
+        Install-Crawl4AiSkill $dest
+      }
+      pi {
+        $dest = Join-Path (Get-AgentsSkillsRoot) "crawl4ai"
+        if ($DryRun) { Write-Host "DRY RUN - install crawl4ai skill to $dest"; continue }
+        Install-Crawl4AiSkill $dest
       }
       agent {
-        if ($DryRun) { Write-Host "DRY RUN - install crawl4ai skill to ~/.cursor/skills/crawl4ai"; continue }
-        Install-Crawl4AiSkill (Join-Path $HOME ".cursor/skills/crawl4ai")
+        $dest = Join-Path (Get-CursorSkillsRoot) "crawl4ai"
+        if ($DryRun) { Write-Host "DRY RUN - install crawl4ai skill to $dest"; continue }
+        Install-Crawl4AiSkill $dest
       }
     }
   }
 }
 
-function Install-Hallmark {
-  if ($DryRun) {
-    Write-Host "DRY RUN - npx skills add nutlope/hallmark --skill hallmark -g"
+function Install-CatalogSkillsSkill([string]$Module) {
+  $repo = Get-CatalogRepo
+  if (-not $repo) { $repo = Get-Repository }
+  $argsJson = & node (Join-Path $repo "scripts/install-reconcile.mjs") skills-add-args $Module
+  if ($LASTEXITCODE -ne 0 -or -not $argsJson) { throw "catalog has no acquisition.skills for $Module" }
+  $parsed = $argsJson | ConvertFrom-Json
+  $skillRepo = [string]$parsed.repo
+  $skillName = [string]$parsed.skill
+  $useGlobal = [bool]$parsed.globalWhenUserScope
+  if (-not (Get-Command npx -ErrorAction SilentlyContinue)) { throw "npx is required to install the $Module skill" }
+  if ($script:Scope -eq "project") {
+    if ($DryRun) {
+      Write-Host "DRY RUN - (cd $script:ProjectDir; npx skills add $skillRepo --skill $skillName --yes)"
+      return
+    }
+    Push-Location $script:ProjectDir
+    try {
+      Invoke-Native npx @("skills", "add", $skillRepo, "--skill", $skillName, "--yes")
+    } finally {
+      Pop-Location
+    }
+    Write-InstallReceipt $Module @{
+      skills = $skillRepo
+      skill = $skillName
+      global = $false
+      dir = $script:ProjectDir
+    }
     return
   }
-  if (-not (Get-Command npx -ErrorAction SilentlyContinue)) { throw "npx is required to install the hallmark skill" }
-  Invoke-Native npx @("skills", "add", "nutlope/hallmark", "--skill", "hallmark", "-g")
-  Write-InstallReceipt hallmark @{ skills = "nutlope/hallmark"; skill = "hallmark"; global = $true }
+  if ($DryRun) {
+    if ($useGlobal) { Write-Host "DRY RUN - npx skills add $skillRepo --skill $skillName -g --yes" }
+    else { Write-Host "DRY RUN - npx skills add $skillRepo --skill $skillName --yes" }
+    return
+  }
+  if ($useGlobal) {
+    Invoke-Native npx @("skills", "add", $skillRepo, "--skill", $skillName, "-g", "--yes")
+    Write-InstallReceipt $Module @{ skills = $skillRepo; skill = $skillName; global = $true }
+  } else {
+    Invoke-Native npx @("skills", "add", $skillRepo, "--skill", $skillName, "--yes")
+    Write-InstallReceipt $Module @{ skills = $skillRepo; skill = $skillName; global = $false }
+  }
+}
+
+function Install-Hallmark {
+  Install-CatalogSkillsSkill -Module hallmark
 }
 
 function Install-NoMistakes {
   if ($DryRun) {
     Write-Host "DRY RUN - irm $NoMistakesInstaller | iex"
-    Write-Host "DRY RUN - note: run no-mistakes init in each repository you want to gate (not run by the harness installer)"
+    if ($script:Scope -eq "project") {
+      Write-Host "DRY RUN - (cd $script:ProjectDir; no-mistakes init)"
+    } else {
+      Write-Host "DRY RUN - note: run no-mistakes init in each repository you want to gate"
+    }
     return
   }
   try { Invoke-Expression (Invoke-WebRequest $NoMistakesInstaller -UseBasicParsing).Content }
   catch { throw "no-mistakes installer failed: $_" }
   $binary = Get-Command no-mistakes -ErrorAction SilentlyContinue
   $version = if ($binary) { try { & $binary.Source --version 2>$null } catch { "unknown" } } else { "unknown" }
-  Write-InstallReceipt no-mistakes @{ binary = ($binary.Source ?? "unknown"); version = ($version ?? "unknown") }
-  Write-Host "install.ps1: run no-mistakes init in each repository you want to gate"
+  if ($script:Scope -eq "project") {
+    if (-not $binary) { throw "no-mistakes binary missing after install" }
+    Push-Location $script:ProjectDir
+    try {
+      Invoke-Native no-mistakes @("init")
+    } finally {
+      Pop-Location
+    }
+    Write-InstallReceipt no-mistakes @{
+      binary = ($binary.Source ?? "unknown")
+      version = ($version ?? "unknown")
+      init = $script:ProjectDir
+    }
+  } else {
+    Write-InstallReceipt no-mistakes @{ binary = ($binary.Source ?? "unknown"); version = ($version ?? "unknown") }
+    Write-Host "install.ps1: run no-mistakes init in each repository you want to gate"
+  }
 }
 
 function Install-Treehouse {
@@ -553,13 +738,13 @@ function Install-Treehouse {
 function Install-PlaywrightMcp {
   $Name = "playwright"
   $server = [pscustomobject]@{ type="stdio"; command="npx"; args=@("-y", "@playwright/mcp@latest") }
-  if ($DryRun) { Write-Host "DRY RUN - configure $Name MCP for: $($Targets -join ', ')"; return }
+  if ($DryRun) { Write-Host "DRY RUN - configure $Name MCP for: $($Targets -join ', ') (scope: $script:Scope)"; return }
   $json = $server | ConvertTo-Json -Compress
   foreach ($target in $Targets) {
     switch ($target) {
       claude {
-        & claude mcp remove $Name --scope user *> $null
-        Invoke-Native claude @("mcp", "add-json", "--scope", "user", $Name, $json)
+        & claude mcp remove $Name --scope $script:Scope *> $null
+        Invoke-Native claude @("mcp", "add-json", "--scope", $script:Scope, $Name, $json)
       }
       codex {
         & codex mcp remove $Name *> $null
@@ -573,6 +758,55 @@ function Install-PlaywrightMcp {
   }
 }
 
+function Install-CodexProjectMarketplace {
+  $source = Get-Repository
+  $codexDir = Join-Path $script:ProjectDir ".codex-plugin"
+  $agentsDir = Join-Path $script:ProjectDir ".agents/plugins"
+  if ($DryRun) {
+    Write-Host "DRY RUN - ensure Codex project marketplace under $script:ProjectDir"
+    Write-Host "DRY RUN - codex plugin marketplace add $script:ProjectDir"
+    return
+  }
+  New-Item -ItemType Directory -Force $codexDir, $agentsDir | Out-Null
+  Copy-Item (Join-Path $source ".codex-plugin/plugin.json") (Join-Path $codexDir "plugin.json") -Force
+  Copy-Item (Join-Path $source ".agents/plugins/marketplace.json") (Join-Path $agentsDir "marketplace.json") -Force
+  & codex plugin marketplace upgrade $script:ProjectDir *> $null
+  if ($LASTEXITCODE -ne 0) { Invoke-Native codex @("plugin", "marketplace", "add", $script:ProjectDir) }
+}
+
+function Install-CodexMarketplace {
+  if ($script:Scope -eq "project") {
+    Install-CodexProjectMarketplace
+    return
+  }
+  if ($DryRun) { Invoke-Native codex @("plugin", "marketplace", "upgrade", $CodexMarketplace); return }
+  & codex plugin marketplace upgrade $CodexMarketplace
+  if ($LASTEXITCODE -ne 0) { Invoke-Native codex @("plugin", "marketplace", "add", $MarketplaceRepo) }
+}
+
+function Install-PiHarness {
+  if (-not (Test-CliInstalled pi)) { throw "pi is required to install harness skills for Pi" }
+  $destRoot = Get-AgentsSkillsRoot
+  if ($DryRun) {
+    Write-Host "DRY RUN - copy harness skills into $destRoot"
+    if ($script:Scope -eq "user") {
+      Write-Host "DRY RUN - pi remove https://github.com/$MarketplaceRepo (ignore if absent)"
+    }
+    return
+  }
+  $source = Get-Repository
+  New-Item -ItemType Directory -Force $destRoot | Out-Null
+  Get-ChildItem (Join-Path $source "skills") -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+    $dest = Join-Path $destRoot $_.Name
+    New-Item -ItemType Directory -Force $dest | Out-Null
+    Copy-Item $_.FullName (Join-Path $dest ".") -Recurse -Force
+  }
+  if ($script:Scope -eq "user") {
+    & pi remove "https://github.com/$MarketplaceRepo" *> $null
+    & pi remove "git:github.com/$MarketplaceRepo" *> $null
+  }
+}
+
 $Selected = if ($No) {
   @("harness")
 } elseif ($Yes) {
@@ -580,9 +814,16 @@ $Selected = if ($No) {
 } elseif ([Console]::IsInputRedirected) {
   @("harness")
 } else {
-  $candidates = @("harness") + @($Optional | Where-Object { @((Get-ModuleHosts $_) | Where-Object { $Targets -contains $_ }).Count -gt 0 })
+  $candidates = @("harness") + @($Optional | Where-Object {
+    if ($script:Scope -eq "project" -and (Test-UserOnlyModule $_)) { return $false }
+    @((Get-ModuleHosts $_) | Where-Object { $Targets -contains $_ }).Count -gt 0
+  })
   @(Select-Menu -Mode multi -Items $candidates -Checked @("harness") -Title "Select what to install (harness recommended):" -LabelKind install)
 }
+
+$Selected = @($Selected | Where-Object {
+  @((Get-ModuleHosts $_) | Where-Object { $Targets -contains $_ }).Count -gt 0
+})
 
 foreach ($target in $Targets) {
   if ($target -eq "claude") {
@@ -592,13 +833,7 @@ foreach ($target in $Targets) {
       if ($LASTEXITCODE -ne 0) { Invoke-Native claude @("plugin", "marketplace", "add", "https://github.com/$MarketplaceRepo.git") }
     }
   }
-  if ($target -eq "codex") {
-    if ($DryRun) { Invoke-Native codex @("plugin", "marketplace", "upgrade", $CodexMarketplace) }
-    else {
-      & codex plugin marketplace upgrade $CodexMarketplace
-      if ($LASTEXITCODE -ne 0) { Invoke-Native codex @("plugin", "marketplace", "add", $MarketplaceRepo) }
-    }
-  }
+  if ($target -eq "codex") { Install-CodexMarketplace }
 }
 
 if ($DryRun) {
@@ -607,6 +842,7 @@ if ($DryRun) {
 }
 
 foreach ($item in $Selected) {
+  if (Skip-UserOnlyModule $item) { continue }
   if ($item -eq "skill-creator") { Install-SkillCreator; continue }
   if ($item -eq "crawl4ai") { Install-Crawl4Ai; continue }
   if ($item -eq "hallmark") { Install-Hallmark; continue }
@@ -625,14 +861,17 @@ foreach ($item in $Selected) {
     if ((Get-ModuleHosts $item) -notcontains $target) { continue }
     switch ($target) {
       claude {
-        if ($DryRun) { Invoke-Native claude @("plugin", "update", "$item@$ClaudeMarketplace", "--scope", $Scope) }
+        if ($DryRun) { Invoke-Native claude @("plugin", "update", "$item@$ClaudeMarketplace", "--scope", $script:Scope) }
         else {
-          & claude plugin update "$item@$ClaudeMarketplace" --scope $Scope
-          if ($LASTEXITCODE -ne 0) { Invoke-Native claude @("plugin", "install", "$item@$ClaudeMarketplace", "--scope", $Scope) }
+          & claude plugin update "$item@$ClaudeMarketplace" --scope $script:Scope
+          if ($LASTEXITCODE -ne 0) { Invoke-Native claude @("plugin", "install", "$item@$ClaudeMarketplace", "--scope", $script:Scope) }
         }
       }
       codex { Invoke-Native codex @("plugin", "add", "$item@$CodexMarketplace") }
       opencode { Install-OpenCodePlugin $item }
+      pi {
+        if ($item -eq "harness") { Install-PiHarness }
+      }
       agent {
         if ($item -eq "harness") { Install-AgentPlugin $item }
         else { Remove-StaleAgentPluginPollution $item }
@@ -641,4 +880,10 @@ foreach ($item in $Selected) {
   }
 }
 
-Write-Host "Harness installation complete for: $($Targets -join ', ')"
+if ($Selected -contains "harness") {
+  Write-InstallReceipt harness @{ marketplace = $ClaudeMarketplace }
+}
+
+$scopeLabel = $script:Scope
+if ($script:ProjectDir) { $scopeLabel = "$scopeLabel ($script:ProjectDir)" }
+Write-Host "Harness installation complete for: $($Targets -join ', ') [scope: $scopeLabel]"

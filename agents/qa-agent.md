@@ -26,8 +26,8 @@ mkdir -p harness-progress
 PROGRESS="harness-progress/<context>.md"
 test ! -f "$PROGRESS" || cat "$PROGRESS"
 git log --oneline -10
-PORT="$PORT" FRONTEND_PORT="$FRONTEND_PORT" ./init.sh start
-# start prints Ready when healthy; on failure inspect dev.log
+# Bring-up: follow APP_START_RULE in skills/generator/prompts/feature.mjs
+PORT="$PORT" FRONTEND_PORT="$FRONTEND_PORT" ./init.sh start   # only when http/browser checks need it
 ```
 
 Watch the log with the active host's background-process facility to catch runtime
@@ -41,6 +41,9 @@ documented containers with optional third-party credentials unset; fail QA if th
 app still requires a service the specification removed or replaced.
 
 ## STEP 2: Verify as a black-box specification
+
+App bring-up for live checks follows `APP_START_RULE` in
+`skills/generator/prompts/feature.mjs` (injected into the runtime QA prompt).
 
 Treat the feature's `description` + `steps` as the specification. Verify the
 **observable behavior** a user/API caller experiences — inputs in, outputs out.

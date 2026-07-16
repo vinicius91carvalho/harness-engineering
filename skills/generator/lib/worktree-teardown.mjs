@@ -1,14 +1,37 @@
-import { existsSync, readFileSync, unlinkSync } from 'node:fs'
-import { join } from 'node:path'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { killMatchingPatterns, terminateProcessTree } from './worker-lifecycle.mjs'
-import { readOwnedRuntime } from './runtime-manifest.mjs'
 import {
-  composeShareCount,
   isAppService,
-  planComposeTeardown,
-  releaseComposeShare,
+  planSharedRuntimeTeardown,
 } from './compose-shared.mjs'
+
+export function runtimeManifestPath(workdir) {
+  return workdir ? join(workdir, '.harness', 'runtime-owned.jsonl') : null
+}
+
+export function appendOwnedRuntime(workdir, row = {}) {
+  const file = runtimeManifestPath(workdir)
+  if (!file) return false
+  mkdirSync(dirname(file), { recursive: true })
+  appendFileSync(file, `${JSON.stringify({ at: new Date().toISOString(), ...row })}\n`)
+  return true
+}
+
+export function readOwnedRuntime(workdir) {
+  const file = runtimeManifestPath(workdir)
+  if (!file || !existsSync(file)) return []
+  const rows = []
+  for (const line of readFileSync(file, 'utf8').split('\n')) {
+    if (!line.trim()) continue
+    try {
+      const parsed = JSON.parse(line)
+      if (parsed && typeof parsed === 'object') rows.push(parsed)
+    } catch {}
+  }
+  return rows
+}
 
 const COMPOSE_FILES = [
   'compose.yaml',
@@ -118,30 +141,25 @@ export function composeDown(workdir, {
   const dir = composeProjectDir(workdir)
   if (!dir) return { ran: false, dir: null }
 
-  let remaining = shareCount
-  if (remaining == null && commonGit && context) {
-    // Release this context first so last-holder can full-down.
-    const released = releaseComposeShare(commonGit, projectId, context)
-    remaining = released.count
-  } else if (remaining == null && commonGit) {
-    remaining = composeShareCount(commonGit, projectId)
-  } else if (remaining == null) {
-    // Fail closed: unknown share state must not drop shared infra.
-    if (!force) {
-      return {
-        ran: false,
-        dir,
-        mode: 'refused',
-        reason: 'unknown_share_state',
-        status: 0,
-        skippedFullDown: true,
-        error: 'composeDown requires commonGit+context, shareCount, or force',
-      }
+  // Shared Runtime Lease decisions live in compose-shared (ADR-0021).
+  const plan = planSharedRuntimeTeardown({
+    commonGit,
+    projectId,
+    context,
+    shareCount,
+    force,
+  })
+  if (plan.mode === 'refused') {
+    return {
+      ran: false,
+      dir,
+      mode: 'refused',
+      reason: plan.reason,
+      status: 0,
+      skippedFullDown: true,
+      error: plan.error || 'composeDown requires commonGit+context, shareCount, or force',
     }
-    remaining = 0
   }
-
-  const plan = planComposeTeardown({ shareCount: remaining, force, context })
   if (plan.mode === 'app_services_only') {
     const services = listComposeServices(dir).filter((name) => isAppService(name))
     if (!services.length) {

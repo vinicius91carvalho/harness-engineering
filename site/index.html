@@ -238,17 +238,19 @@ flowchart LR
 bash --version
 node --version
 claude --version  # or: codex --version / opencode --version / pi --version</code></pre>
-          <p class="files"><strong>Optional:</strong> project-local <code>.harness/roles.json</code> for tool/model routing. Workers always run in the background. The installer adds <code>jq</code> when needed.</p>
+          <p class="files"><strong>Optional:</strong> project-local <code>.harness/roles.json</code> for tool/model routing. Workers always run in the background. The installer requires <code>jq</code> (it does not auto-install it).</p>
         </section>
 
         <section class="topic" id="install">
           <p class="step">Step 1</p>
           <h2>Install the harness</h2>
           <p>Run once <strong>in a terminal</strong> on the machine that holds the Git repository. The checklist keeps <code>harness</code> selected by default.</p>
+          <p><strong>v3.0 is a clean break</strong> from 2.x: remove the previous plugin/skills install, then install fresh. There is no mid-flight migration. Control modules live only under <code>skills/supervisor/lib/</code>.</p>
           <pre><code>curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh</code></pre>
           <p>The curl one-liner fetches the installer from <code>main</code>, then stages the <strong>latest GitHub Release tag</strong>.
-            Override with <code>VERSION=vX.Y.Z</code> or <code>--version vX.Y.Z</code>.
+            Override with <code>VERSION=vX.Y.Z</code> or <code>--version vX.Y.Z</code> (for example <code>v3.0.0</code>).
             A local checkout of this repository installs from the working tree.</p>
+          <p>Interactively the installer asks for host, then install scope (<code>user</code> global vs <code>project</code> folder; Claude also offers <code>local</code>), then the checklist. Requires <code>jq</code> (not auto-installed).</p>
           <p>Native Windows users can run <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/install.ps1"><code>install.ps1</code></a>. Re-running either installer refreshes installed content safely.</p>
           <div class="output"><strong>Verify</strong><code>node --version</code><code>claude --version</code><code>codex --version</code><code>opencode --version</code><code>pi --version</code></div>
         </section>
@@ -545,7 +547,7 @@ flowchart LR
               <tr><td><code>.harness/projects.json</code></td><td>Optional monorepo project registry.</td><td>Setup / planner finalize</td></tr>
             </tbody>
           </table>
-          <p>The queue flags are separate proofs:</p>
+          <p>Execution Ledger proofs are separate:</p>
           <ul>
             <li><code>implementation</code> means coding completed.</li>
             <li><code>qa</code> means isolated QA passed.</li>
@@ -672,7 +674,7 @@ flowchart LR
               <tr><td><code>retries</code></td><td>Goal Review reopen count for this item (not Attempt count).</td></tr>
             </tbody>
           </table>
-          <p class="files"><strong>Important:</strong> false queue flags mean “not yet proved,” not “the application is broken.” Setup records what could be audited; it does not schedule the audit.</p>
+          <p class="files"><strong>Important:</strong> false Execution Ledger proofs (<code>implementation</code>, <code>qa</code>, <code>integration</code>) mean “not yet proved,” not “the application is broken.” Setup records what could be audited; it does not schedule the audit. (Older docs called these queue flags.)</p>
         </section>
 
         <section class="topic" id="runtime-state">
@@ -770,7 +772,7 @@ flowchart LR
           <pre><code>/harness:generator</code></pre>
           <p>When generator asks for scope, choose <strong>1 task</strong> and select <code>WI-AC-001</code>. Verify-first mode exercises only that selected behavior before deciding whether code must change.</p>
           <div class="checks">
-            <article><span>A</span><div><strong>If the note survives reload</strong><p>Coding records the existing implementation as proved without editing it. Independent QA repeats the journey, integration verification repeats it on the plan integration branch, and the three queue flags become true.</p></div></article>
+            <article><span>A</span><div><strong>If the note survives reload</strong><p>Coding records the existing implementation as proved without editing it. Independent QA repeats the journey, integration verification repeats it on the plan integration branch, and the Execution Ledger records <code>implementation</code>, <code>qa</code>, and <code>integration</code> as proved.</p></div></article>
             <article><span>B</span><div><strong>If the note disappears</strong><p>QA records the expected note, the missing result, and evidence. Repair planning identifies the persistence failure; coding fixes that root cause, then QA and integrated verification rerun the same Acceptance Check.</p></div></article>
           </div>
           <p>The journal at <code>harness-progress/notes.md</code> explains the attempt. Machine-readable Run State and evidence remain under <code>.git/harness-runs/</code>. Other mapped Work Items stay untouched.</p>
@@ -792,8 +794,8 @@ flowchart LR
 
         <section class="topic" id="monorepo">
           <p class="step">Monorepos</p>
-          <h2>Setup handles project boundaries automatically</h2>
-          <p>Run argument-free setup once from the Git root. It detects independently runnable or deployable projects, writes <code>.harness/projects.json</code>, asks which projects to initialize, and gives each selected project separate specifications, queues, journals, and Run State. Run later commands from the selected project directory; Git coordination stays repository-wide.</p>
+          <h2>Setup detects project boundaries</h2>
+          <p>Run argument-free setup once from the Git root. It lists independently runnable or deployable candidates (no registry write by default), asks which projects to register, then writes <code>.harness/projects.json</code> for those selections only. Confirm is required before mutation (<code>--confirm</code> / <code>HARNESS_CONFIRM_BOUNDARIES=1</code>). Each selected project gets separate specifications, queues, journals, and Run State. Run later commands from the selected project directory; Git coordination stays repository-wide.</p>
           <p>Advanced users may maintain the same registry manually before running setup:</p>
           <pre><code>{
   "projects": [
@@ -807,8 +809,8 @@ flowchart LR
         <section class="topic" id="operate">
           <p class="step">Monitor</p>
           <h2>Watch, pause, resume, and verify a run</h2>
-          <p>From inside Claude Code, Codex, or OpenCode chat, run <code>/harness:supervisor</code> (<code>/harness-supervisor</code> on OpenCode) to drive the same operations without leaving the session.</p>
-          <p class="files">The script below is OpenCode's namespaced skill install — it exists only if OpenCode is installed, not for a Claude Code– or Codex–only machine.</p>
+          <p>From inside Claude Code, Codex, OpenCode, Pi, or Cursor Agent chat, run <code>/harness:supervisor</code> (or <code>/harness-supervisor</code> / host-native forms) to drive the same operations without leaving the session.</p>
+          <p class="files">The script path below is an OpenCode namespaced install example; substitute your host's harness-control path on Claude, Codex, Pi, or Cursor.</p>
           <pre><code>CONTROL=~/.config/opencode/skills/harness-supervisor/scripts/harness-control.mjs
 PROJECT=/absolute/path/to/project
 
@@ -818,11 +820,11 @@ node "$CONTROL" pause    --repo "$PROJECT"
 node "$CONTROL" resume   --repo "$PROJECT"
 node "$CONTROL" stop     --repo "$PROJECT"
 node "$CONTROL" events   --repo "$PROJECT" --consumer manual-check</code></pre>
-          <p>Workers always run in the background. Tail logs under <code>.git/harness-control/&lt;project&gt;/logs/</code> or use <code>fleet-snapshot</code> for monorepo-wide bearings. Event relay via <code>herdr-notify</code> (or any named consumer) is unchanged.</p>
+          <p>Workers always run in the background. Tail logs under <code>.git/harness-control/&lt;project&gt;/logs/</code> or use <code>fleet-snapshot</code> for monorepo-wide bearings. Poll Control Journal events with any opaque consumer id (default <code>herdr-notify</code> — a journal consumer name, not a UI).</p>
           <p>If work blocks, answer the exact Input Request through the supervisor's <code>respond</code> path or any durable event consumer. Branches, worktrees, evidence, and Repair Plans remain available.</p>
           <div class="checks">
             <article><span>1</span><div><strong>Supervisor finished</strong><p><code>status: complete</code> and <code>supervisorPid: null</code>.</p></div></article>
-            <article><span>2</span><div><strong>Queue integrated</strong><p>Every item has <code>implementation</code>, <code>qa</code>, and <code>integration</code> set to true.</p></div></article>
+            <article><span>2</span><div><strong>Ledger integrated</strong><p>Every item has Execution Ledger proofs for <code>implementation</code>, <code>qa</code>, and <code>integration</code>.</p></div></article>
             <article><span>3</span><div><strong>Goal reviewed</strong><p>Goal Review has <code>status: complete</code> and <code>phase: complete</code>.</p></div></article>
             <article><span>4</span><div><strong>Completion persisted</strong><p>Control events contain <code>kind: run_completed</code>.</p></div></article>
           </div>

@@ -1,9 +1,15 @@
 /**
- * Host-wide shared Compose infra lease.
+ * Shared Runtime Lease (ADR-0021): host-wide shared Compose infra lease.
  *
  * Heavy stateful services (postgres/redis/hindsight/…) should be reused across
  * concurrent harness workers on the same machine instead of each WI bringing
- * up (and tearing down) a full stack — that pattern exhausts RAM on 14–16 GiB hosts.
+ * up (and tearing down) a full stack - that pattern exhausts RAM on 14-16 GiB hosts.
+ *
+ * Module interface:
+ *   acquireComposeShare / releaseComposeShare  - holder registry
+ *   composeShareSnapshot                       - Fleet Snapshot read model
+ *   planSharedRuntimeTeardown                  - release + teardown planning
+ *   planComposeTeardown                        - pure mode decision from counts
  *
  * Registry: <git-common-dir>/harness-locks/compose-shared.json
  */
@@ -18,7 +24,7 @@ import {
 import { dirname, join } from 'node:path'
 import { hostname } from 'node:os'
 import { randomUUID } from 'node:crypto'
-import { processAlive } from './runtime-view.mjs'
+import { processAlive } from '../../supervisor/lib/runtime-view.mjs'
 
 /** Service name tokens treated as shared infra (matched as substrings). */
 export const SHARED_INFRA_SERVICE_HINTS = [
@@ -265,4 +271,71 @@ export function planComposeTeardown({
     }
   }
   return { mode: 'full_down', reason: 'last_holder', keepInfra: false }
+}
+
+/**
+ * Acquire/release/snapshot planning for Shared Runtime Lease teardown.
+ * Callers that tear down a worktree should use this instead of re-deriving
+ * share-count heuristics. Docker compose execution stays in worktree-teardown.
+ *
+ * @returns {{
+ *   mode: 'full_down'|'app_services_only'|'refused',
+ *   reason: string,
+ *   keepInfra: boolean,
+ *   remaining: number|null,
+ *   released: { holders: string[], count: number, lastHolder: boolean }|null,
+ *   skippedFullDown?: boolean,
+ *   error?: string|null,
+ * }}
+ */
+export function planSharedRuntimeTeardown({
+  commonGit = null,
+  projectId = null,
+  context = null,
+  shareCount = null,
+  force = false,
+  release = true,
+  siblingHolders = [],
+} = {}) {
+  let remaining = shareCount
+  let released = null
+
+  if (remaining == null && commonGit && context) {
+    if (release) {
+      released = releaseComposeShare(commonGit, projectId, context)
+      remaining = released.count
+    } else {
+      remaining = composeShareCount(commonGit, projectId)
+    }
+  } else if (remaining == null && commonGit) {
+    remaining = composeShareCount(commonGit, projectId)
+  } else if (remaining == null) {
+    // Fail closed: unknown share state must not drop shared infra.
+    if (!force) {
+      return {
+        mode: 'refused',
+        reason: 'unknown_share_state',
+        keepInfra: true,
+        remaining: null,
+        released: null,
+        skippedFullDown: true,
+        error: 'planSharedRuntimeTeardown requires commonGit+context, shareCount, or force',
+      }
+    }
+    remaining = 0
+  }
+
+  const plan = planComposeTeardown({
+    shareCount: remaining,
+    force,
+    siblingHolders,
+    context,
+  })
+  return {
+    ...plan,
+    remaining,
+    released,
+    skippedFullDown: plan.mode === 'app_services_only',
+    error: null,
+  }
 }

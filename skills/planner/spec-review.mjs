@@ -8,28 +8,30 @@
  *   0 = ready to finalize
  *   2 = comments need planner revision
  *   1 = incomplete / error
+ *
+ * Finalize / registry / pin live in lib/spec-finalize.mjs.
  */
-import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync, spawn } from 'node:child_process'
 import { createServer } from 'node:http'
 import { randomBytes } from 'node:crypto'
-import { parseProjectSpecification } from '../generator/lib/project-specification.mjs'
 import {
-  resolveGitRoot,
-  resolveProjectPrefix,
-  projectIdFromPrefix,
-  readProjectsRegistry,
-} from '../generator/lib/project-topology.mjs'
+  paths,
+  loadDraft,
+  loadFeedback,
+  validateFeedbackShape,
+  reviewStatus,
+  statusExitCode,
+  writeJson,
+} from './lib/spec-draft.mjs'
+import { finalizeSpec } from './lib/spec-finalize.mjs'
+
+export { reviewStatus }
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const TEMPLATE = join(__dirname, 'assets', 'spec_review.html')
-const DRAFT = 'project_specs.draft.json'
-const FEEDBACK = 'spec-review-feedback.json'
-const HTML_OUT = 'spec-review.html'
-const STATE = 'spec-review-state.json'
-const DONE = 'spec-review-done.json'
 const E2E_AUTOMATION = `
     const e2eMode = new URLSearchParams(location.search).get('harness_e2e');
     if (e2eMode === 'submit-comment') {
@@ -66,114 +68,6 @@ const E2E_AUTOMATION = `
       })();
     }`
 
-function harnessDir(projectDir) {
-  return join(resolve(projectDir), '.harness')
-}
-
-function paths(projectDir) {
-  const dir = harnessDir(projectDir)
-  return {
-    dir,
-    draft: join(dir, DRAFT),
-    feedback: join(dir, FEEDBACK),
-    html: join(dir, HTML_OUT),
-    state: join(dir, STATE),
-    done: join(dir, DONE),
-  }
-}
-
-function readJson(file) {
-  return JSON.parse(readFileSync(file, 'utf8'))
-}
-
-function writeJson(file, data) {
-  mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`, 'utf8')
-}
-
-function loadDraft(projectDir) {
-  const { draft } = paths(projectDir)
-  if (!existsSync(draft)) {
-    console.error(`missing ${draft}; planner must write a draft before review`)
-    process.exit(1)
-  }
-  const data = readJson(draft)
-  if (!data.xml_draft || typeof data.xml_draft !== 'string') {
-    console.error('draft must include xml_draft (full specification XML string)')
-    process.exit(1)
-  }
-  if (!Array.isArray(data.items) || data.items.length === 0) {
-    console.error('draft must include a non-empty items array for review')
-    process.exit(1)
-  }
-  return data
-}
-
-function loadFeedback(projectDir) {
-  const { feedback } = paths(projectDir)
-  if (!existsSync(feedback)) return null
-  return readJson(feedback)
-}
-
-function validateFeedbackShape(feedback, draft) {
-  if (!feedback || typeof feedback !== 'object') return 'feedback is not an object'
-  if (feedback.revision != null && draft.revision != null && feedback.revision !== draft.revision) {
-    return `feedback revision ${feedback.revision} does not match draft revision ${draft.revision}`
-  }
-  if (!Array.isArray(feedback.items)) return 'feedback.items must be an array'
-  const ids = new Set(draft.items.map((item) => item.id))
-  for (const row of feedback.items) {
-    if (!ids.has(row.id)) return `unknown feedback item id: ${row.id}`
-  }
-  return null
-}
-
-export function reviewStatus(projectDir) {
-  const draft = loadDraft(projectDir)
-  const feedback = loadFeedback(projectDir)
-  const itemIds = draft.items.map((item) => item.id)
-  const byId = new Map((feedback?.items ?? []).map((row) => [row.id, row]))
-
-  const missing = []
-  const needsRevision = []
-  const confirmed = []
-
-  for (const id of itemIds) {
-    const row = byId.get(id)
-    if (!row) {
-      missing.push(id)
-      continue
-    }
-    const comment = String(row.comment ?? '').trim()
-    if (comment && !row.confirmed) {
-      needsRevision.push({ id, comment })
-      continue
-    }
-    if (row.confirmed) {
-      confirmed.push(id)
-      continue
-    }
-    missing.push(id)
-  }
-
-  const ready = missing.length === 0 && needsRevision.length === 0
-  return {
-    ready,
-    revision: draft.revision ?? 1,
-    project_name: draft.project_name ?? '',
-    missing,
-    needs_revision: needsRevision,
-    confirmed_count: confirmed.length,
-    total: itemIds.length,
-  }
-}
-
-function statusExitCode(report) {
-  if (report.ready) return 0
-  if (report.needs_revision.length) return 2
-  return 1
-}
-
 function buildHtml(projectDir, { reviewOrigin = '', reviewToken = '', e2e = false } = {}) {
   const p = paths(projectDir)
   const draft = loadDraft(projectDir)
@@ -194,11 +88,18 @@ function buildHtml(projectDir, { reviewOrigin = '', reviewToken = '', e2e = fals
 
 function cmdRender(projectDir) {
   const p = paths(projectDir)
+  let draft
+  try {
+    draft = loadDraft(projectDir)
+  } catch (error) {
+    console.error(error.message)
+    process.exit(1)
+  }
   const html = buildHtml(projectDir, { reviewOrigin: '' })
   mkdirSync(p.dir, { recursive: true })
   writeFileSync(p.html, html, 'utf8')
   writeJson(p.state, {
-    revision: loadDraft(projectDir).revision ?? 1,
+    revision: draft.revision ?? 1,
     rendered_at: new Date().toISOString(),
     html: p.html,
     feedback: p.feedback,
@@ -242,92 +143,41 @@ function printStatus(report, { json = false } = {}) {
 }
 
 function cmdStatus(projectDir, { json = false } = {}) {
-  const report = reviewStatus(projectDir)
+  let report
+  try {
+    report = reviewStatus(projectDir)
+  } catch (error) {
+    console.error(error.message)
+    process.exit(1)
+  }
   printStatus(report, { json })
   process.exit(statusExitCode(report))
 }
 
-function gitOutput(dir, args) {
-  const result = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' })
-  if (result.status !== 0) return null
-  return (result.stdout || '').trim()
-}
-
-function registerProject(root) {
-  if (gitOutput(root, ['rev-parse', '--is-inside-work-tree']) !== 'true') return
-  const gitRoot = resolveGitRoot(root)
-  const prefix = resolveProjectPrefix(root) || ''
-  const id = projectIdFromPrefix(prefix) || 'root'
-  const path = prefix.replace(/\/$/, '')
-  const registry = readProjectsRegistry(gitRoot) || {}
-  const projects = Array.isArray(registry.projects) ? registry.projects : []
-  const existing = projects.find((entry) => entry && entry.id === id)
-  if (existing) existing.path = path
-  else projects.push({ id, path })
-  registry.projects = projects
-  const file = join(gitRoot, '.harness', 'projects.json')
-  writeJson(file, registry)
-  console.log(`spec-review: registered project ${id} (${path || '.'}) in ${file}`)
-}
-
-function pinIntegrationBranch(root, projectName) {
-  if (gitOutput(root, ['rev-parse', '--verify', '--quiet', 'HEAD']) == null) return
-  const gitRoot = resolveGitRoot(root)
-  const pinFile = join(gitRoot, '.harness', 'integration-branch')
-  if (existsSync(pinFile)) return
-  const slug = String(projectName || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '') || 'project'
-  const branch = `plan/${slug}`
-  if (gitOutput(root, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]) == null) {
-    spawnSync('git', ['-C', root, 'branch', branch], { encoding: 'utf8' })
-  }
-  mkdirSync(dirname(pinFile), { recursive: true })
-  writeFileSync(pinFile, `${branch}\n`, 'utf8')
-  console.log(`spec-review: pinned integration branch ${branch} in ${pinFile}`)
-}
-
 function cmdFinalize(projectDir) {
-  const report = reviewStatus(projectDir)
-  if (!report.ready) {
-    console.error('cannot finalize: specification review is not complete')
-    if (report.needs_revision.length) {
-      console.error(`needs_revision: ${report.needs_revision.length} item(s) have comments`)
-      for (const row of report.needs_revision) console.error(`  - ${row.id}: ${row.comment}`)
-    } else {
-      console.error(`incomplete: ${report.missing.length} item(s) not confirmed`)
-      for (const id of report.missing) console.error(`  - ${id}`)
+  try {
+    const target = finalizeSpec(projectDir)
+    console.log(target)
+  } catch (error) {
+    if (error.code === 'REGISTRY_FAILED') {
+      console.error(error.message)
+      process.exit(1)
     }
+    if (error.code === 'NOT_READY' && error.report) {
+      console.error(error.message)
+      const report = error.report
+      if (report.needs_revision.length) {
+        console.error(`needs_revision: ${report.needs_revision.length} item(s) have comments`)
+        for (const row of report.needs_revision) console.error(`  - ${row.id}: ${row.comment}`)
+      } else {
+        console.error(`incomplete: ${report.missing.length} item(s) not confirmed`)
+        for (const id of report.missing) console.error(`  - ${id}`)
+      }
+      process.exit(1)
+    }
+    console.error(error.message)
     process.exit(1)
   }
-  const draft = loadDraft(projectDir)
-  const feedback = loadFeedback(projectDir)
-  const shapeError = validateFeedbackShape(feedback, draft)
-  if (shapeError) {
-    console.error(shapeError)
-    process.exit(1)
-  }
-  try {
-    parseProjectSpecification(draft.xml_draft)
-  } catch (error) {
-    console.error(`cannot finalize: invalid project specification: ${error.message}`)
-    process.exit(1)
-  }
-  const root = resolve(projectDir)
-  const target = join(root, 'project_specs.xml')
-  writeFileSync(target, draft.xml_draft.endsWith('\n') ? draft.xml_draft : `${draft.xml_draft}\n`, 'utf8')
-  const p = paths(projectDir)
-  for (const file of [p.draft, p.feedback, p.html, p.state, p.done]) {
-    if (existsSync(file)) unlinkSync(file)
-  }
-  try {
-    registerProject(root)
-    pinIntegrationBranch(root, draft.project_name)
-  } catch (error) {
-    console.error(`spec-review: post-finalize registration failed: ${error.message}`)
-  }
-  console.log(target)
 }
 
 function which(bin) {
@@ -381,7 +231,13 @@ function sendJson(res, status, body) {
 
 async function cmdOpen(projectDir, { timeoutMs = 0, noBrowser = false, e2e = false } = {}) {
   const p = paths(projectDir)
-  const draft = loadDraft(projectDir)
+  let draft
+  try {
+    draft = loadDraft(projectDir)
+  } catch (error) {
+    console.error(error.message)
+    process.exit(1)
+  }
   const reviewToken = randomBytes(32).toString('base64url')
   mkdirSync(p.dir, { recursive: true })
 

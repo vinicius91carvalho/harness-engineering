@@ -1,17 +1,31 @@
 {
   "name": "harness-engineering",
-  "interface": { "displayName": "Harness Engineering" },
+  "interface": {
+    "displayName": "Harness Engineering"
+  },
   "plugins": [
     {
       "name": "harness",
-      "source": { "source": "local", "path": "./" },
-      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
       "category": "Productivity"
     },
     {
       "name": "skill-creator",
-      "source": { "source": "local", "path": "./packages/skill-creator/" },
-      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "source": {
+        "source": "local",
+        "path": "./packages/skill-creator/"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
       "category": "Productivity"
     }
   ]

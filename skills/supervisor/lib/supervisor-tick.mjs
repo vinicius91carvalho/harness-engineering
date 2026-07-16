@@ -1,5 +1,6 @@
 /**
- * Pure supervisor tick helpers extracted from harness-control tick().
+ * Pure supervisor tick helpers (Control Plane, Wave C / ADR-0022).
+ * Lives under skills/supervisor/lib/; harness-control.mjs only applies I/O.
  *
  * A supervisor tick (harness-control tick()) roughly:
  * 1. Sync control-file status and process pending user responses
@@ -8,11 +9,44 @@
  * 4. Finalize a deferred Goal Review pass once retries are empty
  * 5. Maybe start Goal Review, recover interrupted claims, or claim new work
  *
- * This module holds decision-only helpers. It does NOT own execution policy (ADR-0007):
- * resume, spawn, input, and save remain in harness-control.
+ * Tick planners (nextTickDelay, tickWatchPaths, drainRetryQueue,
+ * applyRetryResumeOutcome, shouldFinalizePendingGoal) and admission planning
+ * (supervisor-admission.mjs) live here. harness-control remains the I/O adapter
+ * (ADR-0007): resume, spawn, input, and save stay there.
  */
 
 export const DEFAULT_RETRY_MAX_ATTEMPTS = 5
+
+/** Floor when a watch fires so self-writes under watched paths cannot busy-loop. */
+const DIRTY_MIN_MS = 50
+
+export function nextTickDelay({
+  pollMs = 2000,
+  eventDriven = true,
+  dirty = false,
+  dueAt = null,
+  now = Date.now(),
+} = {}) {
+  const base = Math.max(250, Number(pollMs) || 2000)
+  if (!eventDriven) return base
+  if (dirty) return DIRTY_MIN_MS
+  if (dueAt) return Math.max(0, Math.min(base, Number(dueAt) - now))
+  return base
+}
+
+/**
+ * Paths that should wake an event-driven supervisor tick.
+ * Do NOT watch controlRoot itself — Supervisor.save writes state.json there and
+ * would dirty every tick into a 50ms busy loop. Watch only external input dirs
+ * (responses/, runs, locks).
+ */
+export function tickWatchPaths({ controlRoot, runsDir, commonGit } = {}) {
+  return [
+    controlRoot ? `${controlRoot}/responses` : null,
+    runsDir,
+    commonGit ? `${commonGit}/harness-locks` : null,
+  ].filter(Boolean)
+}
 
 /**
  * Order retry-queue entries to attempt resume while slots remain available.

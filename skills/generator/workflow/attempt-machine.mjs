@@ -1,7 +1,7 @@
 /** Attempt loop for Work Items — coding, QA, integration, repair planning. */
 
 import { classifyFailure } from '../lib/failure-policy.mjs'
-import { startStateHeartbeat } from '../lib/state-heartbeat.mjs'
+import { startStateHeartbeat } from '../lib/worker-lifecycle.mjs'
 
 export async function runAttemptLoop({
   wanted,

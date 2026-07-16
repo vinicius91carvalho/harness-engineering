@@ -1,24 +1,39 @@
+/**
+ * Claim Lease: select/resume/release claim + state lock.
+ *
+ * Split modules (re-exported below for backward compatibility):
+ *   merge-lock.mjs      - merge lock acquire/do/release/holder
+ *   worktree-ports.mjs  - worktree prepare + port allocation
+ */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { randomInt } from 'node:crypto'
 import { hostname } from 'node:os'
 import {
   git,
-  gitRoot,
   readFeatureListFromIntegration,
-  portInUse,
   processAlive,
   readJsonFile,
   writeJsonAtomic,
 } from './git-repo.mjs'
-import { integrationBranchName, integrationBranchRef } from './integration-branch.mjs'
 import { claimKey, sanitizeKey } from './project-keys.mjs'
 import { resolveProjectTopology } from './project-topology.mjs'
 import { readyWorkItems } from './ready-work-items.mjs'
 import { ledgerPath, readLedgerSync } from './execution-ledger.mjs'
-import { isLiveRunOwner, classifyRunStateHealth } from './orphan-claims.mjs'
+import { isLiveRunOwner, classifyRunStateHealth } from '../../supervisor/lib/orphan-claims.mjs'
+import { prepareWorktree, pickPort, removeWorktree } from './worktree-ports.mjs'
+import { stealDeadMergeLock } from './merge-lock.mjs'
 
-export const DEFAULT_BASE_PORT = Number(process.env.GEN_BASE_PORT || 5170)
+export { DEFAULT_BASE_PORT, prepareWorktree, pickPort, removeWorktree } from './worktree-ports.mjs'
+export {
+  stealDeadMergeLock,
+  mergeLockHolder,
+  mergeAcquire,
+  restoreDirtyRuntimeLogs,
+  mergeDo,
+  mergeRelease,
+} from './merge-lock.mjs'
+
 export const LEASE_TIMEOUT_SECONDS = Number(process.env.HARNESS_LEASE_TIMEOUT_SECONDS || 60)
 
 let stateLockToken = null
@@ -200,105 +215,6 @@ export function pickClaimCandidate(repo, mode, selector, claims) {
   return { context, key, featureIds }
 }
 
-function featureListValid(worktreePath) {
-  const file = join(worktreePath, 'feature_list.json')
-  if (!existsSync(file)) return false
-  try {
-    JSON.parse(readFileSync(file, 'utf8'))
-    return true
-  } catch {
-    return false
-  }
-}
-
-function restoreFeatureListFromIntegration(repo) {
-  const branch = integrationBranchName(repo)
-  git(repo, ['restore', '-s', branch, '--', 'feature_list.json'], { allowFailure: true })
-}
-
-function removeWorktree(repo, checkout) {
-  git(repo, ['worktree', 'remove', '--force', checkout], { allowFailure: true })
-  git(repo, ['worktree', 'prune'], { allowFailure: true })
-  // Unregistered leftover dirs (crash / partial remove) are not cleared by
-  // `git worktree remove` and then block `worktree add` with "already exists".
-  if (existsSync(checkout) && !worktreeRegistered(repo, checkout)) {
-    rmSync(checkout, { recursive: true, force: true })
-  }
-}
-
-function branchExists(repo, branch) {
-  const result = git(repo, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], { allowFailure: true })
-  return result.status === 0
-}
-
-function worktreeRegistered(repo, checkout) {
-  const result = git(repo, ['worktree', 'list', '--porcelain'], { allowFailure: true })
-  if (result.status !== 0) return false
-  return result.stdout.split('\n').some((line) => line === `worktree ${checkout}`)
-}
-
-function checkoutOnBranch(checkout, branch) {
-  const result = git(checkout, ['rev-parse', '--abbrev-ref', 'HEAD'], { allowFailure: true })
-  return result.status === 0 && result.stdout.trim() === branch
-}
-
-function addWorktree(repo, checkout, branch) {
-  if (branchExists(repo, branch)) {
-    git(repo, ['worktree', 'add', checkout, branch])
-  } else {
-    const result = git(repo, ['worktree', 'add', checkout, '-b', branch, integrationBranchName(repo)], { allowFailure: true })
-    if (result.status !== 0) return 75
-  }
-  restoreFeatureListFromIntegration(repo)
-  return 0
-}
-
-export function prepareWorktree(repo, context, paths) {
-  const root = gitRoot(repo)
-  const sctx = sanitizeKey(context)
-  const branch = `gen/${paths.projectId}-${sctx}`
-  const checkout = `${root.replace(/\/$/, '')}-wt-${paths.projectId}-${sctx}`
-  let wt = paths.prefix ? join(checkout, paths.prefix.replace(/\/$/, '')) : checkout
-
-  if (
-    existsSync(checkout)
-    && checkoutOnBranch(checkout, branch)
-    && worktreeRegistered(repo, checkout)
-  ) {
-    if (!featureListValid(wt)) {
-      restoreFeatureListFromIntegration(repo)
-    }
-    if (featureListValid(wt)) {
-      return { branch, checkout, worktree: wt }
-    }
-    if (existsSync(checkout)) {
-      removeWorktree(repo, checkout)
-    }
-    const status = addWorktree(repo, checkout, branch)
-    if (status === 75) return { retry: true }
-    return { branch, checkout, worktree: wt }
-  }
-
-  if (existsSync(checkout)) {
-    removeWorktree(repo, checkout)
-  }
-  const status = addWorktree(repo, checkout, branch)
-  if (status === 75) return { retry: true }
-  if (!paths.prefix) wt = checkout
-  return { branch, checkout, worktree: wt }
-}
-
-export function pickPort(claims, basePort = DEFAULT_BASE_PORT) {
-  const used = new Set(
-    Object.values(claims)
-      .map((entry) => entry.port)
-      .filter((port) => port != null),
-  )
-  let slot = 0
-  while (used.has(basePort + slot) || portInUse(basePort + slot)) slot += 1
-  return basePort + slot
-}
-
 export function recordClaim(paths, {
   context,
   key,
@@ -379,141 +295,6 @@ export function selectClaim(repo, mode, selector, session) {
   }
   process.exitCode = 75
   return null
-}
-
-function stealDeadMergeLock(lockDir) {
-  if (!existsSync(lockDir)) return false
-  const ownerHost = existsSync(join(lockDir, 'host'))
-    ? readFileSync(join(lockDir, 'host'), 'utf8').trim()
-    : ''
-  const ownerPid = existsSync(join(lockDir, 'owner'))
-    ? readFileSync(join(lockDir, 'owner'), 'utf8').trim()
-    : ''
-  if (ownerHost !== currentHost()) return false
-  if (ownerPid && processAlive(Number(ownerPid))) return false
-  rmSync(join(lockDir, 'owner'), { force: true })
-  rmSync(join(lockDir, 'host'), { force: true })
-  try {
-    rmSync(lockDir, { recursive: true })
-  } catch {
-    /* ignore */
-  }
-  return true
-}
-
-function mergeBusySignal() {
-  process.stdout.write('BUSY\n')
-}
-
-function readMergeLockHolder(mergeLockDir) {
-  const owner = existsSync(join(mergeLockDir, 'owner'))
-    ? readFileSync(join(mergeLockDir, 'owner'), 'utf8').trim()
-    : ''
-  const host = existsSync(join(mergeLockDir, 'host'))
-    ? readFileSync(join(mergeLockDir, 'host'), 'utf8').trim()
-    : ''
-  return { owner, host }
-}
-
-/** Peek at the current merge-lock holder without trying to acquire. */
-export function mergeLockHolder(repo) {
-  const { mergeLockDir } = repoPaths(repo)
-  if (!existsSync(mergeLockDir)) return { busy: false, owner: '', host: '' }
-  const holder = readMergeLockHolder(mergeLockDir)
-  return { busy: Boolean(holder.owner), ...holder }
-}
-
-export function mergeAcquire(repo, session) {
-  const { mergeLockDir, repo: repoPath, prefix } = repoPaths(repo)
-  mkdirSync(dirname(mergeLockDir), { recursive: true })
-  const host = currentHost()
-  try {
-    mkdirSync(mergeLockDir)
-  } catch {
-    if (!stealDeadMergeLock(mergeLockDir)) {
-      mergeBusySignal()
-      return { busy: true, ...readMergeLockHolder(mergeLockDir) }
-    }
-    try {
-      mkdirSync(mergeLockDir)
-    } catch {
-      mergeBusySignal()
-      return { busy: true, ...readMergeLockHolder(mergeLockDir) }
-    }
-  }
-  writeFileSync(join(mergeLockDir, 'owner'), `${session ?? process.pid}\n`)
-  writeFileSync(join(mergeLockDir, 'host'), `${host}\n`)
-
-  const integrationRef = integrationBranchRef(repoPath)
-  const listResult = git(repoPath, ['worktree', 'list', '--porcelain'])
-  let integ = null
-  let current = null
-  for (const line of listResult.stdout.split('\n')) {
-    if (line.startsWith('worktree ')) current = line.slice('worktree '.length)
-    if (line === `branch ${integrationRef}` && current) {
-      integ = current
-      break
-    }
-  }
-
-  if (!integ) {
-    integ = `${gitRoot(repoPath).replace(/\/$/, '')}-wt-integration`
-    if (!existsSync(integ)) {
-      git(repoPath, ['worktree', 'add', integ, integrationBranchName(repoPath)])
-    }
-  }
-
-  const integDir = prefix ? join(integ.replace(/\/$/, ''), prefix.replace(/\/$/, '')) : integ
-  return { integDir }
-}
-
-export function restoreDirtyRuntimeLogs(integ) {
-  const diff = git(integ, ['diff', '--name-only', '--', '*.log', 'logs/'], { allowFailure: true })
-  if (diff.status !== 0) return
-  for (const logpath of diff.stdout.split('\n')) {
-    if (!logpath) continue
-    git(integ, ['checkout', '--', logpath], { allowFailure: true })
-  }
-}
-
-export function mergeDo(repo, context, integ) {
-  const paths = repoPaths(repo)
-  const key = paths.claimKey(context)
-  const claims = readClaims(repo)
-  let branch = claims[key]?.branch
-  if (!branch) branch = `gen/${paths.projectId}-${sanitizeKey(context)}`
-
-  restoreDirtyRuntimeLogs(integ)
-
-  const mergeResult = git(integ, ['merge', '--no-edit', branch], { allowFailure: true })
-  if (mergeResult.status === 0) {
-    return { status: 'clean' }
-  }
-
-  const unmerged = git(integ, ['diff', '--name-only', '--diff-filter=U'], { allowFailure: true }).stdout.trim()
-  if (!unmerged) {
-    return { status: 'error', message: (mergeResult.stderr || mergeResult.stdout || 'merge failed').trim() }
-  }
-
-  return { status: 'conflict', integ, paths: unmerged.split('\n').filter(Boolean) }
-}
-
-export function mergeRelease(repo, session) {
-  const { mergeLockDir } = repoPaths(repo)
-  const owner = existsSync(join(mergeLockDir, 'owner'))
-    ? readFileSync(join(mergeLockDir, 'owner'), 'utf8').trim()
-    : ''
-  if (session && owner !== String(session)) {
-    throw new Error(`merge lock is owned by ${owner}`)
-  }
-  rmSync(join(mergeLockDir, 'owner'), { force: true })
-  rmSync(join(mergeLockDir, 'host'), { force: true })
-  try {
-    rmSync(mergeLockDir, { recursive: true })
-  } catch {
-    /* ignore */
-  }
-  return 'merge-lock released'
 }
 
 export function releaseClaim(repo, context) {

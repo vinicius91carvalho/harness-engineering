@@ -36,7 +36,26 @@ resolution='implementation prevails; docs stale'
 printf '<project_specification><technology_stack>AWS CDK PostgreSQL</technology_stack><integrations>%s<contradictions>%s</contradictions></integrations><prerequisites/></project_specification>\n' "$names" "$resolution" >"$TMP/repo/project_specs.xml"
 node "$ROOT/skills/setup/inventory.mjs" "$TMP/repo" >/dev/null
 grep -q 'spec review HTML loop' "$ROOT/skills/setup/SKILL.md"
+grep -q 'detect-boundaries.mjs' "$ROOT/skills/setup/SKILL.md"
+grep -q '\-\-confirm' "$ROOT/skills/setup/SKILL.md"
+grep -q 'upsertProject' "$ROOT/skills/setup/SKILL.md"
 grep -q 'spec-review.mjs' "$ROOT/skills/planner/SKILL.md"
+# Boundary detector smoke on a tiny workspace fixture
+BOUND="$TMP/boundaries"
+mkdir -p "$BOUND/apps/web" "$BOUND/apps/api"
+git -C "$BOUND" init -b main -q
+printf '%s\n' '{"private":true,"workspaces":["apps/*"]}' >"$BOUND/package.json"
+printf '%s\n' '{}' >"$BOUND/apps/web/package.json"
+printf '%s\n' '{}' >"$BOUND/apps/api/package.json"
+node "$ROOT/skills/setup/lib/detect-boundaries.mjs" "$BOUND" >"$TMP/boundaries.json"
+grep -q '"confirm_required": true' "$TMP/boundaries.json"
+grep -q '"apps/web"' "$TMP/boundaries.json"
+grep -q '"apps/api"' "$TMP/boundaries.json"
+grep -qE 'INTEGRATION_CHECKOUT|goal-review\.mjs' "$ROOT/skills/evaluator/SKILL.md"
+if grep -q 'MAIN_CHECKOUT' "$ROOT/skills/evaluator/SKILL.md"; then
+  echo 'not ok - evaluator still references MAIN_CHECKOUT' >&2
+  exit 1
+fi
 grep -q 'failure_behavior' "$ROOT/skills/planner/project_specs.template.xml"
 grep -q 'planning_decisions' "$ROOT/skills/planner/project_specs.template.xml"
 grep -q '<domain>' "$ROOT/skills/planner/project_specs.template.xml"

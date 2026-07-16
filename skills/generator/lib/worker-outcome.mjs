@@ -191,7 +191,7 @@ export async function clearWorkerResult(runStateFilePath) {
   try { await import('node:fs/promises').then(({ unlink }) => unlink(file)) } catch {}
 }
 
-// --- Closed outcome interpretation (pane tail + durable + run state) ---
+// --- Closed outcome interpretation (log tail + durable + run state) ---
 
 /**
  * Infer a durable worker outcome when the orchestrator did not write worker-result.json.

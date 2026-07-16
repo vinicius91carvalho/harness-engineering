@@ -9,20 +9,39 @@ import { spawnSync } from 'node:child_process'
 import { parseVerdict, isProviderQuotaLimited, VERDICT_BEGIN, VERDICT_END, isInfraNoise, stuckThresholdMs, interpretClosed } from '../skills/generator/lib/worker-outcome.mjs'
 import { readyWorkItems, isWorkItemReady, validateDependencyGraph } from '../skills/generator/lib/ready-work-items.mjs'
 import { parseProjectSpecification } from '../skills/generator/lib/project-specification.mjs'
-import { resolveProjectRoot, resolveProjectTopology } from '../skills/generator/lib/project-topology.mjs'
+import {
+  resolveProjectRoot,
+  resolveProjectTopology,
+  readProjectsRegistry,
+  upsertProject,
+} from '../skills/generator/lib/project-topology.mjs'
 import { claimKey, projectIdFromPrefix, resultFileFromRunState } from '../skills/generator/lib/project-keys.mjs'
 import { pickClaimCandidate, mergeDo, restoreDirtyRuntimeLogs } from '../skills/generator/lib/claim-lease.mjs'
 import { MARKER_PATTERN, hasMergeMarkers, unionAppendOnly } from '../skills/generator/lib/integrate-checkpoint.mjs'
-import { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } from '../skills/generator/lib/supervisor-tick.mjs'
-import { planTickAdmission, goalReviewAdmissible, goalReviewGate } from '../skills/generator/lib/supervisor-admission.mjs'
+import { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal, nextTickDelay, tickWatchPaths } from '../skills/supervisor/lib/supervisor-tick.mjs'
+import {
+  planTickAdmission,
+  goalReviewAdmissible,
+  goalReviewGate,
+  pruneOrphanPendingInputs,
+  isCrashBoundContext,
+  liveClaimContexts,
+} from '../skills/supervisor/lib/supervisor-admission.mjs'
 import { goalReviewAdmissible as goalReviewContract } from '../skills/generator/lib/completion-contract.mjs'
 import {
   meaningfulCheckoutDirt,
   isCheckoutCleanForGoalReview,
 } from '../skills/generator/lib/checkout-dirt.mjs'
 import { mkey, strikeOf, buildPlan, buildCandidates, lastCoder, candidatePool, isNoCreditsCandidate } from '../skills/generator/lib/route-plan.mjs'
-import { buildOrchestratorArgv, buildWorkerBase, planWorkerStop, planWorkerCleanupTargets, terminateProcessTree, processGroupForWorker } from '../skills/generator/lib/worker-lifecycle.mjs'
-import { pruneOrphanPendingInputs, isCrashBoundContext, liveClaimContexts } from '../skills/generator/lib/supervisor-claims.mjs'
+import {
+  buildOrchestratorArgv,
+  buildWorkerBase,
+  planWorkerStop,
+  planWorkerCleanupTargets,
+  terminateProcessTree,
+  processGroupForWorker,
+  cleanupBrowserOrphans,
+} from '../skills/generator/lib/worker-lifecycle.mjs'
 import {
   authorizeRecovery,
   classifyFailure,
@@ -41,24 +60,27 @@ import {
   readDurable,
   validateOutcome,
   writeDurable,
-} from '../skills/generator/lib/worker-result.mjs'
+} from '../skills/generator/lib/worker-outcome.mjs'
 import { createWorkflowState } from '../skills/generator/lib/workflow-state.mjs'
 import { applyLedgerToCatalog, readLedger, ledgerPath } from '../skills/generator/lib/execution-ledger.mjs'
 import { readJson, atomicJson } from '../skills/generator/lib/fs-json.mjs'
-import { integrationBranchName, DEFAULT_INTEGRATION_BRANCH } from '../skills/generator/lib/integration-branch.mjs'
+import {
+  integrationBranchName,
+  DEFAULT_INTEGRATION_BRANCH,
+  pinIntegrationBranchIfAbsent,
+} from '../skills/generator/lib/integration-branch.mjs'
+import { detectProjectBoundaries } from '../skills/setup/lib/detect-boundaries.mjs'
 import {
   isLiveRunOwner,
   classifyRunStateHealth,
   listGhostClaims,
   abandonGhostRun,
   processAlive,
-} from '../skills/generator/lib/orphan-claims.mjs'
-import { runtimeView } from '../skills/generator/lib/runtime-view.mjs'
-import { parseMeminfo, readHostResources } from '../skills/generator/lib/host-resources.mjs'
-import { planRuntimeRecovery, shouldEmitEmptyFleet } from '../skills/generator/lib/runtime-recovery.mjs'
-import { nextTickDelay, tickWatchPaths } from '../skills/generator/lib/tick-context.mjs'
-import { appendOwnedRuntime, readOwnedRuntime } from '../skills/generator/lib/runtime-manifest.mjs'
-import { cleanupBrowserOrphans } from '../skills/generator/lib/browser-cleanup.mjs'
+} from '../skills/supervisor/lib/orphan-claims.mjs'
+import { runtimeView } from '../skills/supervisor/lib/runtime-view.mjs'
+import { parseMeminfo, readHostResources } from '../skills/supervisor/lib/host-resources.mjs'
+import { planRuntimeRecovery, shouldEmitEmptyFleet } from '../skills/supervisor/lib/fleet-snapshot.mjs'
+import { appendOwnedRuntime, readOwnedRuntime } from '../skills/generator/lib/worktree-teardown.mjs'
 import { mergeAcquire, mergeRelease, clearDeadLock } from '../skills/generator/lib/claim-lease.mjs'
 
 function withoutIntegrationBranchEnv(fn) {
@@ -320,34 +342,63 @@ test('browser cleanup is a no-op without scoped identifiers', () => {
 })
 
 test('feature prompts require resource cleanup before verdict', async () => {
-  const { featurePrompt, RESOURCE_CLEANUP_RULE, NO_REDELEGATE_RULE } = await import('../skills/generator/prompts/feature.mjs')
+  const { featurePrompt, RESOURCE_CLEANUP_RULE, APP_START_RULE, NO_REDELEGATE_RULE } = await import('../skills/generator/prompts/feature.mjs')
   assert.match(RESOURCE_CLEANUP_RULE, /RESOURCE CLEANUP/)
   assert.match(RESOURCE_CLEANUP_RULE, /docker compose down/)
   assert.match(RESOURCE_CLEANUP_RULE, /\.\/init\.sh stop/)
+  assert.match(APP_START_RULE, /APP START/)
+  assert.match(APP_START_RULE, /\.\/init\.sh start/)
   assert.match(NO_REDELEGATE_RULE, /assigned harness worker/)
   assert.match(NO_REDELEGATE_RULE, /Do NOT spawn Task/)
   const feature = { id: 'WI-1', context: 'core', description: 'x', acceptance_checks: ['AC-1'] }
   for (const kind of ['CODING', 'QA', 'INTEGRATION_QA']) {
     const prompt = featurePrompt(kind, feature, 1, null, '/wt', { port: 5170, integrationBranch: 'plan/x' })
     assert.match(prompt, /RESOURCE CLEANUP/)
+    assert.match(prompt, /APP START/)
     assert.match(prompt, /docker compose down/)
     assert.match(prompt, /\.\/init\.sh stop/)
+    assert.match(prompt, /\.\/init\.sh start/)
     assert.match(prompt, /assigned harness worker|Do NOT spawn Task/)
   }
 })
 
 test('initializer documents init.sh lifecycle subcommands', () => {
-  const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'agents', 'initializer.md'), 'utf8')
-  assert.match(source, /start\|stop\|restart\|status\|help/)
-  assert.match(source, /cmd_start|cmd_stop|cmd_status/)
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+  const templatePath = join(root, 'skills', 'generator', 'templates', 'init.sh')
+  assert.ok(existsSync(templatePath), 'init.sh template must exist as SoT')
+  const template = readFileSync(templatePath, 'utf8')
+  assert.match(template, /start\|stop\|restart\|status\|help/)
+  assert.match(template, /cmd_start|cmd_stop|cmd_status/)
+  assert.match(template, /kill_process_tree/)
+  assert.match(template, /start is not configured/)
+  assert.doesNotMatch(template, /TODO\(stack\)[\s\S]*echo "Ready/)
+  assert.match(template, /\.harness\/app\.pid/)
+  const source = readFileSync(join(root, 'agents', 'initializer.md'), 'utf8')
+  assert.match(source, /skills\/generator\/templates\/init\.sh/)
   assert.match(source, /\.harness\/app\.pid/)
+  assert.match(source, /\.\/init\.sh start/)
+})
+
+test('init.sh template fails closed on unconfigured start stub', () => {
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
+  const templatePath = join(repoRoot, 'skills', 'generator', 'templates', 'init.sh')
+  const tmp = mkdtempSync(join(tmpdir(), 'init-template-'))
+  writeFileSync(join(tmp, 'init.sh'), readFileSync(templatePath))
+  chmodSync(join(tmp, 'init.sh'), 0o755)
+  const run = spawnSync(join(tmp, 'init.sh'), ['start'], { cwd: tmp, encoding: 'utf8' })
+  assert.notEqual(run.status, 0)
+  assert.match(run.stderr, /start is not configured/)
+  assert.equal(run.stdout.includes('Ready'), false)
 })
 
 test('browser cleanup patterns stay scoped to port/workdir/profile', () => {
-  const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'generator', 'lib', 'browser-cleanup.mjs'), 'utf8')
-  assert.equal(source.includes('chromium.*--headless'), false)
-  assert.equal(source.includes('playwright.*chromium'), false)
-  assert.equal(source.includes('ms-playwright'), false)
+  const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'generator', 'lib', 'worker-lifecycle.mjs'), 'utf8')
+  const fnStart = source.indexOf('export function cleanupBrowserOrphans')
+  assert.ok(fnStart >= 0)
+  const fnBody = source.slice(fnStart, fnStart + 800)
+  assert.equal(fnBody.includes('chromium.*--headless'), false)
+  assert.equal(fnBody.includes('playwright.*chromium'), false)
+  assert.equal(fnBody.includes('ms-playwright'), false)
 })
 
 test('worker lifecycle builds shared spawn argv for work items and goal review', () => {
@@ -453,7 +504,7 @@ test('clearStaleGeneratorLocks leaves a live-held merge lock alone', async () =>
 })
 
 test('authorizeFleetRecovery allows recovery when supervisor is not live', async () => {
-  const { authorizeFleetRecovery } = await import('../skills/generator/lib/supervisor-lease.mjs')
+  const { authorizeFleetRecovery } = await import('../skills/supervisor/lib/supervisor-lease.mjs')
   const controlRoot = mkdtempSync(join(tmpdir(), 'fleet-auth-'))
   const auth = await authorizeFleetRecovery(controlRoot, { state: {}, force: false })
   assert.equal(auth.authorized, true)
@@ -461,7 +512,7 @@ test('authorizeFleetRecovery allows recovery when supervisor is not live', async
 })
 
 test('clearStaleSupervisorLock clears an absent lock', async () => {
-  const { clearStaleSupervisorLock } = await import('../skills/generator/lib/supervisor-lease.mjs')
+  const { clearStaleSupervisorLock } = await import('../skills/supervisor/lib/supervisor-lease.mjs')
   const controlRoot = mkdtempSync(join(tmpdir(), 'fleet-lock-'))
   assert.deepEqual(await clearStaleSupervisorLock(controlRoot), { cleared: false, reason: 'absent' })
 })
@@ -549,6 +600,87 @@ test('integration branch resolves from file and env', () => {
     assert.equal(integrationBranchName(root, { env: { HARNESS_INTEGRATION_BRANCH: 'plan/override' } }), 'plan/override')
     assert.equal(DEFAULT_INTEGRATION_BRANCH, 'main')
   })
+})
+
+test('pinIntegrationBranchIfAbsent pins once and never overwrites', () => {
+  withoutIntegrationBranchEnv(() => {
+    const root = mkdtempSync(join(tmpdir(), 'pin-integration-'))
+    spawnSync('git', ['init', '-b', 'main'], { cwd: root })
+    spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'], { cwd: root })
+    const first = pinIntegrationBranchIfAbsent(root, 'Demo App')
+    assert.equal(first.pinned, true)
+    assert.equal(first.branch, 'plan/demo-app')
+    assert.equal(readFileSync(join(root, '.harness', 'integration-branch'), 'utf8'), 'plan/demo-app\n')
+    assert.equal(spawnSync('git', ['rev-parse', '--verify', 'refs/heads/plan/demo-app'], { cwd: root }).status, 0)
+    const second = pinIntegrationBranchIfAbsent(root, 'Other')
+    assert.equal(second.pinned, false)
+    assert.equal(readFileSync(join(root, '.harness', 'integration-branch'), 'utf8'), 'plan/demo-app\n')
+  })
+})
+
+test('upsertProject is the sole projects.json writer and preserves entries', () => {
+  const root = mkdtempSync(join(tmpdir(), 'projects-registry-'))
+  spawnSync('git', ['init', '-b', 'main'], { cwd: root })
+  mkdirSync(join(root, '.harness'), { recursive: true })
+  writeFileSync(join(root, '.harness', 'projects.json'), `${JSON.stringify({
+    note: 'keep',
+    projects: [{ id: 'frontend', path: 'apps/frontend', description: 'Web' }],
+  }, null, 2)}\n`)
+  const created = upsertProject(root, { id: 'apps_api', path: 'apps/api/' })
+  assert.equal(created.created, true)
+  assert.equal(created.path, 'apps/api')
+  const updated = upsertProject(root, { id: 'frontend', path: 'apps/web', description: 'Customer web' })
+  assert.equal(updated.created, false)
+  const registry = readProjectsRegistry(root)
+  assert.equal(registry.note, 'keep')
+  assert.equal(registry.projects.find((p) => p.id === 'frontend').path, 'apps/web')
+  assert.equal(registry.projects.find((p) => p.id === 'frontend').description, 'Customer web')
+  assert.ok(registry.projects.some((p) => p.id === 'apps_api' && p.path === 'apps/api'))
+})
+
+test('detectProjectBoundaries finds workspaces, compose, and registry', () => {
+  const root = mkdtempSync(join(tmpdir(), 'detect-boundaries-'))
+  spawnSync('git', ['init', '-b', 'main'], { cwd: root })
+  writeFileSync(join(root, 'package.json'), `${JSON.stringify({
+    private: true,
+    workspaces: ['apps/*'],
+  }, null, 2)}\n`)
+  mkdirSync(join(root, 'apps', 'web'), { recursive: true })
+  mkdirSync(join(root, 'apps', 'api'), { recursive: true })
+  writeFileSync(join(root, 'apps', 'web', 'package.json'), '{}\n')
+  writeFileSync(join(root, 'apps', 'api', 'package.json'), '{}\n')
+  writeFileSync(join(root, 'docker-compose.yml'), 'services: {}\n')
+  mkdirSync(join(root, '.harness'), { recursive: true })
+  writeFileSync(join(root, '.harness', 'projects.json'), `${JSON.stringify({
+    projects: [{ id: 'web', path: 'apps/web', description: 'Customer UI' }],
+  }, null, 2)}\n`)
+  const { gitRoot, projects } = detectProjectBoundaries(root)
+  assert.equal(gitRoot, root)
+  assert.ok(projects.some((p) => p.path === 'apps/web' && p.sources.includes('.harness/projects.json')))
+  assert.ok(projects.some((p) => p.path === 'apps/api' && p.sources.includes('package.json#workspaces')))
+  assert.ok(projects.some((p) => p.path === '' && p.sources.includes('docker-compose.yml')))
+})
+
+test('detect-boundaries CLI requires --confirm before writing registry', () => {
+  const root = mkdtempSync(join(tmpdir(), 'detect-confirm-'))
+  spawnSync('git', ['init', '-b', 'main'], { cwd: root })
+  mkdirSync(join(root, 'apps', 'web'), { recursive: true })
+  writeFileSync(join(root, 'package.json'), `${JSON.stringify({ private: true, workspaces: ['apps/*'] }, null, 2)}\n`)
+  writeFileSync(join(root, 'apps', 'web', 'package.json'), '{}\n')
+  const script = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'setup', 'lib', 'detect-boundaries.mjs')
+  const dry = spawnSync('node', [script, root], { encoding: 'utf8' })
+  assert.equal(dry.status, 0)
+  const dryJson = JSON.parse(dry.stdout)
+  assert.equal(dryJson.mutated, false)
+  assert.equal(dryJson.confirm_required, true)
+  assert.equal(existsSync(join(root, '.harness', 'projects.json')), false)
+  const confirmed = spawnSync('node', [script, root, '--confirm'], { encoding: 'utf8' })
+  assert.equal(confirmed.status, 0)
+  const confirmedJson = JSON.parse(confirmed.stdout)
+  assert.equal(confirmedJson.mutated, true)
+  assert.ok(existsSync(join(root, '.harness', 'projects.json')))
+  const registry = JSON.parse(readFileSync(join(root, '.harness', 'projects.json'), 'utf8'))
+  assert.ok(registry.projects.some((p) => p.id === 'apps_web' && p.path === 'apps/web'))
 })
 
 test('orphan-claims detects live, ghost, idle, and terminal run states', () => {
@@ -1231,8 +1363,8 @@ test('planWorkerClosedActions infra crash blocks without auto harness repair', (
   assert.equal(plan.emitHarnessIssue?.reason?.includes('Worker exited with code 1'), true)
 })
 
-test('worker-result fences stale invocation and validates verdicts', async () => {
-  const tmp = mkdtempSync(join(tmpdir(), 'worker-result-'))
+test('worker-outcome fences stale invocation and validates verdicts', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'worker-outcome-'))
   const stateFile = join(tmp, 'core.json')
   await writeDurable(stateFile, {
     invocationId: 'inv-a',
@@ -1574,7 +1706,7 @@ test('planAutoRetryResponses queues retry for stalled context inputs only', () =
 })
 
 test('buildHostCommand passes model to pi and agent', async () => {
-  const { buildHostCommand } = await import('../skills/generator/adapters/hosts.mjs')
+  const { buildHostCommand, hostCommands } = await import('../skills/generator/adapters/hosts.mjs')
   assert.deepEqual(
     buildHostCommand('pi', 'do work', 'anthropic/claude-opus-4-8:xhigh'),
     ['pi', ['--model', 'anthropic/claude-opus-4-8:xhigh', '-p', 'do work']],
@@ -1586,6 +1718,17 @@ test('buildHostCommand passes model to pi and agent', async () => {
   assert.deepEqual(
     buildHostCommand('agent', 'do work'),
     ['agent', ['-p', '--force', '--trust', '--sandbox', 'disabled', 'do work']],
+  )
+  // hostCommands and buildHostCommand share one default-model policy for opencode/pi.
+  assert.deepEqual(hostCommands.opencode('do work'), buildHostCommand('opencode', 'do work'))
+  assert.deepEqual(hostCommands.pi('do work'), buildHostCommand('pi', 'do work'))
+  assert.deepEqual(
+    buildHostCommand('opencode', 'do work'),
+    ['opencode', ['run', '--model', 'opencode-go/deepseek-v4-flash', 'do work']],
+  )
+  assert.deepEqual(
+    buildHostCommand('pi', 'do work'),
+    ['pi', ['--model', 'opencode-go/deepseek-v4-flash', '-p', 'do work']],
   )
 })
 
@@ -1728,7 +1871,7 @@ test('coding prompt soft-aligns to grep-only observation methods', async () => {
 })
 
 test('control journal fails closed on corrupt JSONL', async () => {
-  const { readControlEvents, appendControlEvent } = await import('../skills/generator/lib/control-journal.mjs')
+  const { readControlEvents, appendControlEvent } = await import('../skills/supervisor/lib/control-journal.mjs')
   const tmp = mkdtempSync(join(tmpdir(), 'journal-corrupt-'))
   const eventsFile = join(tmp, 'events.jsonl')
   writeFileSync(eventsFile, '{"id":1,"kind":"run_started"}\n{broken\n')
@@ -1745,7 +1888,7 @@ test('control journal fails closed on corrupt JSONL', async () => {
 test('control journal steals dead writer lock instead of timing out', async () => {
   const {
     appendControlEvent, journalLockHolderAlive, journalPaths,
-  } = await import('../skills/generator/lib/control-journal.mjs')
+  } = await import('../skills/supervisor/lib/control-journal.mjs')
   const root = mkdtempSync(join(tmpdir(), 'journal-dead-lock-'))
   const { lock } = journalPaths(root)
   // Impossible PID — holder must be treated as dead and stolen on append.
@@ -1795,6 +1938,33 @@ test('compose-shared refcount keeps infra up for sibling workers', async () => {
   assert.equal(planComposeTeardown({ shareCount: 0 }).mode, 'full_down')
   assert.equal(planComposeTeardown({ shareCount: 1, force: true }).mode, 'full_down')
 
+  const { planSharedRuntimeTeardown } = await import('../skills/generator/lib/compose-shared.mjs')
+  acquireComposeShare(root, 'core', 'a', { pid: process.pid })
+  acquireComposeShare(root, 'core', 'b', { pid: process.pid })
+  const planned = planSharedRuntimeTeardown({
+    commonGit: root,
+    projectId: 'core',
+    context: 'a',
+  })
+  assert.equal(planned.mode, 'app_services_only')
+  assert.equal(planned.remaining, 1)
+  assert.equal(planned.released.lastHolder, false)
+  const last = planSharedRuntimeTeardown({
+    commonGit: root,
+    projectId: 'core',
+    context: 'b',
+  })
+  assert.equal(last.mode, 'full_down')
+  assert.equal(last.remaining, 0)
+  assert.equal(
+    planSharedRuntimeTeardown({ force: true }).mode,
+    'full_down',
+  )
+  assert.equal(
+    planSharedRuntimeTeardown({}).mode,
+    'refused',
+  )
+
   const bad = join(root, 'harness-locks', 'compose-shared.json')
   writeFileSync(bad, '{not-json')
   assert.throws(
@@ -1802,7 +1972,6 @@ test('compose-shared refcount keeps infra up for sibling workers', async () => {
     /compose shared registry unreadable/,
   )
 })
-
 test('composeDown refuses full-down when share state is unknown', async () => {
   const { composeDown } = await import('../skills/generator/lib/worktree-teardown.mjs')
   const root = mkdtempSync(join(tmpdir(), 'compose-down-refuse-'))
@@ -1858,7 +2027,7 @@ test('runtime manifest records exact resources for cleanup', () => {
 test('control journal compaction preserves pending input lineage', async () => {
   const {
     appendControlEvent, readControlEvents, compactControlJournal, deriveSnapshot,
-  } = await import('../skills/generator/lib/control-journal.mjs')
+  } = await import('../skills/supervisor/lib/control-journal.mjs')
   const root = mkdtempSync(join(tmpdir(), 'journal-compact-'))
   for (let i = 0; i < 60; i++) {
     await appendControlEvent(root, { kind: 'progress', workers: i })
@@ -1879,7 +2048,7 @@ test('control journal compaction preserves pending input lineage', async () => {
 test('control journal compaction drops resolved input lineage from snapshot', async () => {
   const {
     appendControlEvent, compactControlJournal, readControlEvents,
-  } = await import('../skills/generator/lib/control-journal.mjs')
+  } = await import('../skills/supervisor/lib/control-journal.mjs')
   const { readFile } = await import('node:fs/promises')
   const root = mkdtempSync(join(tmpdir(), 'journal-resolved-'))
   for (let i = 0; i < 40; i++) {
@@ -1906,7 +2075,7 @@ test('control journal compaction drops resolved input lineage from snapshot', as
 test('control journal maybeCompact gates on cheap metadata', async () => {
   const {
     appendControlEvent, maybeCompactControlJournal, readControlEvents,
-  } = await import('../skills/generator/lib/control-journal.mjs')
+  } = await import('../skills/supervisor/lib/control-journal.mjs')
   const below = mkdtempSync(join(tmpdir(), 'journal-maybe-below-'))
   for (let i = 0; i < 3; i++) {
     await appendControlEvent(below, { kind: 'progress', workers: i })
@@ -1942,7 +2111,7 @@ test('control journal maybeCompact gates on cheap metadata', async () => {
 })
 
 test('state heartbeat escalates after consecutive write failures', async () => {
-  const { startStateHeartbeat } = await import('../skills/generator/lib/state-heartbeat.mjs')
+  const { startStateHeartbeat } = await import('../skills/generator/lib/worker-lifecycle.mjs')
   let calls = 0
   let escalated = 0
   const timer = startStateHeartbeat(
@@ -1966,7 +2135,7 @@ test('state heartbeat escalates after consecutive write failures', async () => {
 test('control journal ignores caller id and keeps latest duplicate', async () => {
   const {
     appendControlEvent, readControlEvents, maxRawEventIdFromText,
-  } = await import('../skills/generator/lib/control-journal.mjs')
+  } = await import('../skills/supervisor/lib/control-journal.mjs')
   const root = mkdtempSync(join(tmpdir(), 'journal-id-'))
   const first = await appendControlEvent(root, { kind: 'worker_started', id: 999, context: 'a' })
   const second = await appendControlEvent(root, { kind: 'input_required', id: first.id, context: 'a', choices: ['retry'] })
@@ -1986,7 +2155,7 @@ test('control journal ignores caller id and keeps latest duplicate', async () =>
 })
 
 test('resource governor prunes dead-pid reservations and reuses context', async () => {
-  const { requestAdmission, observeCapacity, releaseAdmission } = await import('../skills/generator/lib/resource-governor.mjs')
+  const { requestAdmission, observeCapacity, releaseAdmission } = await import('../skills/supervisor/lib/resource-governor.mjs')
   const tmp = mkdtempSync(join(tmpdir(), 'governor-dead-'))
   const commonGit = join(tmp, '.git')
   mkdirSync(join(commonGit, 'harness-governor'), { recursive: true })
@@ -2042,7 +2211,7 @@ test('host resources parse meminfo and expose swap pressure facts', () => {
 })
 
 test('resource governor accounts for weighted reservations', async () => {
-  const { requestAdmission, observeCapacity, releaseAdmission, resourceCost } = await import('../skills/generator/lib/resource-governor.mjs')
+  const { requestAdmission, observeCapacity, releaseAdmission, resourceCost } = await import('../skills/supervisor/lib/resource-governor.mjs')
   const tmp = mkdtempSync(join(tmpdir(), 'governor-weight-'))
   const commonGit = join(tmp, '.git')
   mkdirSync(commonGit, { recursive: true })
@@ -2065,7 +2234,7 @@ test('resource governor accounts for weighted reservations', async () => {
 })
 
 test('resource governor steals dead writer lock before timing out', async () => {
-  const { requestAdmission, releaseAdmission } = await import('../skills/generator/lib/resource-governor.mjs')
+  const { requestAdmission, releaseAdmission } = await import('../skills/supervisor/lib/resource-governor.mjs')
   const tmp = mkdtempSync(join(tmpdir(), 'governor-lock-'))
   const commonGit = join(tmp, '.git')
   const governorDir = join(commonGit, 'harness-governor')
@@ -2087,7 +2256,7 @@ test('resource governor steals dead writer lock before timing out', async () => 
 })
 
 test('resource governor denies admission when full', async () => {
-  const { requestAdmission, observeCapacity, releaseAdmission } = await import('../skills/generator/lib/resource-governor.mjs')
+  const { requestAdmission, observeCapacity, releaseAdmission } = await import('../skills/supervisor/lib/resource-governor.mjs')
   const tmp = mkdtempSync(join(tmpdir(), 'governor-deny-'))
   const commonGit = join(tmp, '.git')
   mkdirSync(commonGit, { recursive: true })
@@ -2114,7 +2283,7 @@ test('resource governor denies admission when full', async () => {
 test('supervisor lease fences stale writers', async () => {
   const {
     acquireSupervisorLease, assertSupervisorLease, updateSupervisorLease, releaseSupervisorLease,
-  } = await import('../skills/generator/lib/supervisor-lease.mjs')
+  } = await import('../skills/supervisor/lib/supervisor-lease.mjs')
   const root = mkdtempSync(join(tmpdir(), 'sup-lease-'))
   const first = await acquireSupervisorLease(root, { token: 'a', pid: process.pid, leaseSeconds: 30 })
   await assertSupervisorLease(root, { token: 'a', fenceGeneration: first.fenceGeneration })
@@ -2161,7 +2330,7 @@ test('evidence artifacts are create-only', async () => {
 })
 
 test('wake triage always wakes on input_required', async () => {
-  const { classify } = await import('../skills/generator/lib/wake-triage.mjs')
+  const { classify } = await import('../skills/supervisor/lib/wake-triage.mjs')
   assert.deepEqual(classify({ kind: 'input_required', scope: 'context', context: 'core' }), {
     action: 'wake', reason: 'input required',
   })
@@ -2171,7 +2340,7 @@ test('wake triage always wakes on input_required', async () => {
 })
 
 test('wake triage folds healthy progress and absorbs heartbeats', async () => {
-  const { classify, shouldWake, foldProgress } = await import('../skills/generator/lib/wake-triage.mjs')
+  const { classify, shouldWake, foldProgress } = await import('../skills/supervisor/lib/wake-triage.mjs')
   const fleet = { workers: 2, counts: { total: 10, integrated: 3, blocked: 0 }, status: 'running' }
   const progress = { id: 1, kind: 'progress', workers: 2, total: 10, integrated: 3, blocked: 0 }
   assert.deepEqual(classify(progress, fleet), { action: 'fold', reason: 'routine progress snapshot' })
@@ -2190,8 +2359,8 @@ test('wake triage folds healthy progress and absorbs heartbeats', async () => {
 })
 
 test('wake triage keeps empty-fleet progress actionable', async () => {
-  const { classify, shouldWake } = await import('../skills/generator/lib/wake-triage.mjs')
-  const { isEmptyFleetActionable, fleetSnapshotFromState } = await import('../skills/generator/lib/fleet-snapshot.mjs')
+  const { classify, shouldWake } = await import('../skills/supervisor/lib/wake-triage.mjs')
+  const { isEmptyFleetActionable, fleetSnapshotFromState } = await import('../skills/supervisor/lib/fleet-snapshot.mjs')
   const fleet = {
     workers: 0,
     counts: { total: 5, integrated: 2, blocked: 1 },
@@ -2222,8 +2391,8 @@ test('wake triage keeps empty-fleet progress actionable', async () => {
 })
 
 test('wake triage wakes on stale Goal Review with integrated queue', async () => {
-  const { classify, shouldWake } = await import('../skills/generator/lib/wake-triage.mjs')
-  const { needsGoalReviewRetry } = await import('../skills/generator/lib/fleet-snapshot.mjs')
+  const { classify, shouldWake } = await import('../skills/supervisor/lib/wake-triage.mjs')
+  const { needsGoalReviewRetry } = await import('../skills/supervisor/lib/fleet-snapshot.mjs')
   const fleet = {
     workers: 0,
     counts: { total: 2, integrated: 2, blocked: 0 },
@@ -2244,7 +2413,7 @@ test('wake triage wakes on stale Goal Review with integrated queue', async () =>
 })
 
 test('wake triage wakes on stuck workers and immediate failures', async () => {
-  const { classify, shouldWake } = await import('../skills/generator/lib/wake-triage.mjs')
+  const { classify, shouldWake } = await import('../skills/supervisor/lib/wake-triage.mjs')
   const stuck = { id: 5, kind: 'worker_stuck', context: 'core' }
   const health = { id: 6, kind: 'worker_health', verdict: 'stuck', context: 'core' }
   assert.deepEqual(classify(stuck), { action: 'wake', reason: 'worker_stuck' })
@@ -2253,8 +2422,8 @@ test('wake triage wakes on stuck workers and immediate failures', async () => {
 })
 
 test('wake triage fleet snapshot from supervisor state', async () => {
-  const { classify } = await import('../skills/generator/lib/wake-triage.mjs')
-  const { fleetSnapshotFromState } = await import('../skills/generator/lib/fleet-snapshot.mjs')
+  const { classify } = await import('../skills/supervisor/lib/wake-triage.mjs')
+  const { fleetSnapshotFromState } = await import('../skills/supervisor/lib/fleet-snapshot.mjs')
   const fleet = fleetSnapshotFromState({
     status: 'running',
     workers: { core: { context: 'core' } },
@@ -2284,7 +2453,7 @@ test('fleet snapshot builds structured multi-project bearings', async () => {
     buildFleetSnapshot,
     buildProjectSnapshot,
     fleetSnapshotFromState,
-  } = await import('../skills/generator/lib/fleet-snapshot.mjs')
+  } = await import('../skills/supervisor/lib/fleet-snapshot.mjs')
   assert.equal(FLEET_SNAPSHOT_SCHEMA, 'harness-fleet-snapshot.v1')
 
   const stateA = {
@@ -2383,7 +2552,9 @@ test('empty fleet emit debounce suppresses only identical recent detail', () => 
 test('tick context computes event-driven delay with poll fallback', () => {
   assert.equal(nextTickDelay({ pollMs: 2000, dirty: true }), 50)
   assert.equal(nextTickDelay({ pollMs: 2000, eventDriven: false, dirty: true }), 2000)
-  assert.ok(tickWatchPaths({ controlRoot: '/c', runsDir: '/r', commonGit: '/g' }).includes('/c/responses'))
+  const watched = tickWatchPaths({ controlRoot: '/c', runsDir: '/r', commonGit: '/g' })
+  assert.ok(watched.includes('/c/responses'))
+  assert.equal(watched.includes('/c'), false)
 })
 
 test('fleet snapshot ops fields derive supervisor, ghosts, and run_completed summary', async () => {
@@ -2393,7 +2564,7 @@ test('fleet snapshot ops fields derive supervisor, ghosts, and run_completed sum
     lastRunCompletedSummaryFromEvents,
     deriveSupervisorLive,
     isEmptyFleetRepaired,
-  } = await import('../skills/generator/lib/fleet-snapshot.mjs')
+  } = await import('../skills/supervisor/lib/fleet-snapshot.mjs')
 
   const events = [
     { id: 1, kind: 'progress' },
@@ -2438,7 +2609,7 @@ test('fleet snapshot ops fields derive supervisor, ghosts, and run_completed sum
 })
 
 test('wake triage hybrid empty-fleet rules absorb repaired actionable events', async () => {
-  const { classify, shouldWake } = await import('../skills/generator/lib/wake-triage.mjs')
+  const { classify, shouldWake } = await import('../skills/supervisor/lib/wake-triage.mjs')
   const fleet = {
     workers: 0,
     counts: { total: 5, integrated: 2, blocked: 1 },
@@ -2511,7 +2682,7 @@ test('observation admission gate maps phase and blocks weak-only validation host
 })
 
 test('buildFleetSnapshot supports multi-project inputs', async () => {
-  const { buildFleetSnapshot } = await import('../skills/generator/lib/fleet-snapshot.mjs')
+  const { buildFleetSnapshot } = await import('../skills/supervisor/lib/fleet-snapshot.mjs')
   const fleet = buildFleetSnapshot({
     projects: [
       {
@@ -2608,7 +2779,7 @@ test('control-beacon blocks soft stop and allows force when authorized', async (
     stopAllowed,
     turnEndDrain,
     DEFAULT_REQUIRED_CONSUMERS,
-  } = await import('../skills/generator/lib/control-beacon.mjs')
+  } = await import('../skills/supervisor/lib/control-beacon.mjs')
 
   const live = beaconSnapshot({
     workers: [{ context: 'core', pid: process.pid, live: true }],
@@ -2657,7 +2828,7 @@ test('control-beacon worker without pid and without live run-state is not live',
     resolveWorkerLive,
     beaconSnapshot,
     stopAllowed,
-  } = await import('../skills/generator/lib/control-beacon.mjs')
+  } = await import('../skills/supervisor/lib/control-beacon.mjs')
 
   const dead = () => false
   const workerRow = { type: 'background', context: 'core' }

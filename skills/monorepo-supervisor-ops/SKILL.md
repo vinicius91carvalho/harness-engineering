@@ -56,7 +56,7 @@ cp -R skills/generator/lib/. ~/.agents/skills/generator/lib/
 cp skills/generator/prompts/feature.mjs ~/.agents/skills/generator/prompts/
 cp skills/generator/orchestrator.mjs ~/.agents/skills/generator/
 cp skills/supervisor/scripts/harness-control.mjs ~/.agents/skills/supervisor/scripts/
-cp skills/supervisor/lib/supervisor-preflight.mjs ~/.agents/skills/supervisor/lib/
+cp -R skills/supervisor/lib/. ~/.agents/skills/supervisor/lib/
 cp skills/supervisor/SKILL.md ~/.agents/skills/supervisor/SKILL.md
 cp skills/monorepo-supervisor-ops/SKILL.md ~/.agents/skills/monorepo-supervisor-ops/SKILL.md
 ```
@@ -67,7 +67,7 @@ slots and gates on `reconcile --check` before admission.
 
 Also document: Control Journal must keep monotonic ids (`journal-meta.json`); Resource Governor must prune dead-pid reservations and reuse same-context admissions so orchestrators do not double-book slots.
 
-Recycle orchestrators (`SIGTERM`) so new spawn/stream/prompt code loads.
+Recycle orchestrators (`SIGTERM`) so new spawn/prompt code loads.
 kill -9 on old supervisors so their `stop()` path does not interrupt live workers.
 Use guarded harness-control fleet commands instead of raw `kill`/`rm`:
 
@@ -143,12 +143,11 @@ When `fleetSnapshot.emptyFleetActionable` or `capacity.limit=0` with no spawns:
    node "$CONTROL" resume --repo "$REPO"
    ```
 3. **Capacity 0 from load/RAM** — Docker `--no-cache` builds spike load above
-   `maxLoadRatio`; wait for build to finish. Free RAM: kill orphan `tsx`/`node`
-   APIs left in finished worktrees (not the active AC worktree). Prefer
-   `kill-worker --force true` / operator `stop` — both now run programmatic
-   worktree teardown (`./init.sh stop` when present, then `.harness/app.pid`,
-   worktree-scoped `next`/`tsx`, `docker compose down --remove-orphans`) via
-   `worktree-teardown.mjs`, not browser cleanup alone.
+   `maxLoadRatio`; wait for build to finish.
+   Free RAM: kill orphan `tsx`/`node` APIs left in finished worktrees (not the active AC worktree).
+   Prefer `kill-worker --force true` / operator `stop` — both run
+   `cleanupWorktreeRuntime` → `stopWorktreeApp` (see generator `RESOURCE_CLEANUP_RULE`),
+   not browser cleanup alone.
 4. **Sibling holds host-wide Resource Governor slots** — `capacity.available=0`
    while this project's `workers={}` but `capacity.state.reservations` shows other
    subprojects (or a zombie idle-shell worker still reserved). Check
@@ -165,13 +164,12 @@ When `fleetSnapshot.emptyFleetActionable` or `capacity.limit=0` with no spawns:
 
    **Concrete CauseFlow pattern (2026-07-11):** core Run State `resuming` /
    `phase: qa` for WI-AC-060 with `workers={}` while web dashboard held two
-   `next-server` processes (~GB each) → `capacity.memory.slots=0`. Fix: 
-   `kill-worker --repo …/web --context dashboard --force true` (teardown runs
-   `./init.sh stop` then `.harness/app.pid` / next), seed core `retryQueue` with
-   evidence-backed QA guidance, confirm core admits, leave web OSS worker if
-   capacity allows, let dashboard re-admit after core progresses. Narrating
-   "web healthy, core idle"
-   without this step is a supervisor defect.
+   `next-server` processes (~GB each) → `capacity.memory.slots=0`.
+   Fix: `kill-worker --repo …/web --context dashboard --force true`
+   (teardown via `stopWorktreeApp` / `RESOURCE_CLEANUP_RULE`),
+   seed core `retryQueue` with evidence-backed QA guidance, confirm core admits,
+   leave web OSS worker if capacity allows, let dashboard re-admit after core progresses.
+   Narrating "web healthy, core idle" without this step is a supervisor defect.
 
    **Goal Review leftovers (2026-07-11 web):** after `goal:false` reopens WIs,
    website/dashboard `next-server` / `next dev` on the **integration checkout**
@@ -322,7 +320,7 @@ compose `build.args`, and gates on curl against the **compose image** (not
 | Goal review exits with code 1 | Often merge lock wait — not a product failure |
 | Memory pressure / `Session terminated` | Lower `--max-workers` / `--memory-per-worker-mb`; kill heavy mint/docker leftovers |
 | `capacity.limit=0` + high load | Docker build or CPU spike — wait; do not thrash recycles |
-| Many `docker ps` leftovers after WIs finish | Workers must tear down what they started (generator RESOURCE_CLEANUP_RULE). Shared infra (postgres/redis/hindsight) is ref-counted via `compose-shared.mjs` — last holder may `compose down`; siblings only stop/rm app services. Supervisor `kill-worker` / `workerClosed` / operator `stop` run `cleanupWorktreeRuntime`. Stop orphans not owned by a live holder; keep stacks a running context still needs. Harden prompts/skills same turn. |
+| Many `docker ps` leftovers after WIs finish | Workers must tear down what they started (generator `RESOURCE_CLEANUP_RULE` / `stopWorktreeApp`). Shared infra is ref-counted via `compose-shared.mjs`. Supervisor `kill-worker` / `workerClosed` / operator `stop` run `cleanupWorktreeRuntime`. Stop orphans not owned by a live holder; harden prompts/skills same turn. |
 | RAM exhausted while many compose stacks up | Prefer reuse: one shared infra stack per project, rebuild only api/worker/dashboard under test. Do not admit more workers until `capacity.available>=1` and `docker stats` shows headroom. Pause lower-priority siblings (Hard rule 13). |
 | Blocker idle, sibling `next-server` huge RSS | Hard rule 13: kill/pause lower-priority sibling (web dashboard before core QA), admit blocker, update workflow if the playbook was missing. |
 
@@ -335,7 +333,7 @@ Workers always run in the background. Monitor through:
 - Worker logs under `.git/harness-control/<project>/logs/`
 - Evidence Artifacts under `.git/harness-evidence/` (pass/fail truth)
 
-**Fleet Snapshot** (`skills/generator/lib/fleet-snapshot.mjs`, schema `harness-fleet-snapshot.v1`):
+**Fleet Snapshot** (`skills/supervisor/lib/fleet-snapshot.mjs`, schema `harness-fleet-snapshot.v1`):
 cross-project bearings for monorepo recovery — journal tips, capacity/slots,
 active workers, stuck, pending inputs, ops fields (`supervisorLive`,
 `ghostClaims`, `emptyFleetActionable`, `needsGoalReviewRetry`,
@@ -363,7 +361,7 @@ node "$CONTROL" fleet-snapshot --repo /path/to/monorepo/<subproject-or-root>
 
 Hybrid Empty-Fleet Recovery on each supervisor tick owns ghost claims, dead locks,
 and re-admit.
-Tail worker logs only for `workerHealth=stuck` judgment or stream smoke checks —
+Tail worker logs only for `workerHealth=stuck` judgment or log smoke checks —
 not as the primary empty-fleet detector.
 
 When a worker needs inspection, tail its log:
@@ -380,13 +378,12 @@ fleet-snapshot is unavailable:
 
 | `workerHealth[].verdict` | Meaning |
 |---|---|
-| `healthy` | thinking/tools or log advancing |
-| `waiting_expected` | merge lock (holder alive) or MCP warmup under budget |
-| `stuck` | recycle candidate — no agent output / verdict hang / dead lock holder |
-| `done` | terminal run state — clear worker row on next tick |
+| `healthy` | log/heartbeat fresh |
+| `stuck` | recycle candidate - stale log/heartbeat |
 
-**Never recycle** `waiting_expected` merge_lock when `mergeLock.holderAlive=true`,
-or MCP warmup still under budget. Act on `stuck` only.
+Act on `stuck` only.
+Judge liveness from worker logs under `.git/harness-control/<project>/logs/`,
+not from visible panes.
 
 ### Check final verification evidence logs (mandatory)
 
@@ -417,21 +414,19 @@ Worker log tails are for liveness; evidence logs are for pass/fail truth.
 After `agent: harness verdict received`, hosts SIGTERM the nested agent.
 `childPid` dies while `ownerPid` (orchestrator) is still writing the ledger.
 Do **not** treat that as an orphan shell or recycle the worker.
-Code: `orphanShell` requires `!ownerAlive`; `detectPaneOrchestratorExited` returns
-false when the recent tail contains `harness verdict received`.
+Code: `orphanShell` requires `!ownerAlive`.
+If the recent worker log tail contains `harness verdict received`, leave the owner alone.
 If you recycle mid-apply, INTEGRATION_QA / Goal Review flags never stick.
 
 ### Known false stuck: stale `lastAgentOutputAt`
 
 After a resume, Run State may still carry `lastAgentOutputAt` from a prior
-invocation (hours old). That makes `mcp_warmup` look instantly overdue and
-recycles healthy workers into the crash bound.
+invocation (hours old), which can make a fresh worker look stuck.
 
 Mitigations (must stay in code):
 - Supervisor ignores `lastAgentOutputAt` older than the current worker `startedAt`.
 - Orchestrator clears `lastAgentOutputAt` on each new invocation.
-- Treat `waiting_expected` + `MCP/plugin warmup before first token` as healthy
-  for up to the warmup budget (~90s).
+- Prefer the worker log under `.git/harness-control/<project>/logs/` over a single stale timestamp.
 
 ### Control Journal / respond / governor (2026-07-10)
 
@@ -443,18 +438,19 @@ Mitigations (must stay in code):
 - Supervisor passes `HARNESS_*` capacity env + `HARNESS_GOVERNOR_RESERVATION`
   into background workers. Fleet recovery flags are `--force true` (key/value).
 
-### Log stream smoke check (after spawn / on 10-min pass)
+### Worker log smoke check (after spawn / on 10-min pass)
 
-Within ~60s of `CODING → …` / `agent: started`, the worker log must show agent
-activity (`thinking:` / `tool →` / host stream), not only orchestrator banners.
+Within ~60s of `CODING → …` / `agent: started`, the worker log under
+`.git/harness-control/<project>/logs/` must show agent activity
+(`thinking:` / `tool →` / host output), not only orchestrator banners.
 
 | Log tail | Action |
 |---|---|
-| `thinking:` / `tool →` advancing | Healthy — leave alone |
-| Only `orchestrator: …` / `CODING → …` for >60s, no agent stream | Stream/spawn broken — check roles + worker log under `.git/harness-control/`; recycle with `--host agent` + composer-2.5 |
-| `HARNESS-VERDICT` then only `agent: still working` | Hung after verdict — SIGTERM agent/orchestrator; recycle with host agent + composer-2.5 |
-| Empty after `CODING → agent` (no `agent: started`) | Stream/spawn broken — check roles + stream-json; recycle |
-| `waiting for merge lock (holder pid=…)` | Expected idle — watch holder log |
+| `thinking:` / `tool →` advancing | Healthy - leave alone |
+| Only `orchestrator: …` / `CODING → …` for >60s, no agent output | Spawn/host broken - check roles + worker log; recycle with `--host agent` + composer-2.5 |
+| `HARNESS-VERDICT` then only `agent: still working` | Hung after verdict - SIGTERM agent/orchestrator; recycle with host agent + composer-2.5 |
+| Empty after `CODING → agent` (no `agent: started`) | Spawn/host broken - check roles + worker log; recycle |
+| `waiting for merge lock (holder pid=…)` | Expected idle - watch holder log |
 | Rate/usage limit spam | Clear quota pause after cooldown; keep host agent + composer-2.5 |
 
 **Every ~20 minutes — fleet status:** run `fleet-snapshot` (or per-subproject

@@ -46,7 +46,12 @@ grep -Fq 'by asking “grill me.”' "$HTML"
 grep -Fq 'does not require a generator run' "$README"
 grep -Fq 'does not validate every feature' "$HTML"
 grep -Fq 'No coding tool launches and no Acceptance Check runs' "$HTML"
-grep -Fq 'false queue flags mean “not yet proved,” not “the application is broken.”' "$HTML"
+grep -Fq 'false Execution Ledger proofs' "$HTML"
+grep -Fq 'mean “not yet proved,” not “the application is broken.”' "$HTML"
+grep -Fq 'Older docs called these queue flags.' "$HTML"
+grep -Fq 'Execution Ledger records' "$HTML"
+grep -Fq 'opaque consumer id' "$HTML"
+grep -Fq 'journal consumer name, not a UI' "$HTML"
 grep -Fq 'Other mapped Work Items stay untouched' "$HTML"
 grep -Fq 'Add reversible note archiving' "$HTML"
 grep -Fq '* `implementation` means coding completed.' "$README"
@@ -108,6 +113,11 @@ grep -Fq 'Then type these in your coding tool' "$README"
 # Install contract: release tags, not main tip
 grep -Fq 'latest GitHub Release tag' "$README"
 grep -Fq 'latest GitHub Release tag' "$HTML"
+
+# v3 clean break surfaced on README and site
+grep -Fq 'v3.0 is a clean break' "$README"
+grep -Fq 'v3.0 is a clean break' "$HTML"
+grep -Fq 'Confirm is required before mutation' "$HTML"
 
 # README file structure examples
 grep -Fq 'id="AC-001"' "$README"

@@ -1,18 +1,24 @@
 #!/usr/bin/env node
 /**
- * Catalog-driven install reconciliation: validate marketplaces, project bundles, receipts.
+ * Catalog-driven install reconciliation: generate/validate marketplaces, project bundles, receipts.
  *
  * Usage:
  *   node scripts/install-reconcile.mjs validate
+ *   node scripts/install-reconcile.mjs generate-marketplaces
+ *   node scripts/install-reconcile.mjs sync-agent-docs
+ *   node scripts/install-reconcile.mjs generate
  *   node scripts/install-reconcile.mjs optional-ids
  *   node scripts/install-reconcile.mjs hosts <moduleId>
+ *   node scripts/install-reconcile.mjs scopes <moduleId>
+ *   node scripts/install-reconcile.mjs skills-add-args <moduleId>
  *   node scripts/install-reconcile.mjs describe <moduleId>
+ *   node scripts/install-reconcile.mjs resolve-install-bases <scope> [projectDir]
  *   node scripts/install-reconcile.mjs project-bundle <moduleId> <destDir> [--dry-run]
  *   node scripts/install-reconcile.mjs project-harness-opencode <repoDir> <opencodeBase> [--dry-run]
  *   node scripts/install-reconcile.mjs project-agent <moduleId> <repoDir> <destDir> [--dry-run]
  *   node scripts/install-reconcile.mjs record-receipt <receiptDir> <moduleId> <json>
  */
-import { readFile, writeFile, mkdir, cp, readdir, rm, stat } from 'node:fs/promises'
+import { readFile, writeFile, mkdir, cp, readdir, rm, stat, symlink } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -54,8 +60,48 @@ export function hostsForModule(catalog, id) {
   return moduleById(catalog, id).hosts || []
 }
 
+export function scopesForModule(catalog, id) {
+  const scopes = moduleById(catalog, id).scopes
+  return Array.isArray(scopes) && scopes.length ? scopes : ['user', 'project']
+}
+
 export function descriptionForModule(catalog, id) {
   return moduleById(catalog, id).description || ''
+}
+
+/** Resolve catalog acquisition.skills into argv fragments for `npx skills add`. */
+export function skillsAddArgs(catalog, id) {
+  const mod = moduleById(catalog, id)
+  const skills = mod.acquisition?.skills
+  if (!skills?.repo || !skills?.name) {
+    throw new Error(`module ${id} has no acquisition.skills.{repo,name}`)
+  }
+  return {
+    repo: skills.repo,
+    skill: skills.name,
+    globalWhenUserScope: skills.globalWhenUserScope !== false,
+  }
+}
+
+export function resolveInstallBases(scope, projectDir = '', home = process.env.HOME || '', xdgConfigHome = process.env.XDG_CONFIG_HOME || '') {
+  if (scope !== 'user' && scope !== 'project' && scope !== 'local') {
+    throw new Error(`invalid scope: ${scope}`)
+  }
+  const project = scope === 'project'
+  if (project && !projectDir) throw new Error('project scope requires projectDir')
+  const configHome = xdgConfigHome || join(home, '.config')
+  return {
+    scope,
+    projectDir: project ? resolve(projectDir) : '',
+    opencode: project ? join(resolve(projectDir), '.opencode') : join(configHome, 'opencode'),
+    agentsSkills: project ? join(resolve(projectDir), '.agents', 'skills') : join(home, '.agents', 'skills'),
+    claudeSkills: project ? join(resolve(projectDir), '.claude', 'skills') : join(home, '.claude', 'skills'),
+    cursorSkills: project ? join(resolve(projectDir), '.cursor', 'skills') : join(home, '.cursor', 'skills'),
+    cursorPluginsLocal: project
+      ? join(resolve(projectDir), '.cursor', 'plugins', 'local')
+      : join(home, '.cursor', 'plugins', 'local'),
+    cursorMcp: project ? join(resolve(projectDir), '.cursor', 'mcp.json') : join(home, '.cursor', 'mcp.json'),
+  }
 }
 
 function expectedSource(mod, host) {
@@ -92,6 +138,145 @@ function pluginSourceMatches(entry, expected) {
   return false
 }
 
+function withTrailingSlash(path) {
+  return path.endsWith('/') ? path : `${path}/`
+}
+
+function marketplacePluginEntry(mod, host) {
+  const expected = expectedSource(mod, host)
+  if (!expected) {
+    throw new Error(`cannot project marketplace source for ${mod.id} on ${host}`)
+  }
+
+  if (host === 'codex') {
+    let source
+    if (expected.kind === 'local') {
+      source = { source: 'local', path: expected.path }
+    } else if (expected.kind === 'relative') {
+      source = { source: 'local', path: withTrailingSlash(expected.path) }
+    } else if (expected.kind === 'github') {
+      source = { source: 'github', repo: expected.repo }
+    } else {
+      throw new Error(`unsupported marketplace source kind ${expected.kind} for ${mod.id} on ${host}`)
+    }
+    return {
+      name: mod.id,
+      source,
+      policy: { installation: 'AVAILABLE', authentication: 'ON_INSTALL' },
+      category: 'Productivity',
+    }
+  }
+
+  if (expected.kind === 'relative' || expected.kind === 'local') {
+    return { name: mod.id, source: expected.path }
+  }
+  if (expected.kind === 'github') {
+    return { name: mod.id, source: { source: 'github', repo: expected.repo } }
+  }
+  throw new Error(`unsupported marketplace source kind ${expected.kind} for ${mod.id} on ${host}`)
+}
+
+export function buildMarketplaceDocument(catalog, host) {
+  const rule = MARKETPLACE_HOSTS[host]
+  if (!rule) throw new Error(`unknown marketplace host: ${host}`)
+  const byId = new Map(catalog.modules.map((row) => [row.id, row]))
+  const plugins = rule.plugins.map((id) => {
+    const mod = byId.get(id)
+    if (!mod) throw new Error(`catalog missing module ${id} required by ${host} marketplace`)
+    return marketplacePluginEntry(mod, host)
+  })
+
+  if (host === 'codex') {
+    return {
+      name: 'harness-engineering',
+      interface: { displayName: 'Harness Engineering' },
+      plugins,
+    }
+  }
+
+  return {
+    name: 'harness-engineering',
+    owner: { name: 'Vinicius Carvalho' },
+    plugins,
+  }
+}
+
+function serializeMarketplace(doc) {
+  return `${JSON.stringify(doc, null, 2)}\n`
+}
+
+export async function generateMarketplaces(repo = root) {
+  const catalog = await loadCatalog(repo)
+  const written = []
+  for (const host of Object.keys(MARKETPLACE_HOSTS)) {
+    const rule = MARKETPLACE_HOSTS[host]
+    const doc = buildMarketplaceDocument(catalog, host)
+    const file = join(repo, rule.file)
+    await mkdir(dirname(file), { recursive: true })
+    await writeFile(file, serializeMarketplace(doc))
+    written.push(rule.file)
+  }
+  return written
+}
+
+const AGENTS_CANONICAL_NOTE =
+  '> **Canonical agent guidance.** `AGENTS.md` is the source of truth. `CLAUDE.md` is generated by `node scripts/install-reconcile.mjs sync-agent-docs` - do not hand-edit `CLAUDE.md`.'
+
+const CLAUDE_GENERATED_NOTE =
+  '> **Generated from `AGENTS.md`.** Do not hand-edit. Regenerate with `node scripts/install-reconcile.mjs sync-agent-docs`.'
+
+export function projectClaudeFromAgents(agentsText) {
+  let text = agentsText
+  if (text.startsWith('# AGENTS.md\n')) {
+    text = `# CLAUDE.md\n${text.slice('# AGENTS.md\n'.length)}`
+  } else {
+    text = text.replace(/^# AGENTS\.md\s*$/m, '# CLAUDE.md')
+  }
+  if (text.includes(AGENTS_CANONICAL_NOTE)) {
+    text = text.replace(AGENTS_CANONICAL_NOTE, CLAUDE_GENERATED_NOTE)
+  } else if (text.includes(CLAUDE_GENERATED_NOTE)) {
+    // already projected
+  } else {
+    // Insert generated note after the H1 when AGENTS lacks the canonical banner.
+    text = text.replace(/^# CLAUDE\.md\n/, `# CLAUDE.md\n\n${CLAUDE_GENERATED_NOTE}\n`)
+  }
+  return text
+}
+
+export async function syncAgentDocs(repo = root) {
+  const agentsPath = join(repo, 'AGENTS.md')
+  const claudePath = join(repo, 'CLAUDE.md')
+  if (!existsSync(agentsPath)) throw new Error('missing AGENTS.md')
+  const agents = await readFile(agentsPath, 'utf8')
+  const claude = projectClaudeFromAgents(agents)
+  await writeFile(claudePath, claude)
+  return { agents: 'AGENTS.md', claude: 'CLAUDE.md' }
+}
+
+export async function validateAgentDocs(repo = root) {
+  const errors = []
+  const agentsPath = join(repo, 'AGENTS.md')
+  const claudePath = join(repo, 'CLAUDE.md')
+  if (!existsSync(agentsPath)) {
+    errors.push('missing AGENTS.md')
+    return errors
+  }
+  if (!existsSync(claudePath)) {
+    errors.push('missing CLAUDE.md')
+    return errors
+  }
+  const agents = await readFile(agentsPath, 'utf8')
+  const claude = await readFile(claudePath, 'utf8')
+  const expected = projectClaudeFromAgents(agents)
+  if (claude !== expected) {
+    errors.push('CLAUDE.md does not match projection from AGENTS.md; run sync-agent-docs')
+  }
+  if (!agents.includes(AGENTS_CANONICAL_NOTE) && !agents.includes('Canonical agent guidance')) {
+    errors.push('AGENTS.md must declare that it is canonical and CLAUDE.md is generated')
+  }
+  return errors
+}
+
 export async function validateMarketplaces(repo = root) {
   const catalog = await loadCatalog(repo)
   const byId = new Map(catalog.modules.map((row) => [row.id, row]))
@@ -103,7 +288,20 @@ export async function validateMarketplaces(repo = root) {
       errors.push(`missing marketplace file: ${rule.file}`)
       continue
     }
-    const marketplace = JSON.parse(await readFile(file, 'utf8'))
+    const onDisk = await readFile(file, 'utf8')
+    let expectedDoc
+    try {
+      expectedDoc = buildMarketplaceDocument(catalog, host)
+    } catch (err) {
+      errors.push(`${rule.file}: ${err.message || err}`)
+      continue
+    }
+    const expectedText = serializeMarketplace(expectedDoc)
+    if (onDisk !== expectedText) {
+      errors.push(`${rule.file} does not match catalog generation; run generate-marketplaces`)
+    }
+
+    const marketplace = JSON.parse(onDisk)
     const plugins = marketplace.plugins || []
     const names = plugins.map((row) => row.name)
 
@@ -154,6 +352,13 @@ export async function validateMarketplaces(repo = root) {
   }
 
   return errors
+}
+
+export async function validate(repo = root) {
+  return [
+    ...(await validateMarketplaces(repo)),
+    ...(await validateAgentDocs(repo)),
+  ]
 }
 
 async function listFiles(dir, base = dir) {
@@ -259,6 +464,14 @@ export async function projectHarnessOpenCode(repo, opencodeBase, { dryRun = fals
     const info = await stat(row.from)
     if (info.isDirectory()) await cp(row.from, row.to, { recursive: true })
     else await cp(row.from, row.to)
+  }
+  for (const skill of ['generator', 'supervisor']) {
+    const namespaced = join(opencodeBase, 'skills', `${prefix}-${skill}`)
+    const alias = join(opencodeBase, 'skills', skill)
+    if (existsSync(namespaced)) {
+      try { await rm(alias, { force: true, recursive: true }) } catch {}
+      await symlink(`${prefix}-${skill}`, alias)
+    }
   }
   for (const stale of previous.filter((f) => !current.includes(f))) {
     try { await rm(join(opencodeBase, stale), { force: true, recursive: true }) } catch {}
@@ -427,7 +640,7 @@ async function main() {
   const positional = args.filter((arg) => arg !== '--dry-run')
 
   if (!cmd || cmd === 'help' || cmd === '--help') {
-    console.error('usage: install-reconcile.mjs <validate|optional-ids|hosts|describe|project-bundle|project-harness-opencode|project-agent|record-receipt> ...')
+    console.error('usage: install-reconcile.mjs <validate|generate-marketplaces|sync-agent-docs|generate|optional-ids|hosts|scopes|skills-add-args|describe|resolve-install-bases|project-bundle|project-harness-opencode|project-agent|record-receipt> ...')
     process.exit(cmd ? 0 : 2)
   }
 
@@ -435,12 +648,28 @@ async function main() {
 
   switch (cmd) {
     case 'validate': {
-      const errors = await validateMarketplaces()
+      const errors = await validate()
       if (errors.length) {
         for (const err of errors) console.error(`catalog validate: ${err}`)
         process.exit(1)
       }
-      console.log('ok - install catalog and marketplaces are aligned')
+      console.log('ok - install catalog, marketplaces, and agent docs are aligned')
+      break
+    }
+    case 'generate-marketplaces': {
+      const written = await generateMarketplaces()
+      console.log(`ok - wrote ${written.join(' ')}`)
+      break
+    }
+    case 'sync-agent-docs': {
+      const result = await syncAgentDocs()
+      console.log(`ok - wrote ${result.claude} from ${result.agents}`)
+      break
+    }
+    case 'generate': {
+      const written = await generateMarketplaces()
+      const docs = await syncAgentDocs()
+      console.log(`ok - wrote ${written.join(' ')} and ${docs.claude}`)
       break
     }
     case 'optional-ids': {
@@ -454,6 +683,33 @@ async function main() {
         process.exit(2)
       }
       console.log(hostsForModule(catalog, id).join(' '))
+      break
+    }
+    case 'scopes': {
+      const id = positional[0]
+      if (!id) {
+        console.error('usage: install-reconcile.mjs scopes <moduleId>')
+        process.exit(2)
+      }
+      console.log(scopesForModule(catalog, id).join(' '))
+      break
+    }
+    case 'skills-add-args': {
+      const id = positional[0]
+      if (!id) {
+        console.error('usage: install-reconcile.mjs skills-add-args <moduleId>')
+        process.exit(2)
+      }
+      console.log(JSON.stringify(skillsAddArgs(catalog, id)))
+      break
+    }
+    case 'resolve-install-bases': {
+      const [scope, projectDir = ''] = positional
+      if (!scope) {
+        console.error('usage: install-reconcile.mjs resolve-install-bases <scope> [projectDir]')
+        process.exit(2)
+      }
+      console.log(JSON.stringify(resolveInstallBases(scope, projectDir)))
       break
     }
     case 'describe': {

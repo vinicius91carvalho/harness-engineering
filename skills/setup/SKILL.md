@@ -16,27 +16,54 @@ user to rerun `/harness:setup` without arguments. Use `planner` for a new goal.
 ## Resolve monorepo projects first
 
 Treat the Git top-level and the harness project root as separate directories. At
-the Git top-level, detect project boundaries from workspace manifests, nested
-package/build manifests, Compose services, deployment units, and architecture
-docs. Do not treat dependency packages as projects unless they have an independently
-runnable or deployable product boundary.
+the Git top-level, detect project boundaries with the checked-in heuristic module
+(do not hand-roll JSON from memory):
 
-When more than one project exists, create or update `.harness/projects.json` at
-the Git top-level:
-
-```json
-{"projects":[{"id":"frontend","path":"apps/frontend","description":"Customer web application"}]}
+```bash
+node <this-skill>/lib/detect-boundaries.mjs "$GIT_ROOT"
 ```
 
+That command is **candidates-only** by default: it prints discovered boundaries
+but does **not** write `.harness/projects.json`. Workspace globs and
+`pnpm-workspace.yaml` entries are not treated as projects until you confirm them.
+
+The algorithm looks for `package.json` workspaces, `pnpm-workspace.yaml`,
+Compose files, `apps|packages|services/*` runnable manifests, and any existing
+`.harness/projects.json`. Do not treat dependency packages as projects unless they
+have an independently runnable or deployable product boundary (a manifest such as
+`package.json` with a real product surface, `project_specs.xml`, etc.).
+
+Explain the discovered candidates, ask which project(s) to set up, then register
+only the selected projects. To bulk-upsert every detected candidate after explicit
+user confirmation, use:
+
+```bash
+node <this-skill>/lib/detect-boundaries.mjs "$GIT_ROOT" --confirm
+```
+
+(`HARNESS_CONFIRM_BOUNDARIES=1` is equivalent.) Otherwise register selected
+projects through the sole writer API (never hand-edit `.harness/projects.json`):
+
+```bash
+node -e '
+import { resolveGitRoot, upsertProject } from "<generator-skill>/lib/project-topology.mjs"
+const gitRoot = resolveGitRoot(process.cwd())
+upsertProject(gitRoot, { id: "frontend", path: "apps/frontend", description: "Customer web application" })
+'
+```
+
+`spec-review.mjs finalize` also calls this writer after a successful review.
 Paths are Git-root-relative directories; IDs are stable and unique. Preserve
 existing entries and descriptions. Explain the discovered projects, then ask
 which project(s) to set up.
 
-Writing `.harness/projects.json` is a hard precondition, not an aside: after
-detecting the boundaries and before running any per-`PROJECT` step, write or
-update the registry at the Git top-level, then confirm the file exists and lists
-every selected project. Do not proceed to the numbered steps otherwise. This file
-is the required routing metadata — the planner and generator cannot route a goal
+Writing `.harness/projects.json` via `upsertProject` (or `detect-boundaries.mjs
+--confirm` after user approval) is a hard precondition, not an aside: after
+detecting candidates, confirming which boundaries are real projects, and before
+running any per-`PROJECT` step, upsert every selected project at the Git
+top-level, then confirm the file exists and lists them. Do not proceed to the
+numbered steps otherwise. This file
+is the required routing metadata - the planner and generator cannot route a goal
 to the right project without it.
 
 Then run every remaining step separately with each selected project directory as

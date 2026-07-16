@@ -20,20 +20,26 @@ ASSUME=""
 DRY=""
 CLI_REQUEST=""
 SCOPE=""
+SCOPE_EXPLICIT=""
+PROJECT_DIR=""
 TEMP_REPO=""
 OWN_TEMP_REPO=""
 VERSION=${VERSION:-${HARNESS_INSTALL_REF:-}}
+USER_ONLY_MODULES="status-line shared-config"
 
 usage() {
   cat <<'EOF'
 Usage: install.sh [--yes|--no] [--dry-run]
                   [--version <tag>|--version=<tag>]
                   [--cli claude|codex|opencode|pi|agent|all]
-                  [--scope user|project|local]
+                  [--scope user|project|local] [--project-dir <path>]
+                  [--user|--project|--local]
 
 --yes/--no choose checklist contents; --cli chooses target hosts.
 --version pins the GitHub release tag to stage (e.g. v2.0.0); default is latest.
---scope is valid only when Claude Code is the sole target.
+--scope user installs to per-user host directories; project installs under
+--project-dir (default: current directory); local is Claude-only.
+User-only extras (status-line, shared-config) are skipped for project scope.
 EOF
 }
 
@@ -49,11 +55,13 @@ while [ "$#" -gt 0 ]; do
     --dry-run) DRY=1 ;;
     --cli=*) CLI_REQUEST=${1#*=} ;;
     --cli) shift; [ "$#" -gt 0 ] || die '--cli requires a value'; CLI_REQUEST=$1 ;;
-    --scope=*) SCOPE=${1#*=} ;;
-    --scope) shift; [ "$#" -gt 0 ] || die '--scope requires a value'; SCOPE=$1 ;;
-    --user) SCOPE=user ;;
-    --project) SCOPE=project ;;
-    --local) SCOPE=local ;;
+    --scope=*) SCOPE=${1#*=}; SCOPE_EXPLICIT=1 ;;
+    --scope) shift; [ "$#" -gt 0 ] || die '--scope requires a value'; SCOPE=$1; SCOPE_EXPLICIT=1 ;;
+    --project-dir=*) PROJECT_DIR=${1#*=} ;;
+    --project-dir) shift; [ "$#" -gt 0 ] || die '--project-dir requires a value'; PROJECT_DIR=$1 ;;
+    --user) SCOPE=user; SCOPE_EXPLICIT=1 ;;
+    --project) SCOPE=project; SCOPE_EXPLICIT=1 ;;
+    --local) SCOPE=local; SCOPE_EXPLICIT=1 ;;
     --version=*) VERSION=${1#*=} ;;
     --version) shift; [ "$#" -gt 0 ] || die '--version requires a value'; VERSION=$1 ;;
     -h|--help) usage; exit 0 ;;
@@ -120,9 +128,12 @@ menu_item_blurb() {
     host:pi) printf '%s' "Pi CLI for headless agent workflows." ;;
     host:agent) printf '%s' "Cursor Agent CLI for headless workflows in Cursor." ;;
     host:all) printf '%s' "Install to every detected host above." ;;
+    scope:user) printf '%s' "Install into per-user host directories (global for this account)." ;;
+    scope:project) printf '%s' "Install into a specific project folder (skills, plugins, MCP under that repo)." ;;
+    scope:local) printf '%s' "Claude-only: plugin scope local (.claude/settings.local.json)." ;;
     install:harness) printf '%s' "Spec→build→QA pipeline with planner, generator, evaluator, supervisor, learning loop, and project backup." ;;
-    install:hallmark) printf '%s' "Anti-AI-slop design skill. Installs the hallmark skill globally via npx skills." ;;
-    install:no-mistakes) printf '%s' "Git push gate with AI validation. Installs the upstream binary; run no-mistakes init per repository afterward." ;;
+    install:hallmark) printf '%s' "Anti-AI-slop design skill via npx skills (-g for user/global scope; project dir without -g)." ;;
+    install:no-mistakes) printf '%s' "Git push gate with AI validation. Installs the upstream binary; project scope also runs no-mistakes init in the project." ;;
     install:treehouse) printf '%s' "Reusable git worktree pool for agents. Installs the upstream treehouse CLI." ;;
     install:skill-creator) printf '%s' "Multi-agent pipeline to create, evaluate, benchmark, and refine AI coding skills." ;;
     install:playwright) printf '%s' "Browser automation and E2E testing through Microsoft official Playwright MCP server." ;;
@@ -246,8 +257,82 @@ select_cli() {
 }
 select_cli
 
-if [ -n "$SCOPE" ] && [ "$CLI" != claude ]; then die '--scope is only valid when Claude is the sole selected host'; fi
-[ -n "$SCOPE" ] || SCOPE=user
+resolve_project_dir() {
+  candidate=${PROJECT_DIR:-$(pwd)}
+  [ -d "$candidate" ] || die "project scope requires an existing directory (use --project-dir or run from the project root)"
+  PROJECT_DIR=$(CDPATH= cd -- "$candidate" && pwd) || die "could not resolve project directory: $candidate"
+}
+
+select_scope() {
+  if [ -n "$SCOPE_EXPLICIT" ]; then
+    if [ "$SCOPE" = local ] && [ "$CLI" != claude ]; then
+      die '--scope local is only valid when Claude is the sole selected host'
+    fi
+    return
+  fi
+  if [ -n "$ASSUME" ] || ! tty_available; then
+    SCOPE=user
+    return
+  fi
+  items='user project'
+  [ "$CLI" = claude ] && items='user project local'
+  MENU_MODE=single; MENU_TITLE='Select install scope:'; MENU_ITEMS=$items; MENU_CHECKED=; MENU_LABEL_KIND=scope
+  select_menu
+  SCOPE=$MENU_RESULT
+}
+select_scope
+if [ "$SCOPE" = project ]; then
+  resolve_project_dir
+  echo "install.sh: project scope → $PROJECT_DIR"
+elif [ -n "$PROJECT_DIR" ]; then
+  die '--project-dir is only valid with --scope project'
+fi
+
+opencode_base() {
+  if [ "$SCOPE" = project ]; then printf '%s\n' "$PROJECT_DIR/.opencode"
+  else printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+  fi
+}
+
+agents_skills_root() {
+  if [ "$SCOPE" = project ]; then printf '%s\n' "$PROJECT_DIR/.agents/skills"
+  else printf '%s\n' "$HOME/.agents/skills"
+  fi
+}
+
+claude_skills_root() {
+  if [ "$SCOPE" = project ]; then printf '%s\n' "$PROJECT_DIR/.claude/skills"
+  else printf '%s\n' "$HOME/.claude/skills"
+  fi
+}
+
+cursor_skills_root() {
+  if [ "$SCOPE" = project ]; then printf '%s\n' "$PROJECT_DIR/.cursor/skills"
+  else printf '%s\n' "$HOME/.cursor/skills"
+  fi
+}
+
+cursor_plugin_dir() {
+  name=$1
+  if [ "$SCOPE" = project ]; then printf '%s\n' "$PROJECT_DIR/.cursor/plugins/local/$name"
+  else printf '%s\n' "$HOME/.cursor/plugins/local/$name"
+  fi
+}
+
+cursor_mcp_path() {
+  if [ "$SCOPE" = project ]; then printf '%s\n' "$PROJECT_DIR/.cursor/mcp.json"
+  else printf '%s\n' "$HOME/.cursor/mcp.json"
+  fi
+}
+
+is_user_only_module() { has_word "$USER_ONLY_MODULES" "$1"; }
+
+skip_user_only_module() {
+  name=$1
+  [ "$SCOPE" = project ] && is_user_only_module "$name" || return 1
+  echo "install.sh: skipping $name (user scope only)"
+  return 0
+}
 
 catalog_repo() {
   if [ -n "$TEMP_REPO" ] && [ -f "$TEMP_REPO/config/installable-catalog.json" ]; then
@@ -267,6 +352,13 @@ record_receipt() {
   [ -n "$repo" ] || return 0
   [ -f "$repo/scripts/install-reconcile.mjs" ] || return 0
   mkdir -p "$RECEIPT_DIR"
+  if command -v jq >/dev/null 2>&1; then
+    if [ -n "$PROJECT_DIR" ]; then
+      json=$(printf '%s' "$json" | jq -c --arg scope "$SCOPE" --arg projectDir "$PROJECT_DIR" '. + {scope:$scope, projectDir:$projectDir}')
+    else
+      json=$(printf '%s' "$json" | jq -c --arg scope "$SCOPE" '. + {scope:$scope}')
+    fi
+  fi
   node "$repo/scripts/install-reconcile.mjs" record-receipt "$RECEIPT_DIR" "$module" "$json" >/dev/null 2>&1 || true
 }
 
@@ -295,6 +387,7 @@ select_items() {
   tty_available || { SELECTED=harness; return; }
   candidates=harness
   for item in $OPTIONAL; do
+    [ "$SCOPE" = project ] && is_user_only_module "$item" && continue
     supported=0; for cli in $CLI; do has_word "$(plugin_clis "$item")" "$cli" && supported=1; done
     [ "$supported" -eq 1 ] && candidates="$candidates $item"
   done
@@ -356,13 +449,30 @@ install_claude_marketplace() {
   claude plugin marketplace update "$CLAUDE_MARKETPLACE" >/dev/null 2>&1 || claude plugin marketplace add "$REPO_URL"
 }
 
+install_codex_project_marketplace() {
+  if [ -n "$DRY" ]; then
+    echo "DRY RUN — ensure Codex project marketplace under $PROJECT_DIR"
+    echo "DRY RUN — codex plugin marketplace add $PROJECT_DIR"
+    return
+  fi
+  ensure_repo
+  mkdir -p "$PROJECT_DIR/.codex-plugin" "$PROJECT_DIR/.agents/plugins"
+  cp "$TEMP_REPO/.codex-plugin/plugin.json" "$PROJECT_DIR/.codex-plugin/plugin.json"
+  cp "$TEMP_REPO/.agents/plugins/marketplace.json" "$PROJECT_DIR/.agents/plugins/marketplace.json"
+  codex plugin marketplace upgrade "$PROJECT_DIR" >/dev/null 2>&1 || codex plugin marketplace add "$PROJECT_DIR"
+}
+
 install_codex_marketplace() {
+  if [ "$SCOPE" = project ]; then
+    install_codex_project_marketplace
+    return
+  fi
   [ -n "$DRY" ] && { run codex plugin marketplace upgrade "$CODEX_MARKETPLACE"; return; }
   codex plugin marketplace upgrade "$CODEX_MARKETPLACE" >/dev/null 2>&1 || codex plugin marketplace add "$MARKETPLACE_REPO"
 }
 
 cleanup_opencode_plugin_files() {
-  name=$1; base=${XDG_CONFIG_HOME:-$HOME/.config}/opencode
+  name=$1; base=$(opencode_base)
   for dir in skills agents commands; do
     [ ! -d "$base/$dir" ] && continue
     for path in "$base/$dir/$name-"*; do
@@ -374,9 +484,9 @@ cleanup_opencode_plugin_files() {
 
 install_opencode_plugin() {
   name=$1
-  [ -n "$DRY" ] && { echo "DRY RUN — install namespaced OpenCode skills, agents, and commands for $name"; return; }
+  base=$(opencode_base)
+  [ -n "$DRY" ] && { echo "DRY RUN — install namespaced OpenCode skills, agents, and commands for $name into $base"; return; }
   ensure_repo
-  base=${XDG_CONFIG_HOME:-$HOME/.config}/opencode
   mkdir -p "$base/skills" "$base/agents" "$base/commands"
   if [ -d "$TEMP_REPO/packages/$name" ]; then
     dest="$base/skills/$name"
@@ -402,16 +512,16 @@ install_opencode_plugin() {
 }
 
 install_pi_extension() {
-  # Install harness skills at the user skill root (~/.agents/skills) so they win
-  # over package-cloned copies under ~/.pi/agent/git/... and avoid Pi skill collisions.
+  # Install harness skills at the skill root so they win over package-cloned
+  # copies under ~/.pi/agent/git/... and avoid Pi skill collisions.
   command -v pi >/dev/null 2>&1 || die 'pi is required to install harness skills for Pi'
+  dest_root=$(agents_skills_root)
   if [ -n "$DRY" ]; then
-    echo "DRY RUN — copy harness skills into $HOME/.agents/skills"
-    echo "DRY RUN — pi remove https://github.com/$MARKETPLACE_REPO (ignore if absent)"
+    echo "DRY RUN — copy harness skills into $dest_root"
+    [ "$SCOPE" = user ] && echo "DRY RUN — pi remove https://github.com/$MARKETPLACE_REPO (ignore if absent)"
     return
   fi
   ensure_repo
-  dest_root=$HOME/.agents/skills
   mkdir -p "$dest_root"
   for path in "$TEMP_REPO"/skills/*; do
     [ -d "$path" ] || continue
@@ -420,13 +530,15 @@ install_pi_extension() {
     cp -R "$path"/. "$dest_root/$name"/
   done
   # Drop a prior package install of this repo if present; user-level skills replace it.
-  pi remove "https://github.com/$MARKETPLACE_REPO" >/dev/null 2>&1 || true
-  pi remove "git:github.com/$MARKETPLACE_REPO" >/dev/null 2>&1 || true
+  if [ "$SCOPE" = user ]; then
+    pi remove "https://github.com/$MARKETPLACE_REPO" >/dev/null 2>&1 || true
+    pi remove "git:github.com/$MARKETPLACE_REPO" >/dev/null 2>&1 || true
+  fi
 }
 
 clean_stale_agent_plugin_pollution() {
   name=$1
-  dest=$HOME/.cursor/plugins/local/$name
+  dest=$(cursor_plugin_dir "$name")
   [ -d "$dest" ] || return 0
   [ -n "$DRY" ] && return 0
   polluted=0
@@ -440,10 +552,10 @@ clean_stale_agent_plugin_pollution() {
 
 install_agent_plugin() {
   name=$1
-  if [ -n "$DRY" ]; then echo "DRY RUN — install Cursor Agent plugin at $HOME/.cursor/plugins/local/$name"; return; fi
+  dest=$(cursor_plugin_dir "$name")
+  if [ -n "$DRY" ]; then echo "DRY RUN — install Cursor Agent plugin at $dest"; return; fi
   command -v agent >/dev/null 2>&1 || cli_installed agent || die 'agent is required to install the harness Cursor Agent plugin'
   ensure_repo
-  dest=$HOME/.cursor/plugins/local/$name
   node "$TEMP_REPO/scripts/install-reconcile.mjs" project-agent "$name" "$TEMP_REPO" "$dest" \
     || die "Cursor Agent projection failed for $name"
 }
@@ -537,7 +649,7 @@ apply_shared_config() {
 
 atomic_opencode_json() {
   filter=$1; shift
-  base=${XDG_CONFIG_HOME:-$HOME/.config}/opencode; cfg=$base/opencode.json
+  base=$(opencode_base); cfg=$base/opencode.json
   ensure_jq; mkdir -p "$base"
   [ ! -f "$base/opencode.jsonc" ] || cfg=$base/opencode.jsonc
   [ -f "$cfg" ] || printf '{}\n' >"$cfg"
@@ -565,7 +677,10 @@ atomic_opencode_plugin_add() {
 
 atomic_cursor_mcp() {
   name=$1; server=$2
-  ensure_jq; dir=$HOME/.cursor; cfg=$dir/mcp.json; mkdir -p "$dir"
+  ensure_jq
+  cfg=$(cursor_mcp_path)
+  dir=$(dirname "$cfg")
+  mkdir -p "$dir"
   [ -f "$cfg" ] || printf '{}\n' >"$cfg"
   cp "$cfg" "$cfg.pre-harness.bak"
   tmp=$(mktemp "$dir/mcp.json.XXXXXX")
@@ -580,21 +695,23 @@ install_skill_creator() {
     has_word "$(plugin_clis "skill-creator")" "$cli" || continue
     case "$cli" in
       claude)
-        if [ -n "$DRY" ]; then echo "DRY RUN — install skill-creator to ~/.claude/skills/"
+        root=$(claude_skills_root)
+        if [ -n "$DRY" ]; then echo "DRY RUN — install skill-creator to $root/"
         else
           ensure_repo
-          dest="$HOME/.claude/skills/skill-creator"
-          mkdir -p "$HOME/.claude/skills"
+          dest="$root/skill-creator"
+          mkdir -p "$root"
           node "$TEMP_REPO/scripts/install-reconcile.mjs" project-bundle skill-creator "$dest" \
             || die 'skill-creator projection failed'
         fi ;;
       opencode) install_opencode_plugin skill-creator ;;
       codex) install_plugin skill-creator "$cli" ;;
       pi)
-        if [ -n "$DRY" ]; then echo "DRY RUN — install skill-creator to ~/.agents/skills/skill-creator"
+        root=$(agents_skills_root)
+        if [ -n "$DRY" ]; then echo "DRY RUN — install skill-creator to $root/skill-creator"
         else
           ensure_repo
-          dest="$HOME/.agents/skills/skill-creator"
+          dest="$root/skill-creator"
           mkdir -p "$(dirname "$dest")"
           node "$TEMP_REPO/scripts/install-reconcile.mjs" project-bundle skill-creator "$dest" \
             || die 'skill-creator projection failed'
@@ -656,49 +773,112 @@ install_crawl4ai() {
     has_word "$(plugin_clis crawl4ai)" "$cli" || continue
     case "$cli" in
       claude)
-        if [ -n "$DRY" ]; then echo 'DRY RUN — install crawl4ai skill to ~/.claude/skills/crawl4ai'
-        else install_crawl4ai_skill "$HOME/.claude/skills/crawl4ai"
+        dest="$(claude_skills_root)/crawl4ai"
+        if [ -n "$DRY" ]; then echo "DRY RUN — install crawl4ai skill to $dest"
+        else install_crawl4ai_skill "$dest"
         fi ;;
       opencode)
-        if [ -n "$DRY" ]; then echo 'DRY RUN — install crawl4ai skill to ~/.config/opencode/skills/crawl4ai'
-        else
-          base=${XDG_CONFIG_HOME:-$HOME/.config}/opencode
-          install_crawl4ai_skill "$base/skills/crawl4ai"
+        dest="$(opencode_base)/skills/crawl4ai"
+        if [ -n "$DRY" ]; then echo "DRY RUN — install crawl4ai skill to $dest"
+        else install_crawl4ai_skill "$dest"
         fi ;;
       codex|pi)
-        if [ -n "$DRY" ]; then echo 'DRY RUN — install crawl4ai skill to ~/.agents/skills/crawl4ai'
-        else install_crawl4ai_skill "$HOME/.agents/skills/crawl4ai"
+        dest="$(agents_skills_root)/crawl4ai"
+        if [ -n "$DRY" ]; then echo "DRY RUN — install crawl4ai skill to $dest"
+        else install_crawl4ai_skill "$dest"
         fi ;;
       agent)
-        if [ -n "$DRY" ]; then echo 'DRY RUN — install crawl4ai skill to ~/.cursor/skills/crawl4ai'
-        else install_crawl4ai_skill "$HOME/.cursor/skills/crawl4ai"
+        dest="$(cursor_skills_root)/crawl4ai"
+        if [ -n "$DRY" ]; then echo "DRY RUN — install crawl4ai skill to $dest"
+        else install_crawl4ai_skill "$dest"
         fi ;;
     esac
   done
 }
 
-install_hallmark() {
-  if [ -n "$DRY" ]; then
-    echo 'DRY RUN - npx skills add nutlope/hallmark --skill hallmark -g'
+catalog_skills_add() {
+  # Resolve acquisition.skills from the catalog, then run npx skills add.
+  # User/global scope passes -g when the catalog marks globalWhenUserScope.
+  module=$1
+  skill_repo=""; skill_name=""; use_global=true
+  repo=$(catalog_repo) || true
+  if [ -z "$repo" ] || [ ! -f "$repo/scripts/install-reconcile.mjs" ]; then
+    if [ -n "$DRY" ]; then
+      # Remote dry-run has no staged catalog yet; keep dry-run zero-write.
+      case "$module" in
+        hallmark) skill_repo=nutlope/hallmark; skill_name=hallmark; use_global=true ;;
+        *) die "catalog reconcile missing for $module (dry-run needs a known fallback)" ;;
+      esac
+    else
+      ensure_repo
+      repo=$TEMP_REPO
+      [ -f "$repo/scripts/install-reconcile.mjs" ] || die "catalog reconcile missing for $module"
+    fi
+  fi
+  if [ -z "$skill_repo" ]; then
+    args=$(node "$repo/scripts/install-reconcile.mjs" skills-add-args "$module") \
+      || die "catalog has no acquisition.skills for $module"
+    skill_repo=$(printf '%s' "$args" | jq -r .repo)
+    skill_name=$(printf '%s' "$args" | jq -r .skill)
+    use_global=$(printf '%s' "$args" | jq -r .globalWhenUserScope)
+  fi
+  [ -n "$skill_repo" ] && [ "$skill_repo" != null ] || die "invalid skills-add-args for $module"
+  if [ "$SCOPE" = project ]; then
+    if [ -n "$DRY" ]; then
+      echo "DRY RUN - (cd $PROJECT_DIR && npx skills add $skill_repo --skill $skill_name --yes)"
+      return
+    fi
+    command -v npx >/dev/null 2>&1 || die "npx is required to install the $module skill"
+    (CDPATH= cd -- "$PROJECT_DIR" && npx skills add "$skill_repo" --skill "$skill_name" --yes) \
+      || die "$module skill install failed"
+    record_receipt "$module" "{\"skills\":\"$skill_repo\",\"skill\":\"$skill_name\",\"global\":false,\"dir\":\"$PROJECT_DIR\"}"
     return
   fi
-  command -v npx >/dev/null 2>&1 || die 'npx is required to install the hallmark skill'
-  npx skills add nutlope/hallmark --skill hallmark -g || die 'hallmark skill install failed'
-  record_receipt hallmark '{"skills":"nutlope/hallmark","skill":"hallmark","global":true}'
+  if [ -n "$DRY" ]; then
+    if [ "$use_global" = true ]; then
+      echo "DRY RUN - npx skills add $skill_repo --skill $skill_name -g --yes"
+    else
+      echo "DRY RUN - npx skills add $skill_repo --skill $skill_name --yes"
+    fi
+    return
+  fi
+  command -v npx >/dev/null 2>&1 || die "npx is required to install the $module skill"
+  if [ "$use_global" = true ]; then
+    npx skills add "$skill_repo" --skill "$skill_name" -g --yes || die "$module skill install failed"
+    record_receipt "$module" "{\"skills\":\"$skill_repo\",\"skill\":\"$skill_name\",\"global\":true}"
+  else
+    npx skills add "$skill_repo" --skill "$skill_name" --yes || die "$module skill install failed"
+    record_receipt "$module" "{\"skills\":\"$skill_repo\",\"skill\":\"$skill_name\",\"global\":false}"
+  fi
+}
+
+install_hallmark() {
+  catalog_skills_add hallmark
 }
 
 install_no_mistakes() {
   if [ -n "$DRY" ]; then
     echo "DRY RUN — curl -fsSL $NO_MISTAKES_INSTALLER | sh"
-    echo 'DRY RUN — note: run no-mistakes init in each repository you want to gate (not run by the harness installer)'
+    if [ "$SCOPE" = project ]; then
+      echo "DRY RUN — (cd $PROJECT_DIR && no-mistakes init)"
+    else
+      echo 'DRY RUN — note: run no-mistakes init in each repository you want to gate'
+    fi
     return
   fi
   command -v curl >/dev/null 2>&1 || die 'curl is required to install no-mistakes'
   curl -fsSL "$NO_MISTAKES_INSTALLER" | sh || die 'no-mistakes installer failed; inspect the upstream installer output'
   binary=$(command -v no-mistakes 2>/dev/null || true)
   version=$([ -n "$binary" ] && "$binary" --version 2>/dev/null || true)
-  record_receipt no-mistakes "{\"binary\":\"${binary:-unknown}\",\"version\":\"${version:-unknown}\"}"
-  echo 'install.sh: run no-mistakes init in each repository you want to gate'
+  if [ "$SCOPE" = project ]; then
+    command -v no-mistakes >/dev/null 2>&1 || die 'no-mistakes binary missing after install'
+    (CDPATH= cd -- "$PROJECT_DIR" && no-mistakes init) \
+      || die "no-mistakes init failed in $PROJECT_DIR"
+    record_receipt no-mistakes "{\"binary\":\"${binary:-unknown}\",\"version\":\"${version:-unknown}\",\"init\":\"$PROJECT_DIR\"}"
+  else
+    record_receipt no-mistakes "{\"binary\":\"${binary:-unknown}\",\"version\":\"${version:-unknown}\"}"
+    echo 'install.sh: run no-mistakes init in each repository you want to gate'
+  fi
 }
 
 install_treehouse() {
@@ -716,13 +896,15 @@ install_treehouse() {
 install_playwright_mcp() {
   name=playwright
   json='{"type":"stdio","command":"npx","args":["-y","@playwright/mcp@latest"]}'
-  if [ -n "$DRY" ]; then echo "DRY RUN — configure $name MCP for:$CLI"; return; fi
+  claude_mcp_scope=$SCOPE
+  [ "$SCOPE" = project ] || [ "$SCOPE" = local ] || claude_mcp_scope=user
+  if [ -n "$DRY" ]; then echo "DRY RUN — configure $name MCP for:$CLI (scope: $SCOPE)"; return; fi
   ensure_jq
   for cli in $CLI; do
     case "$cli" in
       claude)
-        claude mcp remove "$name" --scope user >/dev/null 2>&1 || true
-        claude mcp add-json --scope user "$name" "$json" || die "Claude MCP configuration failed for $name" ;;
+        claude mcp remove "$name" --scope "$claude_mcp_scope" >/dev/null 2>&1 || true
+        claude mcp add-json --scope "$claude_mcp_scope" "$name" "$json" || die "Claude MCP configuration failed for $name" ;;
       codex)
         codex mcp remove "$name" >/dev/null 2>&1 || true
         codex mcp add "$name" -- "$(printf '%s' "$json" | jq -r .command)" -y "$(printf '%s' "$json" | jq -r '.args[-1]')" \
@@ -754,6 +936,7 @@ for cli in $CLI; do
 done
 
 for item in $SELECTED; do
+  skip_user_only_module "$item" && continue
   case "$item" in
     skill-creator) install_skill_creator ;;
     crawl4ai) install_crawl4ai ;;
@@ -771,4 +954,6 @@ case " $SELECTED " in
   *' harness '*) record_receipt harness "{\"marketplace\":\"$CLAUDE_MARKETPLACE\"}" ;;
 esac
 
-echo "Harness installation complete for:$CLI"
+scope_label=$SCOPE
+[ -n "$PROJECT_DIR" ] && scope_label="$SCOPE ($PROJECT_DIR)"
+echo "Harness installation complete for:$CLI [scope: $scope_label]"

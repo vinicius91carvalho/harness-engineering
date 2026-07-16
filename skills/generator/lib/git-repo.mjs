@@ -3,7 +3,7 @@ import { isAbsolute, resolve, dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { integrationBranchName } from './integration-branch.mjs'
-import { processAlive as sharedProcessAlive } from './orphan-claims.mjs'
+import { processAlive as sharedProcessAlive } from '../../supervisor/lib/orphan-claims.mjs'
 
 export function git(repo, args, { allowFailure = false } = {}) {
   const result = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' })

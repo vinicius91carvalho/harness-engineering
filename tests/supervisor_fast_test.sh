@@ -150,9 +150,10 @@ echo 'ok - a subproject'"'"'s status/claims inspection never sees a sibling subp
 
 mkdir -p "$TMP/installed/skills/harness-supervisor/scripts" "$TMP/installed/skills/harness-supervisor/lib"
 cp "$CONTROL" "$TMP/installed/skills/harness-supervisor/scripts/harness-control.mjs"
-cp "$ROOT/skills/supervisor/lib/supervisor-preflight.mjs" "$TMP/installed/skills/harness-supervisor/lib/supervisor-preflight.mjs"
+cp -R "$ROOT/skills/supervisor/lib/." "$TMP/installed/skills/harness-supervisor/lib/"
 cp -R "$ROOT/skills/generator" "$TMP/installed/skills/harness-generator"
 ln -sf harness-generator "$TMP/installed/skills/generator"
+ln -sf harness-supervisor "$TMP/installed/skills/supervisor"
 git clone -q "$TMP/repo" "$TMP/namespaced"
 git -C "$TMP/namespaced" config user.name test
 git -C "$TMP/namespaced" config user.email test@example.invalid

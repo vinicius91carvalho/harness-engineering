@@ -1,8 +1,16 @@
 {
   "name": "harness-engineering",
-  "owner": { "name": "Vinicius Carvalho" },
+  "owner": {
+    "name": "Vinicius Carvalho"
+  },
   "plugins": [
-    { "name": "harness", "source": "./" },
-    { "name": "skill-creator", "source": "./packages/skill-creator" }
+    {
+      "name": "harness",
+      "source": "./"
+    },
+    {
+      "name": "skill-creator",
+      "source": "./packages/skill-creator"
+    }
   ]
 }

@@ -59,10 +59,35 @@ flowchart TD
   orchestrator --> routePlan[route-plan.mjs]
   orchestrator --> claimLease[claim-lease.mjs]
   harnessControl[harness-control.mjs] --> workerLifecycle[worker-lifecycle.mjs]
-  harnessControl --> supervisorTick[supervisor-tick.mjs]
-  harnessControl --> supervisorAdmission[supervisor-admission.mjs]
+  subgraph supervisorLib [skills/supervisor/lib Control Plane]
+    supervisorTick[supervisor-tick.mjs]
+    supervisorAdmission[supervisor-admission.mjs]
+    fleetSnapshot[fleet-snapshot.mjs]
+    controlJournal[control-journal.mjs]
+    resourceGovernor[resource-governor.mjs]
+  end
+  harnessControl --> supervisorTick
+  harnessControl --> supervisorAdmission
+  harnessControl --> fleetSnapshot
+  harnessControl --> controlJournal
+  harnessControl --> resourceGovernor
   harnessControl --> claimLease
 ```
+
+Control modules live solely under `skills/supervisor/lib/` (Wave C clean break /
+ADR-0022).
+`harness-control` loads them from that tree; shared execution primitives
+(Claim Lease, worker lifecycle, ledger, evidence) stay in
+`skills/generator/lib/`. There are no generator re-export shims for control
+modules - remove old installs and reinstall rather than migrating mid-flight.
+
+Claim Lease is split for locality: `claim-lease.mjs` (select/resume/release +
+state lock), `merge-lock.mjs`, and `worktree-ports.mjs`, with re-exports from
+`claim-lease.mjs` so `claim.sh` and existing imports keep working.
+Shared Runtime Lease planning lives in `compose-shared.mjs`
+(`acquireComposeShare` / `releaseComposeShare` / `composeShareSnapshot` /
+`planSharedRuntimeTeardown`); Worktree Runtime Lifecycle is the `init.sh`
+contract (`skills/generator/templates/init.sh`).
 
 ## Language
 
@@ -134,6 +159,14 @@ _Avoid_: Journal entry, conversation log
 Exclusive ownership of a context, proven by an owner identity and liveness data in its Run State.
 _Avoid_: Lock file, task assignment
 
+**Shared Runtime Lease**:
+Host-wide registry under the shared Git directory that lets concurrent workers reuse stable infra containers (postgres/redis/…) while private app containers stay owned by the Work Item that started them (ADR-0021).
+_Avoid_: orphan docker cleanup, per-worktree full compose down
+
+**Worktree Runtime Lifecycle**:
+The `init.sh` subcommand contract (`start|stop|restart|status|help`) that owns app process start/stop and `.harness/app.pid`; template SoT is `skills/generator/templates/init.sh`.
+_Avoid_: ad-hoc pkill, hard-coded ports
+
 **Resume**:
 Atomic acquisition of an abandoned Claim Lease followed by continuation from the Run State's recorded next action in the existing worktree.
 _Avoid_: Restart, rerun
@@ -173,7 +206,7 @@ An orchestrator-spawned executor with a fixed JSON contract (`agents/coding-agen
 _Avoid_: Skill, subagent, chat session
 
 **Initializer**:
-The scaffold-only agent that maps stable Acceptance Checks into `feature_list.json`, creates a PORT-parameterized `init.sh` (`start|stop|restart|status|help`) and project structure, and makes the first commit on `main`.
+The scaffold-only agent that maps stable Acceptance Checks into `feature_list.json`, copies/adapts `skills/generator/templates/init.sh` into a PORT-parameterized `init.sh` (Worktree Runtime Lifecycle), creates project structure, and makes the first commit on `main`.
 Idempotent; never implements Work Items.
 _Avoid_: Code Agent, generator skill
 
@@ -235,7 +268,7 @@ _Avoid_: second supervisor, auto-ack to unblock stop, lease fence
 **Fleet Snapshot**:
 A structured cross-project bearings contract (journal tips, capacity, stuck, pending inputs, wake triage) that fleet-ops recovery and monorepo ops consume instead of reparsing raw control files.
 Additive ops fields include `supervisorLive`, `ghostClaims`, `emptyFleetActionable`, `needsGoalReviewRetry`, and `lastRunCompletedSummary`.
-Built by `skills/generator/lib/fleet-snapshot.mjs` (`harness-fleet-snapshot.v1`); exposed via `harness-control status` (`fleetSnapshot`) and `harness-control fleet-snapshot`.
+Built by `skills/supervisor/lib/fleet-snapshot.mjs` (`harness-fleet-snapshot.v1`); exposed via `harness-control status` (`fleetSnapshot`) and `harness-control fleet-snapshot`.
 _Avoid_: monorepo skill dump into harness-control, ad-hoc sibling state scrapes
 
 **Ghost Claim**:

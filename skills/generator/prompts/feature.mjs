@@ -28,6 +28,15 @@ export const RESOURCE_CLEANUP_RULE =
   'For named WI/AC containers you created: `docker rm -f` on those exact names ' +
   '(wi-ac-*, ac0*). Do not tear down compose stacks or containers you did not start. ' +
   'Cleanup failures belong in notes/defects; never skip the verdict to clean up.'
+
+/** Mandatory app bring-up contract injected into coding/QA/integration prompts. */
+export const APP_START_RULE =
+  'APP START: when a check needs a live app, bring it up with ' +
+  '`PORT="$PORT" FRONTEND_PORT="$FRONTEND_PORT" ./init.sh start` (idempotent when healthy). ' +
+  'Do not background servers yourself and do not hand-write `.harness/app.pid` — init.sh owns both. ' +
+  'Wait at most 60s for the Ready line; on timeout, capture the last ~100 log lines as evidence and fail. ' +
+  'Skip starting a server or browser for grep/static or CLI-only Acceptance Checks.'
+
 /**
  * Cursor Agent / host AGENTS.md often tells the "main" agent to spawn Task
  * subagents. Harness workers ARE the assigned worker — nested Task/subagent
@@ -93,16 +102,16 @@ export function featurePrompt(kind, feature, attempt, repairPlan = null, workdir
     return head +
       `${NO_REDELEGATE_RULE} ` +
       `${repairPlan ? `Follow this Repair Plan from the orchestrator:\n${JSON.stringify(repairPlan)}\n` : ''}` +
-      `Read the exact queue entry and Workflow Journal. ${verifyAlign} Commit every product and harness-probe change on this gen branch before claiming implementation=true — Integrated Verification merges into the plan branch and will fail on worktree-only WIP or untracked .harness/wi-ac-* files that block merge. Do NOT edit feature_list.json, Execution Ledger flags, or Workflow Journal files — return product commits and a verdict only; the orchestrator owns workflow transitions. ${RESOURCE_CLEANUP_RULE} Return one JSON object: {"id":"...","implementation":true|false,"notes":"..."}. ${VERDICT_HINT}`
+      `Read the exact queue entry and Workflow Journal. ${verifyAlign} ${APP_START_RULE} Commit every product and harness-probe change on this gen branch before claiming implementation=true — Integrated Verification merges into the plan branch and will fail on worktree-only WIP or untracked .harness/wi-ac-* files that block merge. Do NOT edit feature_list.json, Execution Ledger flags, or Workflow Journal files — return product commits and a verdict only; the orchestrator owns workflow transitions. ${RESOURCE_CLEANUP_RULE} Return one JSON object: {"id":"...","implementation":true|false,"notes":"..."}. ${VERDICT_HINT}`
   }
   if (kind === 'QA') return `You are the qa-agent. Independently test exactly this Work Item in its isolated worktree.\n${base}` +
     `${NO_REDELEGATE_RULE} ` +
-    `Exercise the mapped Acceptance Checks using the observation method they specify (grep/file audit, CLI exit code, real HTTP, or real browser). Do not start a server or browser for a check that is already a static audit. Once the checks pass or fail, emit the harness verdict immediately — do not keep re-analyzing. Do NOT edit feature_list.json or Workflow Journal files; the orchestrator records qa/implementation flags from your verdict. ${RESOURCE_CLEANUP_RULE} Return only JSON: {"id":"...","qa":true|false,"implementation":true|false,"defects":["expected ...; observed ...; evidence ..."]}. ${VERDICT_HINT}`
+    `${APP_START_RULE} Exercise the mapped Acceptance Checks using the observation method they specify (grep/file audit, CLI exit code, real HTTP, or real browser). Do not start a server or browser for a check that is already a static audit. Once the checks pass or fail, emit the harness verdict immediately — do not keep re-analyzing. Do NOT edit feature_list.json or Workflow Journal files; the orchestrator records qa/implementation flags from your verdict. ${RESOURCE_CLEANUP_RULE} Return only JSON: {"id":"...","qa":true|false,"implementation":true|false,"defects":["expected ...; observed ...; evidence ..."]}. ${VERDICT_HINT}`
   if (kind === 'INTEGRATION_QA') {
     const branch = options.integrationBranch || 'main'
     return `You are the qa-agent performing Integrated Verification on latest ${branch}.\n${base}` +
     `${NO_REDELEGATE_RULE} ` +
-    `Run the mapped Acceptance Checks using the observation method they specify (grep/file audit, CLI, real HTTP, or real browser). Do not start a server or browser for a static audit check. Emit the harness verdict as soon as the checks pass or fail. Do NOT edit feature_list.json or Workflow Journal files; the orchestrator records integration flags from your verdict. ${RESOURCE_CLEANUP_RULE} Return only JSON: {"id":"...","integration":true|false,"implementation":true|false,"defects":["expected ...; observed ...; evidence ..."]}. ${VERDICT_HINT}\n${sharedRootWarning(branch)}`
+    `${APP_START_RULE} Run the mapped Acceptance Checks using the observation method they specify (grep/file audit, CLI, real HTTP, or real browser). Do not start a server or browser for a static audit check. Emit the harness verdict as soon as the checks pass or fail. Do NOT edit feature_list.json or Workflow Journal files; the orchestrator records integration flags from your verdict. ${RESOURCE_CLEANUP_RULE} Return only JSON: {"id":"...","integration":true|false,"implementation":true|false,"defects":["expected ...; observed ...; evidence ..."]}. ${VERDICT_HINT}\n${sharedRootWarning(branch)}`
   }
   if (kind === 'REPAIR_PLAN') return `Act as the orchestrator repair planner. Do not modify files. Diagnose the QA Defect Report against the Work Item and repository.\n${base}` +
     `Defect Report=${JSON.stringify(repairPlan)}\nReturn only concise JSON: {"summary":"...","rootCause":"...","actions":["..."],"validation":["..."]}. ${VERDICT_HINT}`

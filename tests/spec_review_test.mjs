@@ -154,6 +154,18 @@ assert(pin === 'plan/demo\n', `integration-branch pin written, got ${JSON.string
 assert(git(gitTmp, ['rev-parse', '--verify', 'refs/heads/plan/demo']).status === 0, 'plan/demo branch created at HEAD')
 assert(gitFinalize.stdout.includes('pinned integration branch plan/demo'), 'finalize prints pin')
 
+const badRegistryTmp = mkdtempSync(join(tmpdir(), 'spec-review-bad-registry-'))
+git(badRegistryTmp, ['init', '-b', 'main'])
+git(badRegistryTmp, ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'])
+mkdirSync(join(badRegistryTmp, '.harness'), { recursive: true })
+writeFileSync(join(badRegistryTmp, '.harness', 'projects.json'), 'not-json\n')
+seedConfirmedDraft(badRegistryTmp)
+const badRegistryFinalize = run(['finalize', badRegistryTmp])
+assert(badRegistryFinalize.status !== 0, 'finalize fails when registry write fails')
+assert(badRegistryFinalize.stderr.includes('registry or integration pin failed'), 'finalize reports registry failure')
+assert(existsSync(join(badRegistryTmp, '.harness', 'project_specs.draft.json')), 'draft kept when registry fails')
+assert(!existsSync(join(badRegistryTmp, 'project_specs.xml')), 'project_specs.xml not written when registry fails')
+
 const pinnedTmp = mkdtempSync(join(tmpdir(), 'spec-review-pinned-'))
 git(pinnedTmp, ['init', '-b', 'main'])
 git(pinnedTmp, ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'])

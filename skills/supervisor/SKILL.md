@@ -57,6 +57,14 @@ top-level), `CONTROL` this skill directory, and
 Workers always run in the background. Monitor via `harness-control status`,
 `fleet-snapshot`, and worker logs under `.git/harness-control/<project>/logs/`.
 
+Control Plane libraries (journal, beacon, Fleet Snapshot, tick/admission
+planners, Wake Triage, Supervisor Lease, Resource Governor, host resources,
+orphan/runtime view) are owned solely by `skills/supervisor/lib/` - see that
+directory's `README.md`.
+`harness-control.mjs` is the I/O adapter; shared execution primitives remain in
+`skills/generator/lib/`. Generator code imports control modules from
+`skills/supervisor/lib/` directly (no re-export shims).
+
 At a monorepo root, resolve one project the same way generator does: `node
 "$GENERATOR/reconcile.mjs" --print-root` (set below) walks up for the nearest
 `project_specs.xml`, then falls back to `.harness/projects.json` when more than
@@ -162,9 +170,9 @@ only from observed available resources and a known concurrent provider quota.
 
 ## Relay notifications
 
-Create one durable consumer name per delivery channel, such as
-`herdr-notify` or `phone`. Poll at least once per minute through the Supervisor's native
-heartbeat/cron mechanism:
+Create one durable consumer name per delivery channel
+(e.g. `herdr-notify` or `phone`; `herdr-notify` is an opaque journal consumer id, not a herdr UI dependency).
+Poll at least once per minute through the Supervisor's native heartbeat/cron mechanism:
 
 ```bash
 node "$CONTROL/scripts/harness-control.mjs" events --repo "$REPO" --consumer herdr-notify
@@ -172,7 +180,7 @@ node "$CONTROL/scripts/harness-control.mjs" events --repo "$REPO" --consumer her
 
 For each returned event:
 
-- **Wake Triage** (`skills/generator/lib/wake-triage.mjs`): each `events` row
+- **Wake Triage** (`skills/supervisor/lib/wake-triage.mjs`): each `events` row
   includes `wakeTriage: { action, reason }` (`absorb` | `fold` | `wake`).
   `input_required` and goal-scoped inputs always wake; healthy progress folds;
   unrepaired `empty_fleet_actionable` / `dead_runtime` wake; empty-fleet progress
@@ -229,7 +237,7 @@ node "$CONTROL/scripts/harness-control.mjs" stop   --repo "$REPO"
 ```
 
 **Control-host beacon (ADR-0019):** `harness-control stop` and in-process shutdown
-consult `skills/generator/lib/control-beacon.mjs` before soft stop.
+consult `skills/supervisor/lib/control-beacon.mjs` before soft stop.
 Soft stop is denied while workers are live (live pid and/or live Run State
 owner/child; never default-live without evidence),
 required journal consumers (default `herdr-notify`) are behind the journal tip,
@@ -246,7 +254,7 @@ Cite `fleetSnapshot.lastRunCompletedSummary` and Goal Review evidence when repor
 ## Worker health and fail-closed ops
 
 `harness-control status` → `workerHealth` is the primary **stuck** signal
-(`healthy` | `waiting_expected` | `stuck` | `done`).
+(`healthy` | `stuck`).
 It is **not** the pass/fail signal for Work Items — see Hard rules above.
 
 Prefer `status.fleetSnapshot` ops fields (`supervisorLive`, `ghostClaims`,
@@ -263,11 +271,11 @@ orphan PIDs, re-admit when capacity allows).
 The Control Host LLM acts only on Wake Triage judgment, quota pauses, cross-project
 RAM contention, and operator playbooks in `monorepo-supervisor-ops`.
 
-Run-state heartbeats and `workerHealth=working` alone are not proof of progress.
-Never recycle `waiting_expected` merge_lock when the holder is alive, or MCP warmup
-still under budget — only recycle `stuck`.
-When `workerHealth=done` or Run State is terminal, clear the worker row on the
-next tick (background workers do not leave visible panes).
+Run-state heartbeats alone are not proof of progress.
+Only recycle `stuck`.
+Inspect worker log tails under `.git/harness-control/<project>/logs/` when judging liveness.
+When Run State is terminal, the next tick clears the worker row
+(background workers leave no visible UI panes).
 
 ### Every supervisor tick (ordered)
 
@@ -320,22 +328,19 @@ When a dependent project's E2E fails on a **dependency API/contract** error
 `input_required` with evidence, admit/repair work on the root project
 (Orchestrator), then retry the dependent after the API is fixed.
 
-**Orphan Docker / leftover resources:** finished Work Items must tear down the
-compose stacks, named containers, and worktree servers they started (see
-generator `RESOURCE_CLEANUP_RULE`).
-Supervisor teardown is no longer browser-only: `kill-worker`, `workerClosed`,
-and operator `harness-control stop` also run `cleanupWorktreeRuntime`
-(`./init.sh stop` when present, then `.harness/app.pid` tree, worktree-scoped
-`next`/`tsx`/`esbuild`, and `docker compose down --remove-orphans`).
+**Orphan Docker / leftover resources:** finished Work Items must tear down what
+they started (generator `RESOURCE_CLEANUP_RULE`).
+Supervisor `kill-worker` / `workerClosed` / operator `stop` run
+`cleanupWorktreeRuntime` → `stopWorktreeApp` (`./init.sh stop` when present,
+else `.harness/app.pid`, plus worktree-scoped process and compose cleanup).
 `kill-worker` targets the Run State owner process tree before falling back to the
 nested agent child PID.
-If `docker ps` still shows WI/AC leftovers (`wi-ac-*`, `ac0*`, completed
-subproject stacks) while no live worker owns them, treat that as a workflow
-defect: stop the orphans, then harden generator prompts/skills the same turn
-(fail-closed) — do not only narrate.
+If `docker ps` still shows WI/AC leftovers while no live worker owns them, treat
+that as a workflow defect: stop the orphans, then harden generator prompts/skills
+the same turn (fail-closed) - do not only narrate.
 
 For multi-supervisor monorepo ops (empty-fleet recovery, composer-2.5 ops host,
-stream smoke checks), use the sibling `monorepo-supervisor-ops` skill.
+worker-log smoke checks), use the sibling `monorepo-supervisor-ops` skill.
 
 ## Worker monitoring
 

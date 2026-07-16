@@ -26,8 +26,34 @@ const defaultGenerator = existsSync(bundledGenerator) ? bundledGenerator : names
 const repo = resolve(options.repo || '.')
 const generatorDir = resolve(options['generator-dir'] || defaultGenerator)
 const libDir = join(generatorDir, 'lib')
+/** Control Plane modules live only under skills/supervisor/lib. */
+const CONTROL_MODULES = new Set([
+  'control-journal.mjs',
+  'control-beacon.mjs',
+  'fleet-snapshot.mjs',
+  'supervisor-tick.mjs',
+  'supervisor-admission.mjs',
+  'wake-triage.mjs',
+  'supervisor-lease.mjs',
+  'resource-governor.mjs',
+  'host-resources.mjs',
+  'orphan-claims.mjs',
+  'runtime-view.mjs',
+])
+/** Load control modules from supervisor/lib; shared execution primitives from generator/lib. */
 async function importLib(name) {
-  return import(pathToFileURL(join(libDir, name)).href)
+  if (CONTROL_MODULES.has(name)) {
+    const fromSupervisor = join(supervisorLib, name)
+    if (!existsSync(fromSupervisor)) {
+      throw new Error(`control module missing: ${fromSupervisor} (expected skills/supervisor/lib/${name})`)
+    }
+    return import(pathToFileURL(fromSupervisor).href)
+  }
+  const fromGenerator = join(libDir, name)
+  if (!existsSync(fromGenerator)) {
+    throw new Error(`generator module missing: ${fromGenerator} (expected skills/generator/lib/${name})`)
+  }
+  return import(pathToFileURL(fromGenerator).href)
 }
 const { readJson, atomicJson } = await importLib('fs-json.mjs')
 const { isProviderQuotaLimited } = await importLib('worker-outcome.mjs')
@@ -41,7 +67,6 @@ const {
 } = await importLib('orphan-claims.mjs')
 const { scopeClaims, runStateFile: runStatePath } = await importLib('project-keys.mjs')
 const { resolveProjectTopology } = await importLib('project-topology.mjs')
-const { cleanupBrowserOrphans } = await importLib('browser-cleanup.mjs')
 const { cleanupWorktreeRuntime } = await importLib('worktree-teardown.mjs')
 const { acquireComposeShare } = await importLib('compose-shared.mjs')
 const {
@@ -61,13 +86,16 @@ const {
   planWorkerCleanupTargets,
   terminateProcessTree,
   processGroupForWorker,
+  cleanupBrowserOrphans,
 } = await importLib('worker-lifecycle.mjs')
-const { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal } = await importLib('supervisor-tick.mjs')
-const { planTickAdmission, goalReviewGate } = await importLib('supervisor-admission.mjs')
+const { drainRetryQueue, applyRetryResumeOutcome, shouldFinalizePendingGoal, nextTickDelay, tickWatchPaths } = await importLib('supervisor-tick.mjs')
+const {
+  planTickAdmission,
+  goalReviewGate,
+  pruneOrphanPendingInputs,
+  isCrashBoundContext,
+} = await importLib('supervisor-admission.mjs')
 const { isCheckoutCleanForGoalReview } = await importLib('checkout-dirt.mjs')
-const { pruneOrphanPendingInputs, isCrashBoundContext } = await importLib('supervisor-claims.mjs')
-const { planRuntimeRecovery, shouldEmitEmptyFleet } = await importLib('runtime-recovery.mjs')
-const { nextTickDelay, tickWatchPaths } = await importLib('tick-context.mjs')
 const { selectClaim, resumeClaim, releaseClaim, mergeLockHolder, clearDeadLock, clearStaleGeneratorLocks } = await importLib('claim-lease.mjs')
 const { integrationBranchName, integrationBranchRef } = await importLib('integration-branch.mjs')
 const { ledgerPath, readLedger, applyLedgerToCatalog } = await importLib('execution-ledger.mjs')
@@ -80,6 +108,8 @@ const {
   fleetSnapshotFromState,
   isEmptyFleetActionable,
   buildFleetSnapshot,
+  planRuntimeRecovery,
+  shouldEmitEmptyFleet,
 } = await importLib('fleet-snapshot.mjs')
 const { runSupervisorPreflight } = await import(pathToFileURL(join(supervisorLib, 'supervisor-preflight.mjs')).href)
 const orchestrator = join(generatorDir, 'orchestrator.mjs')
@@ -1334,7 +1364,7 @@ class Supervisor {
       // Ghost PID: run-state still names a live process, but this supervisor does
       // not own a worker for the context. Do not pretend the retry succeeded -
       // that cleared retryQueue and left an empty fleet. Terminate the orphan so
-      // a later tick can force-resume; rehydrate already ran above.
+      // a later tick can force-resume.
       if (health.health === 'live' && !this.workers.has(context)) {
         for (const pid of [runState.ownerPid, runState.childPid]) {
           if (!processAlive(pid)) continue

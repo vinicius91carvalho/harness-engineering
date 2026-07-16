@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { hostname } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { readJson, atomicJson } from './fs-json.mjs'
+import { readJson, atomicJson } from '../../generator/lib/fs-json.mjs'
 import { processAlive as sharedProcessAlive } from './orphan-claims.mjs'
 
 /**

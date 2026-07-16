@@ -49,15 +49,14 @@ conversations, stdout, or runtime logs.
 
 ## STEP 2: Bring up the app and watch its logs
 
-Start the app via `init.sh` lifecycle subcommands (it owns `.harness/app.pid` and `dev.log`):
+Follow `APP_START_RULE` from `skills/generator/prompts/feature.mjs` (runtime prompts
+inject it). Short form: start via `init.sh` when a live app is required:
 
 ```bash
 PORT="$PORT" FRONTEND_PORT="$FRONTEND_PORT" ./init.sh start
 ```
 
-- `start` is idempotent when already healthy; do not background it yourself or write `app.pid`.
-- Wait at most 60 seconds for the initializer's `Ready` line; on timeout, record
-  the last 100 log lines as an Evidence Artifact and fail the run.
+- Skip start for grep/static or CLI-only checks.
 - While you implement and test, arm a **Monitor** on the log so errors surface as
   they happen (cover failures, not just the happy path):
   `tail -f dev.log | grep -E --line-buffered "Ready|listening|ERROR|Error|Traceback|EADDRINUSE|FAIL"`

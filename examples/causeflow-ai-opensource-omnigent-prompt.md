@@ -1,5 +1,9 @@
 # CauseFlow AI open-source/Docker migration - archived operator brief
 
+> **Historical note:** This brief predates background-only workers.
+> Pane-era herdr guidance, `detectPaneOrchestratorExited`, and visible-pane health checks no longer match the current runtime.
+> Prefer `skills/supervisor/SKILL.md` and worker logs under `.git/harness-control/<project>/logs/` for live ops.
+
 **Status:** delivered **2026-07-12**.
 All four subprojects (`core`, `web`, `relay`, `public-docs`) reached `status: complete` with persisted `run_completed` events and Goal Review passed on the integrated plan branch (`plan/opensource-docker`).
 

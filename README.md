@@ -26,24 +26,28 @@ A local checkout of this repo is different: `./install.sh` uses the working tree
 
 ## Examples
 
-What a live run looks like in practice: supervisor status in chat and background workers monitored through `harness-control status` and worker logs.
+What a live CauseFlow-style monorepo run looks like: supervisor ticks in chat, background Work Item workers in separate panes, and the same bearings from `harness-control status`.
+
+Canonical monitoring is scripted (`harness-control status`, `fleet-snapshot`, logs under `.git/harness-control/<project>/logs/`).
+The screenshots below are chat / optional multi-pane UI - not the CLI JSON itself.
 
 ### Supervisor status
 
-During a live run the supervisor prints periodic ticks, per-context rows, merge-lock remediation, and worker health.
-The same snapshot is available from `harness-control.mjs status`.
+During a live run the supervisor prints periodic ticks: per-context rows, merge-lock remediation, and worker health.
+`harness-control.mjs status` returns that same snapshot as JSON, independent of which chat host you use.
 
 <p align="center">
-  <img src="assets/example-supervisor.png" alt="Supervisor status table showing core progress, merge-lock remediation, and per-context worker rows" width="960">
+  <img src="assets/example-supervisor.png" alt="Chat overlay of a supervisor tick: core progress, merge-lock remediation, and per-context worker rows during a CauseFlow monorepo run" width="960">
 </p>
 
 ### Agent workers (background)
 
 Each Work Item runs as a background orchestrator process.
-Monitor progress through `harness-control status`, `fleet-snapshot`, and logs under `.git/harness-control/<project>/logs/`.
+Day-to-day monitoring is `harness-control status`, `fleet-snapshot`, and worker logs under `.git/harness-control/<project>/logs/`.
+The screenshot is an optional multi-pane terminal workspace (herdr) with the supervisor chat plus worker tabs - useful for ops, not required by the harness.
 
 <p align="center">
-  <img src="assets/example-agent-herdr.png" alt="Supervisor status and worker health rows during a live run" width="960">
+  <img src="assets/example-agent-supervisor.png" alt="Optional multi-pane workspace: supervisor tick table beside background worker tabs for merge, QA, and integration-QA Work Items" width="960">
 </p>
 
 ### Real project: CauseFlow AI
@@ -115,7 +119,7 @@ The orchestrator picks them per phase from `agents/` and optional `.harness/role
 
 | Agent | Phase | Role |
 | --- | --- | --- |
-| `initializer` | Scaffold (once) | Queue + `init.sh` (`start|stop|restart|status|help`) + first commit - never implements features |
+| `initializer` | Scaffold (once) | Queue + `init.sh` from `skills/generator/templates/init.sh` (`start|stop|restart|status|help`) + first commit - never implements features |
 | `coding-agent` | Code | Implements one Work Item in its worktree |
 | `qa-agent` | QA / Integrated Verification | Independent browser or HTTP checks |
 
@@ -179,22 +183,34 @@ Retries: **3 Attempts** per Work Item (orchestrator), **5 resume tries** per blo
 
 ## Install
 
-Requires Git, Bash, **[Node.js 18 or newer](https://nodejs.org/)**, `jq`, and one authenticated tool.
+Requires Git, Bash, **[Node.js 18 or newer](https://nodejs.org/)**, `jq` (not auto-installed), and one authenticated tool.
+
+**v3.0 is a clean break.**
+There is no mid-flight migration from 2.x.
+Remove the previous harness install (plugin/skills under your host’s user or project dirs), then install 3.x fresh.
+Control modules live only under `skills/supervisor/lib/`; herdr runtime helpers are gone (optional herdr UI for ops is still fine).
 
 ```sh
-# latest release (default)
+# latest release, user (global) scope (default)
 curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh
 
 # pin a release
-curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh -s -- --version v2.1.0
-# or: VERSION=v2.1.0 curl -sSL …/main/install.sh | sh
+curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh -s -- --version v3.0.0
+# or: VERSION=v3.0.0 curl -sSL …/main/install.sh | sh
+
+# install into a specific project folder (paths depend on --cli)
+cd /path/to/app
+curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh -s -- --cli opencode --scope project --project-dir .
 ```
 
 `main` in the URL is only the installer bootstrap.
-The script resolves the latest `vX.Y.Z` release tag (or your pin via `--version`, `VERSION`, or `HARNESS_INSTALL_REF`) and clones that tag — not the moving `main` tip.
+The script resolves the latest `vX.Y.Z` release tag (or your pin via `--version`, `VERSION`, or `HARNESS_INSTALL_REF`) and clones that tag - not the moving `main` tip.
 A local checkout of this repository installs from the working tree instead (dev mode).
 
+Interactively the installer asks for host (Claude, Codex, OpenCode, Pi, Cursor Agent), then install scope (`user` global vs `project` folder; Claude also offers `local`), then the checklist.
+`--scope` / `--project-dir` (PowerShell: `-Scope` / `-ProjectDir`) skip the scope menu.
 Arrow-key checklist: keep `harness` checked; add MCP or extras if you want them.
+User-only extras (`status-line`, `shared-config`) are skipped for project scope.
 The optional status line reads the CLI payload once per render, shows 5h and 7d renew countdowns when reset timestamps are present, and only enumerates linked Git worktrees when the repo actually has a worktree registry.
 Windows: [`install.ps1`](install.ps1). Details: [installer docs](docs/installer/README.md).
 
@@ -361,14 +377,16 @@ Progress flags (`implementation`, `qa`, `integration`) are defaults in the catal
 
 Dependencies need `integration:true`; Goal Review still runs afterward.
 
-Monorepos: run setup once at the Git root — it writes `.harness/projects.json` and scopes each app.
+Monorepos: run setup once at the Git root.
+Boundary detection is candidates-only until you confirm; then it registers selected projects in `.harness/projects.json`.
 A goal that spans multiple registered projects anchors `project_specs.xml` at the Git root instead of one subproject, with each Acceptance Check naming the subproject it changes.
 See the [monorepo guide](https://vinicius91carvalho.github.io/harness-engineering/#monorepo).
 
 ## Monitor a run
 
 In chat: `/harness:supervisor` (or `/harness-supervisor` on OpenCode).
-See [Examples](#examples) for a live supervisor status screenshot.
+See [Examples](#examples) for live-run screenshots (chat ticks and an optional multi-pane workspace).
+Poll the same bearings with `harness-control status` below.
 
 Script path (OpenCode install example):
 

@@ -8,10 +8,9 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readJson, atomicJson } from './lib/fs-json.mjs'
 import { VERDICT_HINT, isProviderQuotaLimited, fallbackReason } from './lib/worker-outcome.mjs'
-import { writeDurable } from './lib/worker-result.mjs'
-import { cleanupBrowserOrphans } from './lib/browser-cleanup.mjs'
-import { cleanupWorktreeRuntime } from './lib/worktree-teardown.mjs'
-import { appendOwnedRuntime } from './lib/runtime-manifest.mjs'
+import { writeDurable } from './lib/worker-outcome.mjs'
+import { cleanupWorktreeRuntime, appendOwnedRuntime } from './lib/worktree-teardown.mjs'
+import { cleanupBrowserOrphans, startStateHeartbeat } from './lib/worker-lifecycle.mjs'
 import { buildHostCommand, hostCommands, roleNames, runHostAgentSession, terminateHostProcess } from './adapters/hosts.mjs'
 import { integrateCheckpoint } from './lib/integrate-checkpoint.mjs'
 import { featurePrompt as buildFeaturePrompt, RESOURCE_CLEANUP_RULE } from './prompts/feature.mjs'
@@ -20,7 +19,7 @@ import { resolveProjectRoot, resolveProjectTopology, runStatePath } from './lib/
 import { createWorkflowState } from './lib/workflow-state.mjs'
 import { buildPlan, buildCandidates, lastCoder, mkey, bumpStrike } from './lib/route-plan.mjs'
 import { blockClaim, mergeAcquire, mergeRelease } from './lib/claim-lease.mjs'
-import { requestAdmission, releaseAdmission, defaultGovernorOptions } from './lib/resource-governor.mjs'
+import { requestAdmission, releaseAdmission, defaultGovernorOptions } from '../supervisor/lib/resource-governor.mjs'
 import { workItemObservationMethods } from './lib/observation-method.mjs'
 import { runAttemptLoop } from './workflow/attempt-machine.mjs'
 import { putEvidenceArtifact, newRunId } from './lib/evidence-artifacts.mjs'
@@ -32,7 +31,6 @@ import {
   formatJobsDoneForPrompt,
   incompleteIds,
 } from './lib/jobs-done.mjs'
-import { startStateHeartbeat } from './lib/state-heartbeat.mjs'
 
 function fail(message) {
   process.stderr.write(`orchestrator: ${message}\n`)
@@ -159,7 +157,7 @@ process.on('SIGTERM', () => writeInterruptedState('SIGTERM'))
 async function ensureGovernorAdmission() {
   if (process.env.HARNESS_TEST_SKIP_GOVERNOR === '1') return
   if (governorReservationId) {
-    const { observeCapacity } = await import('./lib/resource-governor.mjs')
+    const { observeCapacity } = await import('../supervisor/lib/resource-governor.mjs')
     const observed = await observeCapacity(commonGit, {
       ...defaultGovernorOptions(),
       provider: options.host,

@@ -75,11 +75,11 @@ mv "$TMP/bin/opencode.off" "$TMP/bin/opencode"
 rm -rf "$HOME/.opencode"
 pass 'OpenCode is detected in its official user install directory'
 
-if "$ROOT/install.sh" --cli codex --scope user --no </dev/null >"$TMP/out" 2>"$TMP/err"; then
-  fail '--scope must be rejected for non-Claude selections'
+if "$ROOT/install.sh" --cli codex --scope local --no </dev/null >"$TMP/out" 2>"$TMP/err"; then
+  fail '--scope local must be rejected for non-Claude selections'
 fi
-grep -q 'only valid.*Claude' "$TMP/err" || fail 'scope error should identify Claude restriction'
-pass 'scope is Claude-only'
+grep -q 'local is only valid when Claude' "$TMP/err" || fail 'local scope error should identify Claude restriction'
+pass 'local scope is Claude-only'
 
 : >"$HARNESS_TEST_LOG"
 before=$(find "$HOME" -mindepth 1 -print | sort)
@@ -87,14 +87,95 @@ before=$(find "$HOME" -mindepth 1 -print | sort)
 after=$(find "$HOME" -mindepth 1 -print | sort)
 [ "$before" = "$after" ] || fail 'dry-run wrote into HOME'
 [ ! -s "$HARNESS_TEST_LOG" ] || fail 'dry-run executed a host command'
-grep -q 'configure playwright MCP for:claude codex opencode pi agent' "$TMP/out" || fail 'Playwright should target every host'
+grep -q 'configure playwright MCP for:claude codex opencode pi agent (scope: user)' "$TMP/out" || fail 'Playwright should target every host'
 grep -q 'pip install -U crawl4ai' "$TMP/out" || fail 'Crawl4AI pip install should appear in dry-run'
-grep -q 'install crawl4ai skill to ~/.claude/skills/crawl4ai' "$TMP/out" || fail 'Crawl4AI Claude skill install should appear in dry-run'
-grep -q 'npx skills add nutlope/hallmark --skill hallmark -g' "$TMP/out" || fail 'hallmark skill install should appear in dry-run'
+grep -q "install crawl4ai skill to $HOME/.claude/skills/crawl4ai" "$TMP/out" || fail 'Crawl4AI Claude skill install should appear in dry-run'
+grep -q 'npx skills add nutlope/hallmark --skill hallmark -g --yes' "$TMP/out" || fail 'user-scope hallmark must use -g'
+
 grep -q 'curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh' "$TMP/out" || fail 'no-mistakes installer should appear in dry-run'
 grep -q 'no-mistakes init in each repository' "$TMP/out" || fail 'no-mistakes init follow-up should appear in dry-run'
 grep -q 'curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh' "$TMP/out" || fail 'treehouse installer should appear in dry-run'
 pass 'dry-run performs no writes or host commands'
+
+PROJECT=$TMP/project
+mkdir -p "$PROJECT"
+rm -rf "$HOME/.config/opencode" "$HOME/.cursor/plugins/local" "$HOME/.agents/skills"
+: >"$HARNESS_TEST_LOG"
+before=$(find "$HOME" -mindepth 1 -print | sort)
+before_project=$(find "$PROJECT" -mindepth 1 -print 2>/dev/null | sort || true)
+"$ROOT/install.sh" --cli opencode --scope project --project-dir "$PROJECT" --yes --dry-run </dev/null >"$TMP/out"
+after=$(find "$HOME" -mindepth 1 -print | sort)
+after_project=$(find "$PROJECT" -mindepth 1 -print 2>/dev/null | sort || true)
+[ "$before" = "$after" ] || fail 'project dry-run wrote into HOME'
+[ "$before_project" = "$after_project" ] || fail 'project dry-run wrote into project dir'
+[ ! -s "$HARNESS_TEST_LOG" ] || fail 'project dry-run executed a host command'
+grep -q "install namespaced OpenCode skills, agents, and commands for harness into $PROJECT/.opencode" "$TMP/out" \
+  || fail 'OpenCode project dry-run should target .opencode'
+grep -q "cd $PROJECT && npx skills add nutlope/hallmark --skill hallmark --yes" "$TMP/out" \
+  || fail 'project scope should install hallmark in project dir without -g'
+if grep -q 'npx skills add nutlope/hallmark --skill hallmark -g' "$TMP/out"; then
+  fail 'project-scope hallmark must not use -g'
+fi
+grep -q "cd $PROJECT && no-mistakes init" "$TMP/out" \
+  || fail 'project scope should run no-mistakes init in project dir'
+"$ROOT/install.sh" --cli claude --scope project --project-dir "$PROJECT" --yes --dry-run </dev/null >"$TMP/out"
+grep -q 'skipping status-line (user scope only)' "$TMP/out" || fail 'project scope should skip status-line for Claude'
+grep -q 'skipping shared-config (user scope only)' "$TMP/out" || fail 'project scope should skip shared-config'
+pass 'project-scope dry-run targets project paths and skips user-only extras'
+
+: >"$HARNESS_TEST_LOG"
+"$ROOT/install.sh" --cli opencode --scope project --project-dir "$PROJECT" --no </dev/null >"$TMP/out"
+test -f "$PROJECT/.opencode/skills/harness-generator/SKILL.md" || fail 'OpenCode project skill missing'
+test ! -e "$HOME/.config/opencode/skills/harness-generator/SKILL.md" \
+  || fail 'OpenCode project install must not write user config skills'
+[ ! -s "$HARNESS_TEST_LOG" ] || fail 'OpenCode project install should not invoke another host'
+pass 'OpenCode project scope installs under .opencode'
+
+: >"$HARNESS_TEST_LOG"
+"$ROOT/install.sh" --cli agent --scope project --project-dir "$PROJECT" --no </dev/null >"$TMP/out"
+test -f "$PROJECT/.cursor/plugins/local/harness/.cursor-plugin/plugin.json" \
+  || fail 'Cursor project plugin missing'
+test ! -e "$HOME/.cursor/plugins/local/harness/.cursor-plugin/plugin.json" \
+  || fail 'Cursor project install must not write user plugin dir'
+pass 'Cursor project scope installs under .cursor/plugins/local'
+
+: >"$HARNESS_TEST_LOG"
+"$ROOT/install.sh" --cli pi --scope project --project-dir "$PROJECT" --no </dev/null >"$TMP/out"
+test -f "$PROJECT/.agents/skills/planner/SKILL.md" || fail 'Pi project planner skill missing'
+test ! -e "$HOME/.agents/skills/planner/SKILL.md" || fail 'Pi project install must not write user skills'
+if grep -Eq '^pi remove ' "$HARNESS_TEST_LOG"; then fail 'Pi project install must not remove user package clones'; fi
+pass 'Pi project scope installs under .agents/skills'
+
+: >"$HARNESS_TEST_LOG"
+"$ROOT/install.sh" --cli codex --scope project --project-dir "$PROJECT" --no </dev/null >"$TMP/out"
+test -f "$PROJECT/.codex-plugin/plugin.json" || fail 'Codex project plugin manifest missing'
+test -f "$PROJECT/.agents/plugins/marketplace.json" || fail 'Codex project marketplace missing'
+grep -q "codex plugin marketplace add $PROJECT" "$HARNESS_TEST_LOG" \
+  || grep -q "codex plugin marketplace upgrade $PROJECT" "$HARNESS_TEST_LOG" \
+  || fail 'Codex project marketplace registration missing'
+grep -q '^codex plugin add harness@harness-engineering$' "$HARNESS_TEST_LOG" || fail 'Codex project plugin add missing'
+pass 'Codex project scope installs marketplace layout into project'
+
+: >"$HARNESS_TEST_LOG"
+"$ROOT/install.sh" --cli claude --scope project --project-dir "$PROJECT" --no </dev/null >"$TMP/out"
+grep -q '^claude plugin update harness@harness-engineering --scope project$' "$HARNESS_TEST_LOG" \
+  || fail 'Claude project plugin refresh must use --scope project'
+pass 'Claude project scope forwards --scope project'
+
+bases=$(node "$ROOT/scripts/install-reconcile.mjs" resolve-install-bases project "$PROJECT")
+printf '%s' "$bases" | jq -e --arg p "$PROJECT" '
+  .opencode == ($p + "/.opencode") and
+  .agentsSkills == ($p + "/.agents/skills") and
+  .cursorPluginsLocal == ($p + "/.cursor/plugins/local")
+' >/dev/null || fail 'resolve-install-bases project paths mismatch'
+node "$ROOT/scripts/install-reconcile.mjs" scopes hallmark | grep -Eq '(^| )project( |$)' \
+  || fail 'hallmark scopes should include project'
+node "$ROOT/scripts/install-reconcile.mjs" scopes 'status-line' | grep -qx user \
+  || fail 'status-line scopes should be user-only'
+node "$ROOT/scripts/install-reconcile.mjs" skills-add-args hallmark | jq -e '
+  .repo == "nutlope/hallmark" and .skill == "hallmark" and .globalWhenUserScope == true
+' >/dev/null || fail 'skills-add-args should project hallmark acquisition from catalog'
+pass 'install-reconcile resolves scope bases and module scopes'
 
 : >"$HARNESS_TEST_LOG"
 "$ROOT/install.sh" --cli claude --no </dev/null >"$TMP/out"
@@ -198,13 +279,17 @@ fi
 if grep -q 'codebase-memory-mcp' "$ROOT/.claude-plugin/marketplace.json"; then
   fail 'memory MCP must not be represented as a marketplace plugin'
 fi
-if grep -Eq '"name": "(hallmark|no-mistakes|treehouse)"' "$ROOT/.claude-plugin/marketplace.json"; then
+if grep -Eq '"name": "(hallmark|lavish|lavish-axi|no-mistakes|treehouse)"' "$ROOT/.claude-plugin/marketplace.json"; then
   fail 'non-marketplace externals must not be listed in the Claude marketplace'
 fi
 if grep -Eq 'skill-creator|hookify|claude-md-management|claude-code-setup|ralph-loop|typescript-lsp|pyright-lsp|rust-analyzer-lsp|"name": "remember"|"name": "codex"' "$ROOT/.claude-plugin/marketplace.json"; then
   fail 'Claude-only plugins must not remain in the marketplace'
 fi
 pass 'plugin catalogs keep externals and Claude-only integrations out of marketplaces'
+
+node "$ROOT/scripts/install-reconcile.mjs" validate >/dev/null \
+  || fail 'install-reconcile validate (marketplaces + AGENTS/CLAUDE projection) failed'
+pass 'install-reconcile validate is clean (generated marketplaces + agent docs)'
 
 node -e '
 const fs = require("fs");
@@ -276,7 +361,9 @@ chmod +x "$TMP/bin/git"
 
 "$ROOT/install.sh" --help >"$TMP/out" 2>&1 || fail '--help should succeed'
 grep -q -- '--version' "$TMP/out" || fail 'help should document --version'
-pass 'help documents --version'
+grep -q -- '--project-dir' "$TMP/out" || fail 'help should document --project-dir'
+grep -q -- '--scope' "$TMP/out" || fail 'help should document --scope'
+pass 'help documents --version and scope flags'
 
 mkdir -p "$TMP/remote-dry" "$TMP/systmp2"
 cp "$ROOT/install.sh" "$TMP/remote-dry/install.sh"

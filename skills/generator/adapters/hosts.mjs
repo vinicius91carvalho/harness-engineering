@@ -1,36 +1,29 @@
 import { hasCompleteVerdict, parseVerdict } from '../lib/worker-outcome.mjs'
-import { spawnHostAgent, terminateHostProcess } from '../lib/agent-spawn.mjs'
+import { spawnHostAgent, terminateHostProcess } from '../lib/worker-lifecycle.mjs'
 
-export const hostCommands = {
-  claude: (prompt) => ['claude', ['-p', prompt]],
-  codex: (prompt) => ['codex', ['exec', '--dangerously-bypass-approvals-and-sandbox', prompt]],
-  opencode: (prompt) => ['opencode', ['run', '--model', 'opencode-go/deepseek-v4-flash', prompt]],
-  pi: (prompt) => ['pi', ['--model', 'opencode-go/deepseek-v4-flash', '-p', prompt]],
-  agent: (prompt) => ['agent', ['-p', '--force', '--trust', '--sandbox', 'disabled', prompt]],
-}
-
-export const roleNames = {
-  CODING: 'coding',
-  QA: 'validation',
-  INTEGRATION_QA: 'validation',
-  REPAIR_PLAN: 'repairPlanning',
-  MERGE: 'coding',
-  GOAL_REVIEW: 'goalReview',
+/** Default models for hosts that require one when roles.json omits model. */
+const DEFAULT_HOST_MODELS = {
+  opencode: 'opencode-go/deepseek-v4-flash',
+  pi: 'opencode-go/deepseek-v4-flash',
 }
 
 /** Build a host CLI invocation for `.harness/roles.json` routing with an optional model override. */
 export function buildHostCommand(harness, prompt, model) {
   switch (harness) {
     case 'claude':
-      return model ? ['claude', ['-p', '--model', model, prompt]] : hostCommands.claude(prompt)
+      return model ? ['claude', ['-p', '--model', model, prompt]] : ['claude', ['-p', prompt]]
     case 'codex':
       return model
         ? ['codex', ['exec', '--model', model, '--dangerously-bypass-approvals-and-sandbox', prompt]]
-        : hostCommands.codex(prompt)
-    case 'opencode':
-      return ['opencode', ['run', ...(model ? ['--model', model] : []), prompt]]
-    case 'pi':
-      return ['pi', [...(model ? ['--model', model] : []), '-p', prompt]]
+        : ['codex', ['exec', '--dangerously-bypass-approvals-and-sandbox', prompt]]
+    case 'opencode': {
+      const resolved = model || DEFAULT_HOST_MODELS.opencode
+      return ['opencode', ['run', '--model', resolved, prompt]]
+    }
+    case 'pi': {
+      const resolved = model || DEFAULT_HOST_MODELS.pi
+      return ['pi', ['--model', resolved, '-p', prompt]]
+    }
     case 'agent': {
       const base = ['-p', '--force', '--trust', '--sandbox', 'disabled']
       return model
@@ -40,6 +33,24 @@ export function buildHostCommand(harness, prompt, model) {
     default:
       throw new Error(`unknown harness: ${harness}`)
   }
+}
+
+/** Direct-host shortcuts; same default model policy as `buildHostCommand`. */
+export const hostCommands = {
+  claude: (prompt) => buildHostCommand('claude', prompt),
+  codex: (prompt) => buildHostCommand('codex', prompt),
+  opencode: (prompt) => buildHostCommand('opencode', prompt),
+  pi: (prompt) => buildHostCommand('pi', prompt),
+  agent: (prompt) => buildHostCommand('agent', prompt),
+}
+
+export const roleNames = {
+  CODING: 'coding',
+  QA: 'validation',
+  INTEGRATION_QA: 'validation',
+  REPAIR_PLAN: 'repairPlanning',
+  MERGE: 'coding',
+  GOAL_REVIEW: 'goalReview',
 }
 
 /**
@@ -53,6 +64,7 @@ export async function runHostAgentSession({
   env = {},
   timeoutMs = Number(process.env.HARNESS_AGENT_TIMEOUT_MS || 1_800_000),
   onChildPid = null,
+  onAgentOutput = null,
 } = {}) {
   return await new Promise((resolveRun) => {
     let child = spawnHostAgent(program, args, { cwd, env })
@@ -89,11 +101,13 @@ export async function runHostAgentSession({
 
     child.stdout?.on('data', (data) => {
       stdout = `${stdout}${data}`.slice(-1_000_000)
+      if (onAgentOutput) onAgentOutput(data, 'stdout')
       maybeEarlyExitOnVerdict()
     })
 
     child.stderr?.on('data', (data) => {
       stderr = `${stderr}${data}`.slice(-1_000_000)
+      if (onAgentOutput) onAgentOutput(data, 'stderr')
       maybeEarlyExitOnVerdict()
     })
 

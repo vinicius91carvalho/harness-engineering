@@ -35,6 +35,7 @@ export const REPAIR_ACTIONS = [
 export const AUTO_RETRY_PREFIXES = [
   'Retry could not resume the Claim Lease',
   'Worker exited with code',
+  // Legacy "pane" wording still matches older Control Event / run-state reasons.
   'Harness worker pane ended before run state completed',
   'Harness worker is idle or waiting',
   'integration could not complete',
