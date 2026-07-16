@@ -1,8 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtempSync, writeFileSync, existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import {
   shouldCloseCursorSubagentEntry,
   planCursorSubagentTabReap,
+  applyCursorSubagentTabReap,
   isCursorSubagentAgent,
   paneLooksLikeCursorSubagent,
   logviewAliveForMeta,
@@ -178,4 +182,41 @@ test('paneLooksLikeCursorSubagent matches Task-style labels', () => {
   assert.equal(paneLooksLikeCursorSubagent({ agent: 'cursor-sub-x' }), true)
   assert.equal(paneLooksLikeCursorSubagent({ label: '🧮 generalPurpose: Diagnose' }), true)
   assert.equal(paneLooksLikeCursorSubagent({ agent: 'worker-causeflow-core' }), false)
+})
+
+test('applyCursorSubagentTabReap keeps registry after transient close failure', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cursor-reap-'))
+  const metaPath = join(root, 'meta.json')
+  const registryPath = join(root, 'registry.json')
+  writeFileSync(metaPath, '{}\n')
+  const registry = { sub1: { tab_id: 'tab-1', meta_path: metaPath } }
+  const result = applyCursorSubagentTabReap({
+    closes: [{ registryId: 'sub1', tabId: 'tab-1', metaPath }],
+  }, {
+    registryPath,
+    registry,
+    run: () => ({ status: 1, stderr: 'temporary herdr failure' }),
+  })
+  assert.equal(result.closed, 0)
+  assert.equal(result.errors.length, 1)
+  assert.deepEqual(result.registry, registry)
+  assert.equal(existsSync(metaPath), true)
+})
+
+test('applyCursorSubagentTabReap prunes registry when tab is already gone', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cursor-reap-'))
+  const metaPath = join(root, 'meta.json')
+  const registryPath = join(root, 'registry.json')
+  writeFileSync(metaPath, '{}\n')
+  const result = applyCursorSubagentTabReap({
+    closes: [{ registryId: 'sub1', tabId: 'tab-1', metaPath }],
+  }, {
+    registryPath,
+    registry: { sub1: { tab_id: 'tab-1', meta_path: metaPath } },
+    run: () => ({ status: 1, stderr: 'tab_not_found' }),
+  })
+  assert.equal(result.closed, 0)
+  assert.equal(result.errors.length, 1)
+  assert.deepEqual(result.registry, {})
+  assert.equal(existsSync(metaPath), false)
 })

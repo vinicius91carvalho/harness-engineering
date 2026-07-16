@@ -41,6 +41,10 @@ command -v herdr >/dev/null 2>&1 || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
 cursor_home="${HOME:-$(python3 -c 'import pathlib; print(pathlib.Path.home())' 2>/dev/null)}"
 [ -n "$cursor_home" ] || exit 0
+script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd -P)"
+logview_path="${script_dir}/herdr-subagent-logview.py"
+[ -f "$logview_path" ] || logview_path="${cursor_home}/.cursor/herdr-subagent-logview.py"
+[ -f "$logview_path" ] || logview_path=""
 
 HERDR_ACTION="$action" \
 HERDR_HOOK_INPUT_FILE="$hook_input_file" \
@@ -48,7 +52,7 @@ HERDR_TRANSCRIPTS_DIR="${AGENT_TRANSCRIPTS:-}" \
 HERDR_REGISTRY="${cursor_home}/.cursor/herdr-subagent-registry.json" \
 HERDR_REGISTRY_LOCK="${cursor_home}/.cursor/herdr-subagent-registry.lock" \
 HERDR_META_DIR="${cursor_home}/.cursor/herdr-subagent-meta" \
-HERDR_LOGVIEW="${cursor_home}/.cursor/herdr-subagent-logview.py" \
+HERDR_LOGVIEW="${logview_path}" \
 HERDR_SOURCE="user:cursor-subagent" \
 python3 - <<'PY'
 import glob

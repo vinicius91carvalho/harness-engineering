@@ -1317,6 +1317,17 @@ class Supervisor {
         await this.finalizeWorkerRecord(key, worker)
         return
       }
+      case 'operational_retry': {
+        this.state.retryQueue ||= {}
+        this.state.retryQueue[key] = {
+          guidance: plan.guidance,
+          attempts: this.state.retryQueue[key]?.attempts || 0,
+        }
+        if (plan.clearCrashCount) delete this.state.crashCounts?.[key]
+        await this.save()
+        await this.finalizeWorkerRecord(key, worker)
+        return
+      }
       case 'goal_complete':
         if (Object.keys(this.state.retryQueue || {}).length === 0) await this.completeGoal(plan.result)
         else this.pendingGoalResult = plan.result

@@ -240,6 +240,10 @@ export function removeMetaFile(metaPath) {
   try { unlinkSync(metaPath) } catch { /* ignore */ }
 }
 
+export function tabCloseErrorMeansGone(error) {
+  return /tab[_ -]?not[_ -]?found|no such tab|tab .*not found|not found.*tab|unknown tab/i.test(String(error || ''))
+}
+
 /**
  * Detect a live logview process for a meta path.
  * @param {string} metaPath
@@ -298,19 +302,23 @@ export function applyCursorSubagentTabReap(plan, {
   let nextRegistry = registry ? { ...registry } : loadCursorSubagentRegistry(registryPath)
 
   for (const row of plan.closes) {
+    let prune = !row.tabId
     if (row.tabId) {
       const result = run('herdr', ['tab', 'close', row.tabId], {
         encoding: 'utf8',
         timeout: 10_000,
       })
       if (result.status !== 0) {
-        errors.push({ tabId: row.tabId, error: result.stderr || result.stdout || 'close failed' })
+        const error = result.stderr || result.stdout || 'close failed'
+        errors.push({ tabId: row.tabId, error })
+        prune = tabCloseErrorMeansGone(error)
       } else {
         closed += 1
+        prune = true
       }
     }
-    if (row.metaPath) removeMetaFile(row.metaPath)
-    if (row.registryId && nextRegistry[row.registryId]) {
+    if (prune && row.metaPath) removeMetaFile(row.metaPath)
+    if (prune && row.registryId && nextRegistry[row.registryId]) {
       delete nextRegistry[row.registryId]
     }
   }

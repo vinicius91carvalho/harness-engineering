@@ -490,7 +490,7 @@ export function planWorkerClosedActions({
         }
       }
       return {
-        action: 'quota_retry',
+        action: 'operational_retry',
         context: key,
         guidance: `Worker closed operationally (${classified.class}); retry: ${lastLine || reason}`,
         clearCrashCount: true,

@@ -1371,7 +1371,7 @@ test('planWorkerClosedActions host-death on context worker queues operational re
     logFile: '/tmp/core.log',
     prevTailClass: 'unknown',
   })
-  assert.equal(plan.action, 'quota_retry')
+  assert.equal(plan.action, 'operational_retry')
   assert.equal(plan.context, 'core')
   assert.equal(plan.clearCrashCount, true)
 })

@@ -420,6 +420,8 @@ See [Examples](#examples) for agent workers in a herdr workspace.
 
 In herdr mode each worker gets its own tab named `{taskId} - {role} - {project} - r{retry}` and streams the live agent session (thinking, tool calls, verdicts) via a flushed PTY (`script -f`). For `pi`, the orchestrator uses `--mode json` and formats thinking/tool events in real time. Finished workers close their tabs immediately — you should not see idle shells after a job ends.
 
+Cursor Task/Subagent mirror tabs use the bundled `skills/supervisor/herdr-cursor/herdr-subagent-logview.py` beside the hook script, with `~/.cursor` only as a local fallback for registry and legacy helper files.
+
 Optional [Collie](https://github.com/AltanS/collie) is a herdr plugin for mobile access over Tailscale — watch panes and reply from your phone when the supervisor needs input.
 
 → [Routing guide](https://vinicius91carvalho.github.io/harness-engineering/#routing) · [Herdr visibility](https://vinicius91carvalho.github.io/harness-engineering/#herdr)
