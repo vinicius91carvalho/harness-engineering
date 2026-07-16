@@ -11,6 +11,31 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [3.0.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.11.0...v3.0.0) (2026-07-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* remove herdr runtime helpers and generator control-module
+shims; skills/supervisor/lib is the sole home for control modules. Reinstall
+after upgrade - no mid-flight migration from 2.x. Multi-host installer scopes
+(user/project/local), catalog-driven hallmark skills acquisition, fail-closed
+init.sh and spec finalize, and confirm-gated setup boundary detection.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+
+### Features
+
+* add init.sh lifecycle commands and drop herdr runtime helpers ([031f878](https://github.com/vinicius91carvalho/harness-engineering/commit/031f87800499a83f77b59732d9aa5d4988fe6603))
+* clean-break v3 control plane, installer scopes, and init lifecycle ([9ca289e](https://github.com/vinicius91carvalho/harness-engineering/commit/9ca289e58019dac1226b10c7d9f07e353792e1f7))
+
+
+### Bug Fixes
+
+* **installer:** make scope paths and release-tag sort portable on macOS ([d9faf5c](https://github.com/vinicius91carvalho/harness-engineering/commit/d9faf5cfc55284b35f52fd89d7612432a6458247))
+* **installer:** resolve CLI entry across macOS /var symlinks ([60d3e1b](https://github.com/vinicius91carvalho/harness-engineering/commit/60d3e1b3e33cf990d2b8b8568fb83439dcc9a1cd))
+* **tests:** canonicalize paths for macOS /var TMPDIR layout ([4e4f0a3](https://github.com/vinicius91carvalho/harness-engineering/commit/4e4f0a3f1ca9e1d1f2132c250228848be24391ee))
+
 ## [2.11.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v2.10.0...v2.11.0) (2026-07-16)
 
 
