@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 import { appendFile, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { watch } from 'node:fs'
-import { createWriteStream, existsSync } from 'node:fs'
+import { createWriteStream, existsSync, unlinkSync } from 'node:fs'
 import { spawn, spawnSync } from 'node:child_process'
 import { hostname } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
+import {
+  resolveGeneratorDir,
+  tickFailureDelay,
+} from '../lib/runtime-layout.mjs'
 
 const commandName = process.argv[2]
 const rawArgs = process.argv.slice(3)
@@ -16,15 +20,12 @@ for (let i = 0; i < rawArgs.length; i += 2) {
   if (!key?.startsWith('--') || value === undefined) fatal(`invalid argument: ${key || ''}`)
   options[key.slice(2)] = value
 }
-if (!commandName) fatal('usage: harness-control.mjs {start|run|status|fleet-snapshot|capacity|events|ack|respond|quota|pause|resume|stop|kill-supervisor|release-supervisor-lock|kill-worker|release-lease|clear-dead-lock|preflight} --repo <path> ...')
+if (!commandName) fatal('usage: harness-control.mjs {start|run|status|fleet-snapshot|capacity|events|ack|respond|quota|pause|resume|stop|kill-supervisor|release-supervisor-lock|kill-worker|release-lease|clear-dead-lock|preflight|remediate} --repo <path> ...')
 
 const scriptFile = fileURLToPath(import.meta.url)
 const supervisorLib = resolve(dirname(scriptFile), '..', 'lib')
-const bundledGenerator = resolve(dirname(scriptFile), '..', '..', 'generator')
-const namespacedGenerator = resolve(dirname(scriptFile), '..', '..', 'harness-generator')
-const defaultGenerator = existsSync(bundledGenerator) ? bundledGenerator : namespacedGenerator
 const repo = resolve(options.repo || '.')
-const generatorDir = resolve(options['generator-dir'] || defaultGenerator)
+const generatorDir = resolveGeneratorDir(scriptFile, options['generator-dir'] || null)
 const libDir = join(generatorDir, 'lib')
 /** Control Plane modules live only under skills/supervisor/lib. */
 const CONTROL_MODULES = new Set([
@@ -37,8 +38,13 @@ const CONTROL_MODULES = new Set([
   'supervisor-lease.mjs',
   'resource-governor.mjs',
   'host-resources.mjs',
+  'host-remediation.mjs',
+  'anomaly-detect.mjs',
+  'representative-brief.mjs',
   'orphan-claims.mjs',
   'runtime-view.mjs',
+  'supervisor-preflight.mjs',
+  'runtime-layout.mjs',
 ])
 /** Load control modules from supervisor/lib; shared execution primitives from generator/lib. */
 async function importLib(name) {
@@ -63,6 +69,7 @@ const {
   classifyRunStateHealth,
   abandonGhostRun,
   listGhostClaims,
+  countLiveClaims,
   processAlive,
 } = await importLib('orphan-claims.mjs')
 const { scopeClaims, runStateFile: runStatePath } = await importLib('project-keys.mjs')
@@ -100,7 +107,7 @@ const { selectClaim, resumeClaim, releaseClaim, mergeLockHolder, clearDeadLock, 
 const { integrationBranchName, integrationBranchRef } = await importLib('integration-branch.mjs')
 const { ledgerPath, readLedger, applyLedgerToCatalog } = await importLib('execution-ledger.mjs')
 const { catalogFullyIntegrated } = await importLib('completion-contract.mjs')
-const { observeCapacity, pruneDeadReservations } = await importLib('resource-governor.mjs')
+const { observeCapacity, pruneDeadReservations, releaseAdmission } = await importLib('resource-governor.mjs')
 const { evidenceGuidanceExcerpt } = await importLib('evidence-guidance.mjs')
 const { readHostResources } = await importLib('host-resources.mjs')
 const { composeShareSnapshot } = await importLib('compose-shared.mjs')
@@ -111,6 +118,22 @@ const {
   planRuntimeRecovery,
   shouldEmitEmptyFleet,
 } = await importLib('fleet-snapshot.mjs')
+const {
+  planHostRemediation,
+  indexLockInfo,
+  shouldEscalateRemediation,
+  escalationReason,
+  remainingWorkFromProject,
+  REMEDIATION_ESCALATE_AFTER,
+} = await importLib('host-remediation.mjs')
+const {
+  planNeverStarted,
+  planCrashLoop,
+  planSpawnFailed,
+  DEFAULT_NEVER_STARTED_MS,
+  DEFAULT_CRASH_LOOP_WINDOW_MS,
+  DEFAULT_CRASH_LOOP_THRESHOLD,
+} = await importLib('anomaly-detect.mjs')
 const { runSupervisorPreflight } = await import(pathToFileURL(join(supervisorLib, 'supervisor-preflight.mjs')).href)
 const orchestrator = join(generatorDir, 'orchestrator.mjs')
 const reconciler = join(generatorDir, 'reconcile.mjs')
@@ -183,35 +206,40 @@ async function fleetForWakeTriage(state, { ghostClaims = null, events = null } =
   let ghosts = ghostClaims
   if (!ghosts) ghosts = await listProjectGhostClaims()
   const journalEvents = events ?? await readEvents()
+  let liveClaimWorkers = 0
+  try {
+    const claims = await ownClaims()
+    const runStatesByContext = {}
+    for (const [key, claim] of Object.entries(claims)) {
+      const context = claim.context || key
+      runStatesByContext[context] = await readJson(runStateFile(context), {})
+    }
+    liveClaimWorkers = countLiveClaims({ claims, runStatesByContext, processAlive })
+  } catch { /* best-effort */ }
+  const extras = {
+    ghostClaims: ghosts,
+    events: journalEvents,
+    liveClaimWorkers,
+    hostResources: readHostResources(),
+    sharedRuntime: composeShareSnapshot(commonGit),
+    recoveryReasons: recoveryReasonsFromFleet({ state, ghostClaims: ghosts }),
+    supervisorLive: deriveSupervisorLiveForState(state),
+    localHost: hostname(),
+    leaseSeconds: Math.max(10, number('supervisor-lease-seconds', 30)),
+  }
   try {
     const queue = await queueWithLedger()
     const { goalState, head } = await goalReviewContext()
     return fleetSnapshotFromState(state, {
+      ...extras,
       queueComplete: catalogFullyIntegrated(queue),
       integrationHead: head,
       reviewedHead: goalState.reviewedHead || '',
       goalReviewStatus: goalState.status || '',
       retryGoalReview: Boolean(state.retryQueue?.['goal-review']),
-      ghostClaims: ghosts,
-      events: journalEvents,
-      hostResources: readHostResources(),
-      sharedRuntime: composeShareSnapshot(commonGit),
-      recoveryReasons: recoveryReasonsFromFleet({ state, ghostClaims: ghosts }),
-      supervisorLive: deriveSupervisorLiveForState(state),
-      localHost: hostname(),
-      leaseSeconds: Math.max(10, number('supervisor-lease-seconds', 30)),
     })
   } catch {
-    return fleetSnapshotFromState(state, {
-      ghostClaims: ghosts,
-      events: journalEvents,
-      hostResources: readHostResources(),
-      sharedRuntime: composeShareSnapshot(commonGit),
-      recoveryReasons: recoveryReasonsFromFleet({ state, ghostClaims: ghosts }),
-      supervisorLive: deriveSupervisorLiveForState(state),
-      localHost: hostname(),
-      leaseSeconds: Math.max(10, number('supervisor-lease-seconds', 30)),
-    })
+    return fleetSnapshotFromState(state, extras)
   }
 }
 
@@ -691,6 +719,13 @@ class Supervisor {
     if (child.pid) {
       workerBase.ownedResources.processGroup = child.pid
       workerBase.childPid = child.pid
+    } else {
+      const spawnFail = planSpawnFailed({ context: key, pid: child.pid })
+      if (spawnFail.emit) {
+        await this.emit(spawnFail.kind, spawnFail.detail, true)
+      }
+      await this.releaseWorkerAdmission(admission.reservation?.id)
+      return false
     }
     const log = createWriteStream(logFile, { flags: 'w' })
     let tail = ''
@@ -702,6 +737,12 @@ class Supervisor {
       ? {}
       : { context: claim.context, featureIds: claim.featureIds, pid: child.pid }
     await this.emit(startedEvent || 'worker_started', eventPayload)
+    // Clear prior never-started / crash-loop emit flags for a fresh spawn.
+    if (this.state.anomalyEmitted?.[key]) {
+      const next = { ...(this.state.anomalyEmitted || {}) }
+      delete next[key]
+      this.state.anomalyEmitted = next
+    }
     await this.save()
     child.on('close', (code) => this.trackClose(this.workerClosed(key, code, tail).catch((error) => this.crash(error))))
     return true
@@ -935,6 +976,9 @@ class Supervisor {
       await this.save()
     }
 
+    await this.inspectNeverStartedWorkers(runStates)
+    await this.inspectExternalStuckClaims(runStates, healthByContext)
+
     const mergeInfo = lock.busy
       ? { owner: lock.owner || null, host: lock.host || null, holderAlive: lockAlive }
       : null
@@ -944,15 +988,163 @@ class Supervisor {
     })
   }
 
+  /**
+   * External Claim Leases (generator orchestrators not in state.workers) still
+   * need stuck recycle — otherwise a silent agent can hold the fleet forever
+   * while orchestrator heartbeats look healthy.
+   */
+  async inspectExternalStuckClaims(runStates = null, healthByContext = {}) {
+    const claims = await ownClaims()
+    let changed = false
+    for (const [claimKey, claim] of Object.entries(claims)) {
+      const key = claim.context || claimKey
+      if (this.workers.has(key)) continue
+      const runState = runStates?.[key] ?? await readJson(runStateFile(key), {})
+      if (!isLiveRunOwner(runState, processAlive)) continue
+      const logFile = join(logDir, workerLogFileName(key))
+      // Prefer newest matching log if named with timestamp suffix.
+      let resolvedLog = logFile
+      try {
+        const { readdirSync } = await import('node:fs')
+        const names = readdirSync(logDir)
+          .filter((n) => n.startsWith(`${key}-`) && n.endsWith('.log'))
+          .sort()
+        if (names.length) resolvedLog = join(logDir, names.at(-1))
+      } catch { /* use default */ }
+      const stuck = await isWorkerStuck({
+        logFile: resolvedLog,
+        runState,
+        thresholdMs: this.config.stuckTimeoutMs,
+      })
+      const health = stuck
+        ? { verdict: 'stuck', reason: 'external agent silent (empty log / no lastAgentOutputAt)', recycle: true }
+        : { verdict: 'healthy', reason: 'external live claim', recycle: false }
+      healthByContext[key] = {
+        ...health,
+        phase: runState.phase || null,
+        childPid: runState.childPid || null,
+        lastAgentOutputAt: runState.lastAgentOutputAt || null,
+        external: true,
+      }
+      if (!isWorkerStuckByHealth(health)) continue
+      await this.emit('worker_stuck', {
+        context: key,
+        logFile: resolvedLog,
+        phase: runState.phase,
+        health,
+        external: true,
+      }, true)
+      for (const pid of [runState.ownerPid, runState.childPid]) {
+        if (!processAlive(pid)) continue
+        try { process.kill(Number(pid), 'SIGTERM') } catch { /* ignore */ }
+      }
+      setTimeout(() => {
+        for (const pid of [runState.ownerPid, runState.childPid]) {
+          if (!processAlive(pid)) continue
+          try { process.kill(Number(pid), 'SIGKILL') } catch { /* ignore */ }
+        }
+      }, 5000)
+      if (shouldEnqueueStuckWorkerRetry(health)) {
+        this.state.retryQueue ||= {}
+        this.state.retryQueue[key] = {
+          guidance: health.reason
+            || 'Supervisor recycled a silent external worker; resume after confirming the worktree is healthy',
+          attempts: this.state.retryQueue[key]?.attempts || 0,
+        }
+      }
+      changed = true
+    }
+    if (changed) await this.save()
+  }
+
+  /**
+   * Zero-token: admitted workers with no live Run State / pid past deadline
+   * emit worker_never_started (Wake Triage → Control Host).
+   */
+  async inspectNeverStartedWorkers(runStates = null) {
+    const deadlineMs = Math.max(
+      5_000,
+      number('never-started-ms', DEFAULT_NEVER_STARTED_MS),
+    )
+    let changed = false
+    this.state.anomalyEmitted ||= {}
+    for (const [key, worker] of [...this.workers]) {
+      if (this.state.anomalyEmitted[key]?.neverStarted) continue
+      const runState = runStates?.[key] ?? await readJson(runStateFile(key), {})
+      const plan = planNeverStarted({
+        context: key,
+        startedAt: worker.startedAt,
+        runState,
+        workerPid: worker.childPid || worker.pid || worker.child?.pid || null,
+        now: Date.now(),
+        deadlineMs,
+        processAlive,
+      })
+      if (!plan.emit) continue
+      await this.emit(plan.kind, plan.detail, true)
+      this.state.anomalyEmitted[key] = {
+        ...(this.state.anomalyEmitted[key] || {}),
+        neverStarted: true,
+        at: new Date().toISOString(),
+      }
+      changed = true
+    }
+    if (changed) await this.save()
+  }
+
   async finalizeWorkerRecord(key, worker) {
     this.workers.delete(key)
     this.cleanupWorkerResources(worker)
+  }
+
+  /**
+   * Sliding-window crash / start-stop flap detector. Emits worker_crash_loop
+   * once per window so Control Host wakes without per-exit LLM cost.
+   */
+  async recordWorkerExitAnomaly(key, exitCode) {
+    const windowMs = Math.max(
+      10_000,
+      number('crash-loop-window-ms', DEFAULT_CRASH_LOOP_WINDOW_MS),
+    )
+    const threshold = Math.max(
+      2,
+      number('crash-loop-threshold', DEFAULT_CRASH_LOOP_THRESHOLD),
+    )
+    this.state.anomalyExits ||= {}
+    this.state.anomalyEmitted ||= {}
+    const prior = this.state.anomalyExits[key] || []
+    const already = Boolean(this.state.anomalyEmitted[key]?.crashLoop)
+    const plan = planCrashLoop({
+      context: key,
+      recentExits: prior,
+      exitAt: Date.now(),
+      windowMs,
+      threshold,
+      alreadyEmitted: already,
+    })
+    this.state.anomalyExits[key] = plan.recentExits
+    if (plan.emit) {
+      await this.emit(plan.kind, {
+        ...plan.detail,
+        exitCode: exitCode == null ? null : Number(exitCode),
+      }, true)
+      this.state.anomalyEmitted[key] = {
+        ...(this.state.anomalyEmitted[key] || {}),
+        crashLoop: true,
+        at: new Date().toISOString(),
+      }
+    }
+    await this.save()
   }
 
   async workerClosed(key, code, capturedTail) {
     const worker = this.workers.get(key)
     if (!worker) return
     await this.releaseWorkerAdmission(worker.governorReservationId)
+    // Track exits for crash-loop detection (zero-token Wake Triage).
+    if (!this.stopping) {
+      await this.recordWorkerExitAnomaly(key, code)
+    }
     if (this.stopping) {
       if (worker.log) {
         await new Promise((done) => { worker.log.once('finish', done); worker.log.end() })
@@ -1209,13 +1401,159 @@ class Supervisor {
       const runState = runStates?.[context] ?? await readJson(runStateFile(context), {})
       contexts.push({ context, status: runState.status, phase: runState.phase, attempt: runState.attempt, nextAction: runState.nextAction })
     }
-    await this.emit('progress', { ...snapshot.counts, workers: this.workers.size, capacity: cap, contexts })
+    // Include external live Claim Leases so Wake Triage does not treat a recycle
+    // gap (state.workers={}) as empty-fleet while orchestrators are still live.
+    let externalLive = 0
+    try {
+      const claims = await ownClaims()
+      const runStatesByContext = {}
+      for (const [key, claim] of Object.entries(claims)) {
+        const context = claim.context || key
+        runStatesByContext[context] = runStates?.[context]
+          ?? await readJson(runStateFile(context), {})
+      }
+      externalLive = countLiveClaims({ claims, runStatesByContext, processAlive })
+    } catch { /* best-effort */ }
+    const liveWorkers = Math.max(this.workers.size, externalLive)
+    await this.emit('progress', { ...snapshot.counts, workers: liveWorkers, capacity: cap, contexts })
   }
 
   /**
    * Hybrid empty-fleet recovery: clear mechanical blockers (ghost runs, dead locks)
    * when the fleet is empty but work remains. Admission below re-admits when slots allow.
    */
+  /**
+   * Fail-closed host remediation every tick: clear stale index.lock, drop sibling
+   * goal-review / orphan reservations that starve this project, escalate to the
+   * operator when playbooks cannot restore capacity for remaining work.
+   */
+  async remediateHostContention() {
+    const fleet = await buildFleetSnapshotForRepo(this.state)
+    // Count live Claim Leases / external orchestrators — state.workers alone
+    // under-counts after supervisor recycle and caused false escalations.
+    const claims = await ownClaims()
+    const runStatesByContext = {}
+    for (const [key, claim] of Object.entries(claims)) {
+      const context = claim.context || key
+      runStatesByContext[context] = await readJson(runStateFile(context), {})
+    }
+    const externalLive = countLiveClaims({ claims, runStatesByContext, processAlive })
+    const projects = (fleet.projects || []).map((p) => {
+      const isSelf = p.id === (projectId || 'root')
+      const workers = isSelf
+        ? Math.max(Number(p.workers || 0), this.workers.size, externalLive)
+        : Number(p.workers || 0)
+      return {
+        id: p.id,
+        root: p.root || null,
+        status: p.status,
+        progress: p.progress,
+        workers,
+        emptyFleetActionable: isSelf ? (workers === 0 && p.emptyFleetActionable) : p.emptyFleetActionable,
+        needsGoalReviewRetry: p.needsGoalReviewRetry,
+        supervisorLive: p.supervisorLive,
+        supervisorPid: p.supervisorPid || null,
+        capacity: p.capacity,
+      }
+    })
+    const cap = await capacity(this.config, this.workers.size + externalLive)
+    const reservations = cap.state?.reservations || {}
+    const lock = indexLockInfo(commonGit)
+    let indexLockHeld = false
+    if (lock.present) {
+      const held = spawnSync('fuser', [lock.path], { encoding: 'utf8' })
+      indexLockHeld = held.status === 0
+    }
+    const plan = planHostRemediation({
+      projects,
+      reservations,
+      blockerProjectId: projectId || 'root',
+      indexLockPath: lock.present ? lock.path : null,
+      indexLockHeld,
+      indexLockAgeMs: lock.ageMs,
+    })
+
+    let applied = 0
+    for (const action of plan.actions) {
+      if (action.kind === 'clear_index_lock') {
+        try {
+          unlinkSync(action.path)
+          applied += 1
+          await this.emit('host_remediation', { action: 'clear_index_lock', path: action.path }, false)
+        } catch (error) {
+          await this.emit('host_remediation_failed', {
+            action: 'clear_index_lock',
+            path: action.path,
+            error: error.message,
+          }, true)
+        }
+      } else if (action.kind === 'release_reservation') {
+        await releaseAdmission(commonGit, action.reservationId)
+        applied += 1
+        await this.emit('host_remediation', {
+          action: 'release_reservation',
+          reservationId: action.reservationId,
+          projectId: action.projectId,
+          context: action.context,
+          reason: action.reason,
+        }, false)
+      } else if (action.kind === 'stop_idle_complete_supervisor') {
+        const stopped = await stopIdleCompleteSupervisor(action)
+        if (stopped.ok) {
+          applied += 1
+          await this.emit('host_remediation', {
+            action: 'stop_idle_complete_supervisor',
+            projectId: action.projectId,
+            pid: stopped.pid || null,
+            reason: action.reason,
+          }, false)
+        }
+      }
+    }
+
+    const self = projects.find((p) => p.id === (projectId || 'root')) || projects[0]
+    const remaining = remainingWorkFromProject(self || {})
+    const afterCap = await capacity(this.config, this.workers.size + externalLive)
+    const liveWorkers = Math.max(this.workers.size, externalLive, Number(self?.workers || 0))
+    const empty = liveWorkers === 0 && remaining > 0
+    if (applied > 0 || liveWorkers > 0) {
+      this.state.remediationAttempts = 0
+    } else if (empty && afterCap.available < 1 && remaining > 0) {
+      this.state.remediationAttempts = Number(this.state.remediationAttempts || 0) + 1
+    } else if (afterCap.available >= 1 || remaining <= 0) {
+      this.state.remediationAttempts = 0
+    }
+
+    if (shouldEscalateRemediation({
+      attempts: this.state.remediationAttempts,
+      threshold: REMEDIATION_ESCALATE_AFTER,
+      emptyFleetActionable: empty,
+      available: afterCap.available,
+      remaining,
+    })) {
+      await this.input('goal', escalationReason({
+        blockerId: plan.blockerId || projectId || 'root',
+        codes: [
+          afterCap.pressureReason || null,
+          afterCap.available < 1 ? 'no-capacity' : null,
+          empty ? 'empty-fleet' : null,
+        ].filter(Boolean),
+      }), {
+        remediationAttempts: this.state.remediationAttempts,
+        capacity: {
+          available: afterCap.available,
+          activeCost: afterCap.activeCost,
+          pressureReason: afterCap.pressureReason,
+        },
+        reservations: afterCap.state?.reservations || {},
+      }, null, ['retry', 'pause', 'abort'])
+      this.state.remediationAttempts = 0
+    }
+
+    if (applied > 0 || this.state.remediationAttempts) await this.save()
+    return { applied, plan, available: afterCap.available }
+  }
+
   async repairEmptyFleetActionable({ external, snapshot }) {
     const active = this.workers.size + external
     if (active > 0) return { repaired: false, ghosts: [], recoverable: null, external }
@@ -1283,6 +1621,19 @@ class Supervisor {
     const mayResume = control.status === 'running' && ['paused', 'interrupted'].includes(this.state.status)
     if ((['paused', 'stopped'].includes(control.status) || mayResume) && control.status !== this.state.status) {
       await this.save({ status: control.status })
+    }
+    // Host remediation before admission: sibling goal-review ghosts / stale
+    // index.lock must not leave remaining work idle until a human pings chat.
+    await this.remediateHostContention()
+    // Cron/one-shot remediate may leave a durable escalation marker when it
+    // cannot fix capacity — promote it to a goal Input Request immediately.
+    const escalateMarker = join(root, 'ops-escalate.json')
+    if (existsSync(escalateMarker)) {
+      const marker = await readJson(escalateMarker, null)
+      if (marker?.reason) {
+        await this.input('goal', marker.reason, marker.detail || {}, null, marker.choices || ['retry', 'pause', 'abort'])
+      }
+      try { unlinkSync(escalateMarker) } catch { /* ignore */ }
     }
     // Auto-clear dead same-host merge/state locks before admission. Status used
     // to report holderAlive=false while the tick never cleared them, leaving an
@@ -1457,19 +1808,38 @@ class Supervisor {
         return
       }
       this.startTickWatchers()
+      let consecutiveTickFailures = 0
+      let lastTickFailure = ''
       while (!this.stopping && this.state.status !== 'stopped' && this.state.status !== 'complete') {
         this.tickDirty = false
         try {
           await this.tick()
+          consecutiveTickFailures = 0
+          lastTickFailure = ''
         } catch (error) {
           // Keep the supervisor alive through transient git/fs failures.
+          const message = error.message || String(error)
+          const repeat = message === lastTickFailure
+          consecutiveTickFailures = repeat ? consecutiveTickFailures + 1 : 1
+          lastTickFailure = message
           try {
-            await this.emit('supervisor_tick_failed', { error: error.message || String(error) }, true)
-            await this.save({ lastError: error.message || String(error) })
+            // First failure wakes immediately; repeats are folded (backoff) so a
+            // missing generator module cannot flood the journal at ~4 Hz.
+            await this.emit(
+              'supervisor_tick_failed',
+              { error: message, consecutiveFailures: consecutiveTickFailures },
+              !repeat,
+            )
+            await this.save({ lastError: message })
           } catch {}
         }
         if (options.once === 'true') break
-        const delay = nextTickDelay({ pollMs: this.config.pollMs, dirty: this.tickDirty })
+        const delay = consecutiveTickFailures > 0
+          ? tickFailureDelay({
+            pollMs: this.config.pollMs,
+            consecutiveFailures: consecutiveTickFailures,
+          })
+          : nextTickDelay({ pollMs: this.config.pollMs, dirty: this.tickDirty })
         await this.waitForNextTick(delay)
       }
       this.stopping = true
@@ -1837,6 +2207,7 @@ async function loadProjectFleetInputs(target) {
     )
   }
   const ghostClaims = listGhostClaims({ claims, runStatesByContext, processAlive })
+  const liveClaimWorkers = countLiveClaims({ claims, runStatesByContext, processAlive })
   const cap = await observeCapacity(topo.commonGit, governorOptions(capacityConfig()))
   const sharedRuntime = composeShareSnapshot(topo.commonGit)
   const wakeExtended = await (async () => {
@@ -1855,9 +2226,10 @@ async function loadProjectFleetInputs(target) {
         reviewedHead: goalState.reviewedHead || '',
         goalReviewStatus: goalState.status || '',
         retryGoalReview: Boolean(current.retryQueue?.['goal-review']),
+        liveClaimWorkers,
       }
     } catch {
-      return {}
+      return { liveClaimWorkers }
     }
   })()
   return {
@@ -1867,6 +2239,7 @@ async function loadProjectFleetInputs(target) {
     eventsTip,
     events,
     ghostClaims,
+    liveClaimWorkers,
     wakeExtended,
     hostResources: readHostResources(),
     governorReservations: {
@@ -1905,6 +2278,188 @@ async function fleetSnapshotCmd() {
     wakeTriage: { shouldWake: shouldWake(recent, fleet) },
   })
   process.stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`)
+}
+
+/**
+ * Stop a sibling supervisor that finished its queue but never demoted to
+ * `complete` (idle PID / lease). Never targets the calling project.
+ */
+async function stopIdleCompleteSupervisor(action = {}) {
+  const siblingId = action.projectId
+  if (!siblingId || siblingId === (projectId || 'root')) {
+    return { ok: false, reason: 'refuse-self' }
+  }
+  const siblingRoot = siblingId === 'root'
+    ? join(commonGit, 'harness-control')
+    : join(commonGit, 'harness-control', siblingId)
+  const siblingStateFile = join(siblingRoot, 'state.json')
+  const siblingControl = join(siblingRoot, 'control.json')
+  if (!existsSync(siblingStateFile)) return { ok: false, reason: 'missing-state' }
+  const state = await readJson(siblingStateFile, {})
+  const pid = Number(state.supervisorPid || 0)
+  let killed = false
+  if (pid && processAlive(pid)) {
+    try {
+      process.kill(pid, 'SIGTERM')
+      killed = true
+      spawnSync('sleep', ['0.4'], { stdio: 'ignore' })
+      if (processAlive(pid)) process.kill(pid, 'SIGKILL')
+    } catch { /* ignore ESRCH */ }
+  }
+  await atomicJson(siblingStateFile, {
+    ...state,
+    status: 'complete',
+    supervisorPid: null,
+    completedAt: state.completedAt || new Date().toISOString(),
+    stoppedBy: 'host-remediation-idle-complete',
+  })
+  try {
+    await atomicJson(siblingControl, { status: 'complete', at: new Date().toISOString() })
+  } catch { /* optional */ }
+  try {
+    const { clearStaleSupervisorLock } = await importLib('supervisor-lease.mjs')
+    await clearStaleSupervisorLock(siblingRoot, {
+      leaseSeconds: Math.max(10, number('supervisor-lease-seconds', 30)),
+    })
+  } catch { /* optional */ }
+  return { ok: true, pid: pid || null, killed }
+}
+
+/** One-shot host remediation for systemd cron (does not steal the supervisor lease). */
+async function remediateCmd() {
+  const state = await readJson(stateFile, { status: 'not_started' })
+  const snapshot = await buildFleetSnapshotForRepo(state)
+  const claims = await ownClaims()
+  const runStatesByContext = {}
+  for (const [key, claim] of Object.entries(claims)) {
+    const context = claim.context || key
+    runStatesByContext[context] = await readJson(runStateFile(context), {})
+  }
+  const externalLive = countLiveClaims({ claims, runStatesByContext, processAlive })
+  const projects = (snapshot.projects || []).map((p) => {
+    const isSelf = p.id === (projectId || 'root')
+    const workers = isSelf
+      ? Math.max(Number(p.workers || 0), Number(Object.keys(state.workers || {}).length || 0), externalLive)
+      : Number(p.workers || 0)
+    return {
+      id: p.id,
+      root: p.root || null,
+      status: p.status,
+      progress: p.progress,
+      workers,
+      emptyFleetActionable: isSelf ? (workers === 0 && p.emptyFleetActionable) : p.emptyFleetActionable,
+      needsGoalReviewRetry: p.needsGoalReviewRetry,
+      supervisorLive: p.supervisorLive,
+      supervisorPid: p.supervisorPid || null,
+      capacity: p.capacity,
+    }
+  })
+  const cfg = capacityConfig({ requireHost: false })
+  const cap = await capacity(cfg, Number(Object.keys(state.workers || {}).length || 0) + externalLive)
+  const lock = indexLockInfo(commonGit)
+  let indexLockHeld = false
+  if (lock.present) {
+    const held = spawnSync('fuser', [lock.path], { encoding: 'utf8' })
+    indexLockHeld = held.status === 0
+  }
+  const plan = planHostRemediation({
+    projects,
+    reservations: cap.state?.reservations || {},
+    blockerProjectId: projectId || 'root',
+    indexLockPath: lock.present ? lock.path : null,
+    indexLockHeld,
+    indexLockAgeMs: lock.ageMs,
+  })
+  const applied = []
+  for (const action of plan.actions) {
+    if (action.kind === 'clear_index_lock') {
+      try {
+        unlinkSync(action.path)
+        applied.push(action)
+      } catch (error) {
+        applied.push({ ...action, error: error.message })
+      }
+    } else if (action.kind === 'release_reservation') {
+      await releaseAdmission(commonGit, action.reservationId)
+      applied.push(action)
+    } else if (action.kind === 'stop_idle_complete_supervisor') {
+      const stopped = await stopIdleCompleteSupervisor(action)
+      applied.push({ ...action, ...stopped })
+    }
+  }
+  const after = await capacity(cfg, externalLive)
+  const self = projects.find((p) => p.id === (projectId || 'root')) || projects[0]
+  const remaining = remainingWorkFromProject(self || {})
+  const liveWorkers = Math.max(Number(self?.workers || 0), externalLive)
+  const empty = liveWorkers === 0 && remaining > 0
+  let attempts = Number(state.remediationAttempts || 0)
+  if (applied.length > 0 || liveWorkers > 0) attempts = 0
+  else if (empty && after.available < 1 && remaining > 0) attempts += 1
+  else if (after.available >= 1 || remaining <= 0) attempts = 0
+  const escalate = shouldEscalateRemediation({
+    attempts,
+    threshold: REMEDIATION_ESCALATE_AFTER,
+    emptyFleetActionable: empty,
+    available: after.available,
+    remaining,
+  })
+  await atomicJson(stateFile, {
+    ...state,
+    remediationAttempts: escalate ? 0 : attempts,
+    lastRemediation: {
+      at: new Date().toISOString(),
+      applied: applied.length,
+      escalate,
+      available: after.available,
+      remaining,
+      externalLive,
+    },
+  })
+  if (escalate) {
+    // Durable goal Input Request via a short-lived supervisor emit path is unsafe
+    // without the lease; write a pending input marker the live supervisor will
+    // promote, and desktop-notify the operator immediately.
+    const reason = escalationReason({
+      blockerId: plan.blockerId || projectId || 'root',
+      codes: [
+        after.pressureReason || null,
+        after.available < 1 ? 'no-capacity' : null,
+        empty ? 'empty-fleet' : null,
+      ].filter(Boolean),
+    })
+    const pendingPath = join(root, 'ops-escalate.json')
+    await atomicJson(pendingPath, {
+      at: new Date().toISOString(),
+      scope: 'goal',
+      reason,
+      detail: {
+        remediationAttempts: attempts,
+        capacity: { available: after.available, activeCost: after.activeCost },
+        applied,
+      },
+      choices: ['retry', 'pause', 'abort'],
+    })
+    try {
+      spawnSync('notify-send', ['--urgency=critical', '-a', 'Harness', 'Harness ESCALATION', reason], {
+        env: {
+          ...process.env,
+          DISPLAY: process.env.DISPLAY || ':0',
+          DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS
+            || `unix:path=/run/user/${process.getuid?.() || 1000}/bus`,
+        },
+        stdio: 'ignore',
+      })
+    } catch { /* optional */ }
+  }
+  process.stdout.write(`${JSON.stringify({
+    ok: true,
+    applied,
+    plan,
+    available: after.available,
+    remaining,
+    escalate,
+    remediationAttempts: attempts,
+  }, null, 2)}\n`)
 }
 
 async function main() {
@@ -1973,6 +2528,7 @@ async function main() {
   if (commandName === 'release-lease') return releaseLease()
   if (commandName === 'clear-dead-lock') return clearDeadLockCmd()
   if (commandName === 'preflight') return preflightCmd()
+  if (commandName === 'remediate') return remediateCmd()
   if (commandName === 'run') {
     const supervisor = new Supervisor(baseConfig())
     process.on('SIGINT', () => supervisor.stop('SIGINT'))

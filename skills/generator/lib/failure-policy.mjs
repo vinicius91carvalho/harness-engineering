@@ -346,7 +346,12 @@ export function autoRetryGuidance(request) {
   } else if (reason.startsWith('Harness worker pane ended before run state completed')) {
     base = 'Auto-retry: worker process ended before orchestrator wrote terminal run state; resume context.'
   } else if (reason === 'integration could not complete') {
-    base = 'Auto-retry: integration merge/checkpoint failure; retry merge and integrated verification.'
+    base = [
+      'Auto-retry: MERGE/IV ONLY after isolated QA already passed.',
+      'Do NOT re-implement, do NOT re-run verify-first coding, do NOT burn a coding Attempt.',
+      'Proceed to Checkpoint merge into the plan integration branch, then Integrated Verification.',
+      'If .git/index.lock exists, wait and retry the merge — merge-lock noise is not a product defect.',
+    ].join(' ')
   } else if (reason === 'Harness worker is idle or waiting') {
     base = 'Auto-retry: worker appeared idle while merge lock or turn boundary; resume.'
   }

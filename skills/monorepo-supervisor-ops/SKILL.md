@@ -42,6 +42,13 @@ Use this when several subprojects share one Git top-level (e.g. `core`, `web`,
     sibling **same turn**, re-check `capacity` until `available>=1`, admit the
     blocker, then resume dependents. CauseFlow order: **core before web**
     (dashboard E2E depends on core golden-path QA/INTEGRATION).
+14. **systemd Control Host must pin `agent`.** `install-ops-cron.sh` always sets
+    absolute `Environment=HARNESS_WAKE_AGENT=…` and a `PATH` that includes
+    `$HOME/.local/bin`. Never rely on an interactive shell PATH — user units
+    otherwise hit `spawnSync agent ENOENT` on `--invoke-agent`.
+15. **After harness-engineering skill/script edits that affect a live fleet,
+    finish the sync checklist** (below) the same turn — missing sync is how
+    false empty-fleet escalations and cron ENOENT recur.
 
 ## Sync harness changes to live skills
 
@@ -49,17 +56,55 @@ After editing in the harness-engineering repo:
 
 ```bash
 # Copy the whole lib tree so importLib deps stay complete (cherry-picking drifts).
+# Discoverable Cursor/Agent skills must be harness-* only. Keep unprefixed
+# supervisor/generator trees as runtime aliases (scripts+lib, NO SKILL.md) so
+# relative imports and older CONTROL=…/supervisor/… paths keep working without
+# registering /supervisor beside /harness-supervisor.
 mkdir -p ~/.agents/skills/generator/lib ~/.agents/skills/generator/prompts \
+  ~/.agents/skills/harness-generator/lib ~/.agents/skills/harness-generator/prompts \
   ~/.agents/skills/supervisor/scripts ~/.agents/skills/supervisor/lib \
-  ~/.agents/skills/monorepo-supervisor-ops
-cp -R skills/generator/lib/. ~/.agents/skills/generator/lib/
-cp skills/generator/prompts/feature.mjs ~/.agents/skills/generator/prompts/
-cp skills/generator/orchestrator.mjs ~/.agents/skills/generator/
+  ~/.agents/skills/harness-supervisor/scripts ~/.agents/skills/harness-supervisor/lib \
+  ~/.agents/skills/harness-monorepo-supervisor-ops/scripts
+# Full generator tree (lib + adapters + prompts + templates + workflow +
+# orchestrator/reconcile). Cherry-picking only lib/ leaves
+# adapters/hosts.mjs missing → orchestrator exits on spawn →
+# supervisor_tick_failed / worker_crash_loop spam every ~250ms.
+# Runtime alias `generator/` (no SKILL.md) must stay complete for
+# harness-supervisor/lib static imports (`../../generator/lib/...`) and
+# harness-control importLib default path.
+rsync -a --delete --exclude SKILL.md --exclude node_modules \
+  skills/generator/ ~/.agents/skills/generator/
+rsync -a --delete --exclude node_modules \
+  skills/generator/ ~/.agents/skills/harness-generator/
+sed -i 's/^name: generator$/name: harness-generator/' \
+  ~/.agents/skills/harness-generator/SKILL.md
+# Same full sync for any in-repo Cursor skill mirrors (causeflow example):
+#   rsync -a --delete --exclude SKILL.md skills/generator/ \
+#     <repo>/.cursor/skills/generator/
+#   rsync -a --delete skills/generator/ \
+#     <repo>/.cursor/skills/harness-generator/
 cp skills/supervisor/scripts/harness-control.mjs ~/.agents/skills/supervisor/scripts/
+cp skills/supervisor/scripts/harness-control.mjs ~/.agents/skills/harness-supervisor/scripts/
 cp -R skills/supervisor/lib/. ~/.agents/skills/supervisor/lib/
-cp skills/supervisor/SKILL.md ~/.agents/skills/supervisor/SKILL.md
-cp skills/monorepo-supervisor-ops/SKILL.md ~/.agents/skills/monorepo-supervisor-ops/SKILL.md
+cp -R skills/supervisor/lib/. ~/.agents/skills/harness-supervisor/lib/
+cp skills/supervisor/SKILL.md ~/.agents/skills/harness-supervisor/SKILL.md
+# Rewrite frontmatter so the slash command is /harness-supervisor (not /supervisor).
+sed -i 's/^name: supervisor$/name: harness-supervisor/' ~/.agents/skills/harness-supervisor/SKILL.md
+rm -f ~/.agents/skills/supervisor/SKILL.md ~/.agents/skills/generator/SKILL.md \
+  ~/.agents/skills/monorepo-supervisor-ops/SKILL.md
+cp skills/monorepo-supervisor-ops/SKILL.md ~/.agents/skills/harness-monorepo-supervisor-ops/SKILL.md
+sed -i 's/^name: monorepo-supervisor-ops$/name: harness-monorepo-supervisor-ops/' \
+  ~/.agents/skills/harness-monorepo-supervisor-ops/SKILL.md
+cp -R skills/monorepo-supervisor-ops/scripts/. ~/.agents/skills/harness-monorepo-supervisor-ops/scripts/
+# Optional runtime alias for older script relative paths:
+mkdir -p ~/.agents/skills/monorepo-supervisor-ops/scripts
+cp -R skills/monorepo-supervisor-ops/scripts/. ~/.agents/skills/monorepo-supervisor-ops/scripts/
 ```
+
+Ops cron (`install-ops-cron.sh`) resolves `HARNESS_CONTROL` from
+`~/.agents/skills/harness-supervisor/scripts/harness-control.mjs` (with a
+`supervisor/` runtime fallback) — keep **generator lib** synced too or
+`fleet-snapshot` fails with `ERR_MODULE_NOT_FOUND`.
 
 **First invocation:** `harness-control preflight --repo <subproject>` (also runs
 inside `start` / supervisor `initialize`). Clears ghost runs/leases/governor
@@ -86,7 +131,7 @@ Pass `HARNESS_SUPERVISOR_TOKEN` instead when you hold the active lease.
 ## Restart one subproject supervisor (keep workers)
 
 ```bash
-CONTROL=~/.agents/skills/supervisor/scripts/harness-control.mjs
+CONTROL=~/.agents/skills/harness-supervisor/scripts/harness-control.mjs
 REPO=/path/to/monorepo/<subproject>
 STATE=/path/to/monorepo/.git/harness-control/<subproject>/state.json
 TOP=$(git -C "$REPO" rev-parse --show-toplevel)
@@ -205,6 +250,48 @@ judgment cases above the same turn.
 Narrating "foundation idle / one worker healthy" without admitting the next
 context is a supervisor defect.
 
+**Live Claim Lease ≠ empty fleet:** `state.workers={}` after a supervisor recycle
+does **not** mean idle when `generator-claims.json` + Run State show a live
+orchestrator (`ownerPid`/`childPid` alive). `fleet-snapshot` / `ops-remediate`
+must count `liveClaimWorkers` before alerting `empty_fleet_actionable` or
+escalating. False empty-fleet escalations while work is running are defects.
+
+**Incomplete `skills/generator` alias after harness-* rename (2026-07-17):**
+partial sync (lib-only / missing `adapters/`) makes every supervisor tick throw
+`generator module missing: …/observation-method.mjs` or every worker spawn
+`ERR_MODULE_NOT_FOUND: …/adapters/hosts.mjs`. Journal floods with
+`supervisor_tick_failed` / `worker_crash_loop` / `input_required` at ~4 Hz.
+Same-turn fix: stop supervisor (`kill-supervisor --force true`), rsync the
+**full** `skills/generator/` tree into both `harness-generator/` and the
+unprefixed `generator/` runtime alias (no SKILL.md on the alias), smoke
+`import adapters/hosts.mjs`, then `start`/`run` again. Update the sync
+checklist above — never cherry-pick only `lib/`.
+Hardening (same incident): `install-reconcile` `syncCursorSkillLinks` materializes
+full `generator`/`supervisor` aliases (strips SKILL.md);
+`resolveGeneratorDir` prefers a complete tree over an incomplete alias;
+tick failures back off and stop flooding `immediate` events on repeats.
+
+**Ornith died under live golden-path QA (root WI-AC-025, 2026-07-17):** coding
+VERIFY-FIRST can pass and then tear down Ornith; the QA agent may sit in a
+shell loop waiting on `:8081` while `workerHealth` stays `healthy` (external
+live claim) and `lastAgentOutputAt` goes stale. Probe evidence shows
+`Ornith unreachable` / Core `/health` `llm=degraded`. Same-turn host remediation
+(do not recycle while swap already blocks re-admit):
+1. Start Ornith with `~/tools/llama-session.sh 8081` (binds `0.0.0.0`).
+2. Wait until `curl http://127.0.0.1:8081/v1/models` → 200 and Core health
+   `llm=ok` (reload Core if needed).
+3. Write the live `llama-server` PID into the worktree
+   `.harness/ornith.pid` so the waiting QA shell's `kill -0` check passes.
+4. Keep Ornith up through INTEGRATION_QA — do not stop it between QA phases.
+Recycle with evidence-backed guidance only if Ornith cannot stay up or the
+agent is past the stuck threshold with no shell child making progress.
+
+**Durable heartbeat (required for unattended runs):** install
+`skills/monorepo-supervisor-ops/scripts/install-ops-cron.sh --repo "$REPO"
+--notify` so `ops-remediate.mjs` runs every N minutes without Cursor chat.
+That path remediates host contention, re-checks the fleet, and desktop-notifies /
+writes `ops-escalate.json` when playbooks fail. Chat `/loop` alone is not enough.
+
 **Post-goal-complete with new ACs (2026-07-15 web):** after Goal Review
 `goal:true`, a later `planner`/`reconcile` can append Work Items (e.g. AC-077+)
 while Control state stays `status=complete` with stale progress (76/76) and
@@ -229,6 +316,22 @@ env for **both** direct `/generator` orchestrators and `harness-control run` /
 `HARNESS_MAX_LOAD_RATIO` (e.g. `1.5`) and `HARNESS_MAX_SWAP_USED_RATIO`
 (e.g. `0.6`). Defaults remain `0.85` / `0.2` — never raise silently.
 Confirm `capacity.available>=1` after export before claiming or admitting.
+
+**Stale root `needs_input` + orphan amend response (2026-07-16):** monorepo-root
+supervisor state under `.git/harness-control/state.json` can sit in
+`needs_input` for months with a goal-scoped Input Request still `pending` while
+`.git/harness-control/responses/<id>.json` already holds `action: amend`.
+`respond` then fails with `already has a different response` unless the new
+call matches that file exactly. Same-turn recovery when specs now exist:
+1. `respond --event <id> --action amend --guidance ""` (or match the file).
+2. `resume` then `start` with CauseFlow ops (`--host agent`) and any approved
+   governor env (`HARNESS_MAX_SWAP_USED_RATIO=0.6` when swap pressure was the
+   prior deny).
+3. First start **consumes amend → status=paused** (by design). Immediately
+   `resume` + `start` again so workers admit — do not narrate "paused" as a
+   product block.
+Preflight after a failed direct orchestrator may clear that Claim Lease as
+abandoned; leave it — the restarted supervisor re-claims Ready contexts.
 
 **Idle after full integrate ≠ Goal Review:** when `fleetSnapshot.needsGoalReviewRetry`
 or progress is N/N/N with claims empty, capacity `available>=1`, and the Goal
@@ -474,3 +577,132 @@ straight to closeout rather than scheduling another 10/20-minute check.
 A prior run kept firing idle 20-minute checks after all four subprojects reached
 `run_completed`, until the operator manually stopped the loop; treat that as a
 defect, not normal cadence.
+
+**Root starved by completed sibling goal-review reservation (2026-07-16):** host-wide
+Resource Governor shared `reservations.json`. A long-lived **web** supervisor
+(91/91 integrated, `workers={}`) kept renewing a `goal-review` reservation
+`cost=2` under its own PID, driving root `capacity.available=0` /
+`activeCost=2` while root had blocked WIs + `empty_fleet_actionable`. Cron
+correctly reported empty fleet; nothing admitted. Same-turn fix (blocker wins):
+1. `kill-supervisor --repo <web> --force true` + `release-supervisor-lock --force true`
+2. `preflight --repo <root>` (prunes dead/ghost governor rows)
+3. Confirm `capacity.available>=1`, then force-resume blocked root contexts /
+   let `retryQueue` admit.
+Do not leave a complete sibling supervisor running if it holds goal-review cost
+that zeros the blocker project's slots. Prefer pause/stop completed dependents
+while the root OSS plan is in flight.
+
+**Cursor Agent `/loop` ≠ unattended Control Host (2026-07-16):** a background
+`while sleep; echo AGENT_LOOP_TICK_*` with `notify_on_output` can emit ticks into
+the terminal file while the chat session stays idle — the Control Host LLM does
+**not** reliably get a new turn. Observed: root supervisor kept admitting/
+integrating WIs; two 5m ticks accumulated unread until the operator asked.
+Do **not** tell the operator the fleet is "babysat" solely because that shell
+loop is armed. Truth model:
+1. **`harness-control` supervisor tick** owns admission, auto-retry, stuck
+   recycle, empty-fleet recovery, and anomaly emits — **zero LLM tokens**.
+2. Control Host is the **operator’s representative**: progress briefs (desktop
+   notify on counter/claim changes), judgment wakes via
+   `wake-control-host.mjs` (consumer `control-host-wake`), intelligent fix or
+   escalate — not `/loop` polling.
+3. Prefer: durable supervisor + ops cron with `--notify --invoke-agent`; never
+   `/loop status` every N minutes. Briefs keep the operator informed; judgment
+   invokes the agent only on real wakes (stuck, crash-loop, inputs, empty fleet).
+
+## Host ops cron (systemd) — remediate + event-driven wake
+
+For unattended runs, install the **systemd user timer** that runs
+`ops-remediate.mjs` (not a Cursor `/loop`). It must **auto-fix** host stalls,
+run the Control Host wake bridge, and escalate when it cannot — never wait for
+the operator to ping chat.
+
+```bash
+# From harness-engineering (or ~/.agents after sync).
+# Representative unattended profile: notify + invoke-agent on judgment wakes.
+bash skills/monorepo-supervisor-ops/scripts/install-ops-cron.sh \
+  --repo /path/to/monorepo \
+  --project root \
+  --minutes 5 \
+  --notify \
+  --invoke-agent
+
+# Confirm unit pins agent (Hard rule 14):
+#   systemctl --user cat harness-ops-cron.service | rg 'HARNESS_WAKE_AGENT|Environment=PATH'
+
+# Manual one-shot (remediate + check + wake bridge):
+node skills/monorepo-supervisor-ops/scripts/ops-remediate.mjs \
+  --repo /path/to/monorepo --project root --notify --wake-host
+
+# Wake bridge only (progress brief + judgment notify):
+node skills/monorepo-supervisor-ops/scripts/wake-control-host.mjs \
+  --repo /path/to/monorepo --notify --brief
+
+# Mechanical remediation only:
+node ~/.agents/skills/harness-supervisor/scripts/harness-control.mjs \
+  remediate --repo /path/to/monorepo
+```
+
+Every tick:
+1. `harness-control remediate` — clear stale `index.lock`, release sibling
+   complete/idle `goal-review` (and other unbacked) governor reservations that
+   starve the blocker project, write `ops-escalate.json` after repeated misses.
+2. `ops-cron-check` — durable verdict + desktop notify every tick.
+3. `wake-control-host.mjs` — journal consumer `control-host-wake`; ack
+   fold/absorb with zero LLM tokens; desktop-notify / optional `--invoke-agent`
+   only when Wake Triage `shouldWake`.
+4. Live supervisor tick promotes `ops-escalate.json` → goal `input_required`
+   and also runs the same remediation planner each loop.
+
+Artifacts (under the shared Git dir):
+- `.git/harness-control/ops-cron-last.json` / `ops-cron-status.txt`
+- `.git/harness-control/ops-cron.jsonl`
+- `.git/harness-control/ops-escalate.json` (transient escalation marker)
+- `.git/harness-control/wake-control-host.jsonl`
+
+Exit codes: `0` = healthy enough, `1` = attention/escalation, `2` = tool failure.
+Unit uses `SuccessExitStatus=1`. With `--notify`, desktop notify fires **every**
+tick. Integration auto-retry guidance is **MERGE/IV ONLY** (no re-coding).
+
+### CauseFlow unattended ops profile (durable)
+
+For `/home/vinicius/projects/causeflow-ai` root OSS plan:
+
+| Knob | Value |
+|---|---|
+| Integration branch | `plan/opensource-docker` |
+| Ops / coding host | `--host agent` |
+| Approved swap override | `HARNESS_MAX_SWAP_USED_RATIO=0.6` (operator-approved; default 0.2) |
+| systemd timer | `harness-ops-cron.timer` |
+| Cron flags | `--wake-host --notify --invoke-agent` |
+| Control | `~/.agents/skills/harness-supervisor/scripts/harness-control.mjs` (after sync) |
+
+Export the swap override for **both** `harness-control run` and the systemd
+unit `Environment=` so snapshot capacity matches live admission.
+
+### Sync checklist after harness-engineering edits (live fleet)
+
+When you change `skills/supervisor`, `skills/generator`, or
+`skills/monorepo-supervisor-ops` (or their scripts/lib) while a fleet is running:
+
+1. Sync HE → `~/.agents/skills/{harness-supervisor,harness-generator,harness-monorepo-supervisor-ops}/` (scripts + lib + SKILL.md with `name: harness-*`). Also sync unprefixed `supervisor`/`generator` **runtime** trees (scripts/lib only — never SKILL.md) when relative imports need them.
+2. Sync the same hosted trees into the monorepo mirrors: `$REPO/.cursor/skills/harness-*` and plugin copies under `.cursor/plugins/local/harness/skills/` when present.
+3. If `install-ops-cron.sh` or unit env changed: re-run install (`--notify --invoke-agent`) so systemd picks up `HARNESS_WAKE_AGENT` / `PATH`.
+4. Recycle live `harness-control run` for affected projects (kill-supervisor + release lock + start/run with the same governor env).
+5. Smoke: `node …/ops-remediate.mjs --repo "$REPO" --notify --wake-host` exits 0/1 (not 2) and wake bridge does not report `agent ENOENT`.
+
+Skipping this checklist leaves the process supervisor on old code while cron
+reads a mix of HE and `~/.agents` — false escalations and missing modules follow.
+
+Inspect with:
+
+```bash
+systemctl --user status harness-ops-cron.timer
+journalctl --user -u harness-ops-cron.service -n 50 --no-pager
+cat "$(git -C /path/to/monorepo rev-parse --git-common-dir)/harness-control/ops-cron-last.json"
+```
+
+Stop when the plan is done:
+
+```bash
+systemctl --user disable --now harness-ops-cron.timer
+```

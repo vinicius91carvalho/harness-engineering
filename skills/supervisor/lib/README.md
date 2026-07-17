@@ -17,11 +17,20 @@ directory and shared execution primitives from `skills/generator/lib/`.
 | `supervisor-lease.mjs` | Fenced Supervisor Lease |
 | `resource-governor.mjs` | Host-wide Resource Governor |
 | `host-resources.mjs` | Host CPU/memory/load snapshot |
+| `host-remediation.mjs` | Sibling capacity relief + stale index.lock + escalate planner |
+| `anomaly-detect.mjs` | Never-started / crash-loop / spawn-failed planners (zero-token wakes) |
+| `representative-brief.mjs` | Progress briefing planner for Control Host-as-representative notifies |
 | `orphan-claims.mjs` | Ghost claim / Run State health helpers |
 | `runtime-view.mjs` | Canonical runtime health vocabulary |
 | `supervisor-preflight.mjs` | Fail-closed first-start repair |
+| `runtime-layout.mjs` | Generator/supervisor runtime alias resolution + tick-failure backoff |
 
 Tick planners belong under this package; harness-control only applies them.
+
+**Allowlist:** every module in this table must also appear in
+`harness-control.mjs` `CONTROL_MODULES`. New files here that are loaded via
+`importLib('….mjs')` fail closed as `generator module missing` until allowlisted
+in the same change.
 
 ## Shared execution primitives (`skills/generator/lib`)
 

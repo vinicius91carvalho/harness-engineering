@@ -260,22 +260,39 @@ export function stuckThresholdMs() {
   return Number(process.env.HARNESS_STUCK_TIMEOUT_MS || 600_000)
 }
 
+/**
+ * Age since last *agent* progress. Orchestrator heartbeats alone must not keep a
+ * silent coding/QA agent "healthy" — empty logs with null lastAgentOutputAt are
+ * stuck once past the threshold from start.
+ */
 export async function workerActivityAgeMs({ logFile, runState, now = Date.now() }) {
-  const ages = []
+  const started = Date.parse(String(
+    runState?.startedAt || runState?.codingStartedAt || runState?.createdAt || '',
+  ))
+  const startedAge = Number.isFinite(started) ? Math.max(0, now - started) : null
+
+  if (runState?.lastAgentOutputAt) {
+    const ts = Date.parse(runState.lastAgentOutputAt)
+    if (Number.isFinite(ts)) return Math.max(0, now - ts)
+  }
+
   if (logFile) {
     try {
       const info = await stat(logFile)
-      ages.push(now - info.mtimeMs)
-    } catch {}
+      if (info.size > 0) {
+        return Math.max(0, now - info.mtimeMs)
+      }
+      // Empty log = no agent output. Prefer run start age (file may be freshly touched).
+      if (startedAge != null) return startedAge
+      const born = Number(info.birthtimeMs) || Number(info.mtimeMs) || now
+      return Math.max(0, now - born)
+    } catch { /* missing log */ }
   }
-  const heartbeatEpoch = Number(runState?.heartbeatEpoch || 0)
-  if (heartbeatEpoch > 0) ages.push(now - heartbeatEpoch * 1000)
-  if (runState?.lastAgentOutputAt) {
-    const ts = Date.parse(runState.lastAgentOutputAt)
-    if (Number.isFinite(ts)) ages.push(now - ts)
-  }
-  if (!ages.length) return 0
-  return Math.min(...ages)
+
+  if (startedAge != null) return startedAge
+
+  // No agent signal and no start time — fail-closed as maximally stale.
+  return Number.POSITIVE_INFINITY
 }
 
 export async function isWorkerStuck({ logFile, runState, thresholdMs = stuckThresholdMs() }) {

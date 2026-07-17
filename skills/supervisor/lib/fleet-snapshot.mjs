@@ -134,13 +134,14 @@ export function queueCompleteInFleet(fleetSnapshot = {}) {
  * but reviewedHead is stale, or when a flag-drift retry is queued.
  */
 export function needsGoalReviewRetry(fleetSnapshot = {}) {
-  if (Number(fleetSnapshot.workers ?? 0) > 0) return false
-  const status = String(fleetSnapshot.status || '')
+  const fleet = fleetSnapshot && typeof fleetSnapshot === 'object' ? fleetSnapshot : {}
+  if (Number(fleet.workers ?? 0) > 0) return false
+  const status = String(fleet.status || '')
   if (status === 'complete' || status === 'stopped') return false
-  if (fleetSnapshot.retryGoalReview) return true
-  if (!queueCompleteInFleet(fleetSnapshot)) return false
-  const integrationHead = String(fleetSnapshot.integrationHead || '')
-  const reviewedHead = String(fleetSnapshot.reviewedHead || '')
+  if (fleet.retryGoalReview) return true
+  if (!queueCompleteInFleet(fleet)) return false
+  const integrationHead = String(fleet.integrationHead || '')
+  const reviewedHead = String(fleet.reviewedHead || '')
   if (!integrationHead) return false
   return !reviewedHead || reviewedHead !== integrationHead
 }
@@ -155,19 +156,25 @@ function progressCounts(event, fleetSnapshot) {
  * not auto-absorbed as benign heartbeat noise.
  */
 export function isEmptyFleetActionable(event, fleetSnapshot = null) {
-  const workers = Number(event?.workers ?? fleetSnapshot?.workers ?? 0)
+  const fleet = fleetSnapshot && typeof fleetSnapshot === 'object' ? fleetSnapshot : {}
+  // Prefer the higher count: progress events may under-count (state.workers={}
+  // after recycle) while fleetSnapshot includes liveClaimWorkers.
+  const workers = Math.max(
+    Number(event?.workers ?? 0) || 0,
+    Number(fleet.workers ?? 0) || 0,
+  )
   if (workers > 0) return false
 
-  const status = String(fleetSnapshot?.status || '')
+  const status = String(fleet.status || '')
   if (status === 'complete' || status === 'stopped') return false
 
-  const counts = progressCounts(event, fleetSnapshot)
+  const counts = progressCounts(event, fleet)
   const blocked = Number(counts.blocked ?? 0)
   const remaining = remainingWork(counts)
-  const pendingInputs = Number(fleetSnapshot?.pendingInputs ?? 0)
-  const retryQueueSize = Number(fleetSnapshot?.retryQueueSize ?? 0)
+  const pendingInputs = Number(fleet.pendingInputs ?? 0)
+  const retryQueueSize = Number(fleet.retryQueueSize ?? 0)
 
-  if (needsGoalReviewRetry(fleetSnapshot)) return true
+  if (needsGoalReviewRetry(fleet)) return true
   return blocked > 0 || remaining > 0 || pendingInputs > 0 || retryQueueSize > 0
 }
 
@@ -213,8 +220,9 @@ export function isEmptyFleetRepaired(fleetSnapshot = {}) {
 
 function compactFleetShape(state = {}, extras = {}, { processAlive = defaultProcessAlive } = {}) {
   const activeWorkers = activeWorkerRows(state, { processAlive })
+  const liveClaimWorkers = Math.max(0, Number(extras.liveClaimWorkers || 0))
   return {
-    workers: activeWorkers.length,
+    workers: Math.max(activeWorkers.length, liveClaimWorkers),
     counts: state.progress || {},
     pendingInputs: pendingInputCount(state),
     retryQueueSize: Object.keys(state.retryQueue || {}).length,
@@ -232,12 +240,17 @@ export function fleetOpsFields({
   events = [],
   ghostClaims = [],
   wakeExtended = {},
+  liveClaimWorkers = 0,
   supervisorLive,
   processAlive,
   localHost = '',
   leaseSeconds = 30,
 } = {}) {
-  const fleet = compactFleetShape(state, { ...wakeExtended, ghostClaims }, { processAlive })
+  const fleet = compactFleetShape(state, {
+    ...wakeExtended,
+    ghostClaims,
+    liveClaimWorkers: Math.max(0, Number(liveClaimWorkers || wakeExtended.liveClaimWorkers || 0)),
+  }, { processAlive })
   const live = typeof supervisorLive === 'boolean'
     ? supervisorLive
     : deriveSupervisorLive(state, { processAlive, localHost, leaseSeconds })
@@ -247,6 +260,7 @@ export function fleetOpsFields({
     emptyFleetActionable: isEmptyFleetActionable(null, fleet),
     needsGoalReviewRetry: needsGoalReviewRetry(fleet),
     lastRunCompletedSummary: lastRunCompletedSummaryFromEvents(events),
+    liveClaimWorkers: fleet.workers,
   }
 }
 
@@ -260,6 +274,7 @@ export function fleetOpsFields({
  * @param {Array<object>} [input.events]
  * @param {boolean} [input.supervisorLive]
  * @param {Array<object>|number} [input.ghostClaims]
+ * @param {number} [input.liveClaimWorkers] live Claim Lease / orchestrator count
  * @param {boolean} [input.emptyFleetActionable]
  * @param {boolean} [input.needsGoalReviewRetry]
  * @param {string|null} [input.lastRunCompletedSummary]
@@ -274,6 +289,7 @@ export function buildProjectSnapshot({
   events = [],
   supervisorLive,
   ghostClaims,
+  liveClaimWorkers = 0,
   emptyFleetActionable,
   needsGoalReviewRetry: needsGoalReviewRetryFlag,
   lastRunCompletedSummary,
@@ -291,16 +307,19 @@ export function buildProjectSnapshot({
   leaseSeconds = 30,
 } = {}) {
   const activeWorkers = activeWorkerRows(state, { processAlive })
+  const liveClaims = Math.max(0, Number(liveClaimWorkers || 0))
   const ops = fleetOpsFields({
     state,
     events,
     ghostClaims: ghostClaims ?? [],
     wakeExtended: wakeExtended || {},
+    liveClaimWorkers: liveClaims,
     supervisorLive,
     processAlive,
     localHost,
     leaseSeconds,
   })
+  const workers = Math.max(activeWorkers.length, liveClaims)
   const snapshot = {
     id,
     root,
@@ -308,7 +327,8 @@ export function buildProjectSnapshot({
     journalTip: Number(eventsTip) || 0,
     capacity: capacityView(state.capacity),
     activeWorkers,
-    workers: activeWorkers.length,
+    workers,
+    liveClaimWorkers: liveClaims,
     stuck: stuckRows(state),
     pendingInputs: pendingInputCount(state),
     retryQueueSize: Object.keys(state.retryQueue || {}).length,
@@ -321,6 +341,7 @@ export function buildProjectSnapshot({
     staleLocks: Array.isArray(staleLocks) ? staleLocks : [],
     deadRuntime: Array.isArray(deadRuntime) ? deadRuntime : [],
     supervisorLive: typeof supervisorLive === 'boolean' ? supervisorLive : ops.supervisorLive,
+    supervisorPid: state.supervisorPid || null,
     ghostClaims: Array.isArray(ghostClaims) ? ghostClaims : ops.ghostClaims,
     emptyFleetActionable: typeof emptyFleetActionable === 'boolean'
       ? emptyFleetActionable
@@ -369,6 +390,7 @@ export function fleetSnapshotFromState(state = {}, extras = {}) {
     events: fleetExtras.events || [],
     ghostClaims: fleetExtras.ghostClaims ?? [],
     wakeExtended: fleetExtras,
+    liveClaimWorkers: fleetExtras.liveClaimWorkers || 0,
     supervisorLive: fleetExtras.supervisorLive,
     processAlive: alive,
     localHost: fleetExtras.localHost || '',
@@ -376,6 +398,8 @@ export function fleetSnapshotFromState(state = {}, extras = {}) {
   })
   return {
     ...fleet,
+    workers: Math.max(fleet.workers, Number(fleetExtras.liveClaimWorkers || 0)),
+    liveClaimWorkers: Number(fleetExtras.liveClaimWorkers || 0),
     hostResources: fleetExtras.hostResources ?? null,
     governorReservations: fleetExtras.governorReservations ?? null,
     sharedRuntime: fleetExtras.sharedRuntime ?? null,

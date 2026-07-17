@@ -19,16 +19,22 @@ const WAKE_KINDS = new Set([
   'quota_wait',
   'run_completed',
   'supervisor_stopped',
+  // Anomaly detectors (anomaly-detect.mjs) — wake Control Host LLM once
+  'worker_never_started',
+  'worker_crash_loop',
+  'worker_spawn_failed',
 ])
 
 const ABSORB_KINDS = new Set([
   'worker_started',
+  'worker_closed',
   'context_completed',
   'input_received',
   'input_auto_responded',
   'stale_lock_cleared',
   'goal_review_started',
   'retry_deferred_orphan_pid',
+  'host_remediation',
 ])
 
 /**

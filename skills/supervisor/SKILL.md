@@ -49,6 +49,41 @@ must pass through its Resource Governor.
    evidence-backed `retryQueue` guidance. Prefer root-before-dependent order
    (e.g. core QA/INTEGRATION before web dashboard E2E). See
    `monorepo-supervisor-ops` empty-fleet recovery (RAM / sibling cases).
+7. **Supervise means keep work moving — never go silent.** The Control Host must
+   not end a turn while the project is not `complete` / `run_completed` unless
+   an armed durable heartbeat is running (`ops-remediate` systemd timer **and**
+   a live `harness-control run`). “Workers are healthy” is not done. If chat
+   cannot stay awake, the **process supervisor + ops-remediate timer** must
+   auto-remediate (sibling goal-review ghosts, stale `index.lock`, empty-fleet
+   re-admit, idle complete sibling supervisors) and **escalate to the operator**
+   (`input_required` + desktop notify) when playbooks fail — never wait for the
+   operator to ask “is it working?”. Detecting issues only after the operator
+   pings chat is a supervisor defect.
+8. **Escalate, don’t stall.** After bounded auto-remediation misses
+   (`remediationAttempts` / `REMEDIATION_ESCALATE_AFTER`), raise a goal-scoped
+   Input Request with capacity/reservation evidence. Do not loop quietly.
+   Count **live Claim Leases / external orchestrators** as workers — never raise
+   empty-fleet escalation while a lease owner PID is alive.
+9. **Event-driven Control Host — no token polling.** The process supervisor tick
+   and `ops-remediate` own continuous supervision at **zero LLM tokens**. The
+   Control Host LLM must **sleep until Wake Triage says wake** (journal consumer
+   `control-host-wake` via `wake-control-host.mjs`). Never `/loop` `status` every
+   N minutes “just to check.” Anomaly events (`worker_never_started`,
+   `worker_crash_loop`, `worker_spawn_failed`) wake once; single
+   `worker_started` / `worker_closed` absorb.
+10. **You are the operator’s representative.** Keep them informed (progress
+    briefs via `wake-control-host --brief` / desktop notify), resolve issues
+    intelligently (retry with evidence, recycle silent agents, host remediation),
+    escalate only when playbooks fail, and **drive the run to `run_completed`**.
+    Silent “workers look fine” while remaining WIs > 0 is a defect. Orchestrator
+    heartbeats alone do not prove agent progress — empty logs / null
+    `lastAgentOutputAt` past the stuck threshold must recycle.
+11. **New `skills/supervisor/lib/*` modules must join `CONTROL_MODULES`.**
+    `harness-control.mjs` `importLib` only loads allowlisted control modules from
+    `supervisor/lib`; anything else is resolved as `generator/lib` and fails with
+    `generator module missing`. Same change: add the filename to `CONTROL_MODULES`,
+    document it in `lib/README.md`, and add a `lib_test` import/smoke when the
+    planner is mechanical.
 
 Let `REPO` be the selected harness project directory (which may be below the Git
 top-level), `CONTROL` this skill directory, and
@@ -58,12 +93,14 @@ Workers always run in the background. Monitor via `harness-control status`,
 `fleet-snapshot`, and worker logs under `.git/harness-control/<project>/logs/`.
 
 Control Plane libraries (journal, beacon, Fleet Snapshot, tick/admission
-planners, Wake Triage, Supervisor Lease, Resource Governor, host resources,
-orphan/runtime view) are owned solely by `skills/supervisor/lib/` - see that
-directory's `README.md`.
+planners, Wake Triage, anomaly detectors, Supervisor Lease, Resource Governor,
+host resources, orphan/runtime view) are owned solely by `skills/supervisor/lib/`
+- see that directory's `README.md`.
 `harness-control.mjs` is the I/O adapter; shared execution primitives remain in
 `skills/generator/lib/`. Generator code imports control modules from
 `skills/supervisor/lib/` directly (no re-export shims).
+**Adding a file under `lib/` without updating `CONTROL_MODULES` is a defect**
+(Hard rule 11).
 
 At a monorepo root, resolve one project the same way generator does: `node
 "$GENERATOR/reconcile.mjs" --print-root` (set below) walks up for the nearest
@@ -267,7 +304,8 @@ is no longer live.
 Resource Governor admission is swap-aware and reservation-weighted; zero capacity
 defers retries without burning Attempts.
 The supervisor tick owns Hybrid Empty-Fleet Recovery (ghost claims, dead locks,
-orphan PIDs, re-admit when capacity allows).
+orphan PIDs, re-admit when capacity allows) and zero-token anomaly detection
+(`anomaly-detect.mjs`: never-started, crash-loop, spawn-failed).
 The Control Host LLM acts only on Wake Triage judgment, quota pauses, cross-project
 RAM contention, and operator playbooks in `monorepo-supervisor-ops`.
 
@@ -277,13 +315,26 @@ Inspect worker log tails under `.git/harness-control/<project>/logs/` when judgi
 When Run State is terminal, the next tick clears the worker row
 (background workers leave no visible UI panes).
 
-### Every supervisor tick (ordered)
+### Event-driven Control Host (preferred)
+
+Do **not** keep a chat `/loop` that polls `status`. Arm instead:
+
+1. `harness-control run` (process tick — admission/recovery, no LLM tokens)
+2. `install-ops-cron.sh --repo "$REPO" --notify` → `ops-remediate` +
+   `wake-control-host.mjs` (acks fold/absorb; desktop-notifies / optional
+   `--invoke-agent` only when `shouldWake`)
+
+Wake kinds include stuck workers, unrepaired empty-fleet / dead-runtime,
+`input_required`, quota, goal defects, and anomaly events
+(`worker_never_started`, `worker_crash_loop`, `worker_spawn_failed`).
+
+### Every supervisor Control Host turn (ordered)
 
 1. `harness-control status` — read `fleetSnapshot`, `workerHealth`, `mergeLock`,
    capacity, pending inputs, and `wakeTriage`.
 2. Scan recent Control Events for unrepaired `empty_fleet_actionable`,
-   `dead_runtime`, and other wake kinds; fold/absorb progress the tick already
-   repaired.
+   `dead_runtime`, anomaly wakes, and other wake kinds; fold/absorb progress the
+   tick already repaired.
 3. **Always** open the latest Evidence Artifact logs for any WI that finished or
    failed QA / INTEGRATION_QA / Goal Review since the last tick.
    Read the bottom JSON verdict + `defects`.

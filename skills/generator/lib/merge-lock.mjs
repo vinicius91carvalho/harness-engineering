@@ -24,12 +24,8 @@ function currentHost() {
 
 export function stealDeadMergeLock(lockDir) {
   if (!existsSync(lockDir)) return false
-  const ownerHost = existsSync(join(lockDir, 'host'))
-    ? readFileSync(join(lockDir, 'host'), 'utf8').trim()
-    : ''
-  const ownerPid = existsSync(join(lockDir, 'owner'))
-    ? readFileSync(join(lockDir, 'owner'), 'utf8').trim()
-    : ''
+  const ownerHost = readMergeLockFile(join(lockDir, 'host'))
+  const ownerPid = readMergeLockFile(join(lockDir, 'owner'))
   if (ownerHost !== currentHost()) return false
   if (ownerPid && processAlive(Number(ownerPid))) return false
   rmSync(join(lockDir, 'owner'), { force: true })
@@ -46,14 +42,22 @@ function mergeBusySignal() {
   process.stdout.write('BUSY\n')
 }
 
+function readMergeLockFile(path) {
+  try {
+    if (!existsSync(path)) return ''
+    return readFileSync(path, 'utf8').trim()
+  } catch (error) {
+    // Race: lock dir/file can vanish between existsSync and read (ENOENT).
+    if (error && (error.code === 'ENOENT' || error.code === 'ENOTDIR')) return ''
+    throw error
+  }
+}
+
 function readMergeLockHolder(mergeLockDir) {
-  const owner = existsSync(join(mergeLockDir, 'owner'))
-    ? readFileSync(join(mergeLockDir, 'owner'), 'utf8').trim()
-    : ''
-  const host = existsSync(join(mergeLockDir, 'host'))
-    ? readFileSync(join(mergeLockDir, 'host'), 'utf8').trim()
-    : ''
-  return { owner, host }
+  return {
+    owner: readMergeLockFile(join(mergeLockDir, 'owner')),
+    host: readMergeLockFile(join(mergeLockDir, 'host')),
+  }
 }
 
 /** Peek at the current merge-lock holder without trying to acquire. */
@@ -141,9 +145,7 @@ export function mergeDo(repo, context, integ) {
 
 export function mergeRelease(repo, session) {
   const { mergeLockDir } = repoPaths(repo)
-  const owner = existsSync(join(mergeLockDir, 'owner'))
-    ? readFileSync(join(mergeLockDir, 'owner'), 'utf8').trim()
-    : ''
+  const owner = readMergeLockFile(join(mergeLockDir, 'owner'))
   if (session && owner !== String(session)) {
     throw new Error(`merge lock is owned by ${owner}`)
   }

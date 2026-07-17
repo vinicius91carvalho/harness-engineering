@@ -50,6 +50,30 @@ export function listGhostClaims({
   return ghosts
 }
 
+/**
+ * Count Claim Lease contexts whose Run State is live (owner/child PID alive).
+ * Supervisor `state.workers` under-counts after recycle while an external
+ * orchestrator still owns the lease — callers must use this for empty-fleet.
+ */
+export function countLiveClaims({
+  claims = {},
+  runStatesByContext = {},
+  processAlive: alive = processAlive,
+} = {}) {
+  const seen = new Set()
+  let live = 0
+  for (const [key, claim] of Object.entries(claims || {})) {
+    const context = claim?.context || key
+    if (seen.has(context)) continue
+    const runState = runStatesByContext[context] || runStatesByContext[key] || {}
+    const health = classifyRunStateHealth(runState, alive)
+    if (health.health !== 'live') continue
+    seen.add(context)
+    live += 1
+  }
+  return live
+}
+
 /** Returns a patched Run State marked abandoned (pure). */
 export function abandonGhostRun(runState, { reason = 'ghost: owner/child PID dead', at = null } = {}) {
   const abandonedAt = at || new Date().toISOString()

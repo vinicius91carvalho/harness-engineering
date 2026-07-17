@@ -574,10 +574,16 @@ export async function syncCursorSkillLinks(pluginDest, skillNames, { moduleId = 
   const current = [...skillNames].sort()
 
   if (dryRun) {
+    const aliasPlan = []
+    if (moduleId === 'harness') {
+      if (current.includes('harness-generator')) aliasPlan.push('generator')
+      if (current.includes('harness-supervisor')) aliasPlan.push('supervisor')
+    }
     return {
       skillsRoot,
       links: current,
       remove: previous.filter((name) => !current.includes(name)),
+      runtimeAliases: { aliases: aliasPlan },
     }
   }
 
@@ -597,22 +603,76 @@ export async function syncCursorSkillLinks(pluginDest, skillNames, { moduleId = 
   for (const stale of previous.filter((name) => !current.includes(name))) {
     try { await rm(join(skillsRoot, stale), { force: true, recursive: true }) } catch {}
   }
-  // Drop unprefixed leftovers from older installs (supervisor → harness-supervisor).
-  if (moduleId === 'harness') {
-    for (const name of current) {
-      if (!name.startsWith('harness-')) continue
-      const short = name.slice('harness-'.length)
-      if (!short || current.includes(short)) continue
-      try { await rm(join(skillsRoot, short), { force: true, recursive: true }) } catch {}
-    }
-  }
+  // Keep unprefixed generator/supervisor as full runtime aliases (no SKILL.md)
+  // for relative imports + harness-control importLib. Deleting them (or leaving
+  // a partial copy) causes supervisor_tick_failed / adapters/hosts.mjs crashes.
+  const runtimeAliases = moduleId === 'harness'
+    ? await syncRuntimeSkillAliases(skillsRoot, { dryRun: false })
+    : { aliases: [] }
   await writeOwned(marker, { moduleId, files: current })
-  return { skillsRoot, links: current }
+  return { skillsRoot, links: current, runtimeAliases }
+}
+
+/**
+ * Materialize unprefixed runtime aliases next to harness-* discoverable skills.
+ * Copies the full tree and strips SKILL.md so `/generator` is not registered.
+ */
+export async function syncRuntimeSkillAliases(skillsRoot, { dryRun = false } = {}) {
+  const pairs = [
+    ['harness-generator', 'generator'],
+    ['harness-supervisor', 'supervisor'],
+  ]
+  const aliases = []
+  for (const [hosted, alias] of pairs) {
+    const from = join(skillsRoot, hosted)
+    const to = join(skillsRoot, alias)
+    if (!existsSync(from)) continue
+    aliases.push(alias)
+    if (dryRun) continue
+    try { await rm(to, { force: true, recursive: true }) } catch {}
+    await cp(from, to, { recursive: true })
+    try { await rm(join(to, 'SKILL.md'), { force: true }) } catch {}
+  }
+  return { aliases }
 }
 
 /** @deprecated Prefer syncCursorSkillLinks */
 export async function syncHarnessCursorSkillLinks(pluginDest, skillNames, opts = {}) {
   return syncCursorSkillLinks(pluginDest, skillNames, { ...opts, moduleId: 'harness' })
+}
+
+/**
+ * Cursor Agent also discovers `~/.agents/skills` (and project `.agents/skills`).
+ * Pi / ops may keep unprefixed runtime trees (`supervisor/lib`, …) for relative
+ * imports, but a SKILL.md there registers `/supervisor` beside `/harness-supervisor`.
+ * Agent install keeps those runtime dirs and drops only the discoverable SKILL.md.
+ */
+export async function scrubAgentsUnprefixedSkillDiscovery(agentsRoots, skillNames, { dryRun = false } = {}) {
+  const roots = [...new Set((agentsRoots || []).filter(Boolean))]
+  const removed = []
+  const rewritten = []
+  for (const agentsRoot of roots) {
+    if (!existsSync(agentsRoot)) continue
+    for (const name of skillNames) {
+      const shortSkillMd = join(agentsRoot, name, 'SKILL.md')
+      if (existsSync(shortSkillMd)) {
+        removed.push(shortSkillMd)
+        if (!dryRun) {
+          try { await rm(shortSkillMd, { force: true }) } catch {}
+        }
+      }
+      const hosted = harnessSkillId(name)
+      const hostedSkillMd = join(agentsRoot, hosted, 'SKILL.md')
+      if (existsSync(hostedSkillMd)) {
+        if (dryRun) rewritten.push(hostedSkillMd)
+        else {
+          await writeSkillName(hostedSkillMd, hosted)
+          rewritten.push(hostedSkillMd)
+        }
+      }
+    }
+  }
+  return { removed, rewritten }
 }
 
 async function cleanOptionalBundleAgentDest(dest, moduleId, harnessSkillNames, { dryRun = false } = {}) {
@@ -719,6 +779,12 @@ async function projectHarnessAgent(repo, dest, { dryRun = false } = {}) {
   const previous = await readOwned(marker)
   const current = planned.map((row) => row.to)
   const skillLinks = await syncCursorSkillLinks(dest, hostedSkillNames, { moduleId: 'harness', dryRun: true })
+  const cursorDirForScrub = cursorDirFromPluginDest(dest)
+  const agentsRoots = [
+    join(process.env.HOME || '', '.agents', 'skills'),
+    join(dirname(cursorDirForScrub), '.agents', 'skills'),
+  ]
+  const agentsScrubPlan = await scrubAgentsUnprefixedSkillDiscovery(agentsRoots, skillNames, { dryRun: true })
 
   if (dryRun) {
     return {
@@ -727,6 +793,7 @@ async function projectHarnessAgent(repo, dest, { dryRun = false } = {}) {
       planned: current,
       remove: previous.filter((f) => !current.includes(f)),
       skillLinks,
+      agentsScrub: agentsScrubPlan,
     }
   }
 
@@ -750,7 +817,16 @@ async function projectHarnessAgent(repo, dest, { dryRun = false } = {}) {
   }
   await writeOwned(marker, { moduleId: 'harness', files: current })
   const linked = await syncCursorSkillLinks(dest, hostedSkillNames, { moduleId: 'harness', dryRun: false })
-  return { projected: 'harness', kind: 'core', files: current.length, skillLinks: linked }
+  // Cursor Agent discovers ~/.agents/skills too — strip unprefixed SKILL.md so
+  // /supervisor cannot shadow /harness-supervisor. Keep runtime dirs for imports.
+  const agentsScrub = await scrubAgentsUnprefixedSkillDiscovery(agentsRoots, skillNames, { dryRun: false })
+  return {
+    projected: 'harness',
+    kind: 'core',
+    files: current.length,
+    skillLinks: linked,
+    agentsScrub,
+  }
 }
 
 export async function recordReceipt(receiptDir, moduleId, payload) {

@@ -167,8 +167,20 @@ grep -q '^name: harness-supervisor$' "$PROJECT/.cursor/skills/harness-supervisor
   || fail 'Cursor project harness-supervisor skill must be a real directory, not a symlink'
 [ ! -L "$PROJECT/.cursor/skills/harness-generator" ] \
   || fail 'Cursor project harness-generator skill must be a real directory, not a symlink'
-test ! -e "$PROJECT/.cursor/skills/supervisor" \
-  || fail 'Cursor project must not leave unprefixed supervisor skill'
+# Unprefixed generator/supervisor are runtime aliases (full tree, no SKILL.md)
+# for relative imports — not discoverable slash skills.
+test -d "$PROJECT/.cursor/skills/generator" \
+  || fail 'Cursor project must materialize generator runtime alias'
+test -f "$PROJECT/.cursor/skills/generator/adapters/hosts.mjs" \
+  || fail 'Cursor project generator alias must include adapters/hosts.mjs'
+test -f "$PROJECT/.cursor/skills/generator/lib/observation-method.mjs" \
+  || fail 'Cursor project generator alias must include observation-method.mjs'
+test ! -e "$PROJECT/.cursor/skills/generator/SKILL.md" \
+  || fail 'Cursor project generator runtime alias must not register SKILL.md'
+test -d "$PROJECT/.cursor/skills/supervisor" \
+  || fail 'Cursor project must materialize supervisor runtime alias'
+test ! -e "$PROJECT/.cursor/skills/supervisor/SKILL.md" \
+  || fail 'Cursor project supervisor runtime alias must not register SKILL.md'
 test -f "$PROJECT/.cursor/skills/.harness-owned-harness-skills.json" \
   || fail 'Cursor project skill-copy ownership marker missing'
 test ! -e "$HOME/.cursor/plugins/local/harness/.cursor-plugin/plugin.json" \
@@ -285,6 +297,18 @@ grep -q '^name: harness-supervisor$' "$HOME/.cursor/skills/harness-supervisor/SK
   || fail 'Cursor Agent CLI harness-supervisor skill must be a real directory, not a symlink'
 test ! -e "$HOME/.cursor/skills/supervisor" \
   || fail 'Cursor Agent CLI must not leave unprefixed supervisor skill'
+# Cursor Agent also discovers ~/.agents/skills — unprefixed SKILL.md must not
+# register /supervisor beside /harness-supervisor. Runtime dirs may remain.
+mkdir -p "$HOME/.agents/skills/supervisor" "$HOME/.agents/skills/harness-supervisor"
+printf '%s\n' '---' 'name: supervisor' 'description: pollution' '---' \
+  >"$HOME/.agents/skills/supervisor/SKILL.md"
+printf '%s\n' '---' 'name: supervisor' 'description: hosted' '---' \
+  >"$HOME/.agents/skills/harness-supervisor/SKILL.md"
+"$ROOT/install.sh" --cli agent --no </dev/null >"$TMP/out"
+test ! -e "$HOME/.agents/skills/supervisor/SKILL.md" \
+  || fail 'agent install must strip ~/.agents/skills/supervisor/SKILL.md'
+grep -q '^name: harness-supervisor$' "$HOME/.agents/skills/harness-supervisor/SKILL.md" \
+  || fail 'agent install must rewrite ~/.agents harness-supervisor frontmatter name'
 first=$(find "$HOME/.cursor/plugins/local/harness" -type f -exec shasum -a 256 {} \; | sort | shasum -a 256)
 "$ROOT/install.sh" --cli agent --no </dev/null >"$TMP/out"
 second=$(find "$HOME/.cursor/plugins/local/harness" -type f -exec shasum -a 256 {} \; | sort | shasum -a 256)

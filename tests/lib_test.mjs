@@ -1772,8 +1772,276 @@ test('evidenceGuidanceExcerpt reads expected/observed pairs without mutating art
     reason: 'integration could not complete',
     detail: { evidence: artifact },
   })
-  assert.match(guidance, /integration merge/)
+  assert.match(guidance, /MERGE\/IV ONLY/)
+  assert.match(guidance, /index\.lock/)
   assert.match(guidance, /observed: 503 Service Unavailable/)
+})
+
+test('host remediation releases sibling goal-review ghosts and clears stale index.lock', async () => {
+  const {
+    planHostRemediation,
+    shouldEscalateRemediation,
+  } = await import('../skills/supervisor/lib/host-remediation.mjs')
+  const tmp = mkdtempSync(join(tmpdir(), 'host-remed-'))
+  const lockPath = join(tmp, 'index.lock')
+  writeFileSync(lockPath, '')
+  const plan = planHostRemediation({
+    projects: [
+      {
+        id: 'root',
+        status: 'running',
+        workers: 0,
+        emptyFleetActionable: true,
+        progress: { total: 26, integrated: 4 },
+        capacity: { available: 0 },
+      },
+      {
+        id: 'web',
+        status: 'running',
+        workers: 0,
+        progress: { total: 91, integrated: 91 },
+        needsGoalReviewRetry: true,
+        supervisorLive: true,
+        supervisorPid: 410635,
+        root: '/repo/web',
+      },
+    ],
+    reservations: {
+      gr: {
+        id: 'gr',
+        projectId: 'web',
+        context: 'goal-review',
+        resourceClass: 'goal-review',
+        cost: 2,
+      },
+    },
+    blockerProjectId: 'root',
+    indexLockPath: lockPath,
+    indexLockHeld: false,
+    indexLockAgeMs: 10_000,
+  })
+  assert.ok(plan.actions.some((a) => a.kind === 'clear_index_lock'))
+  assert.ok(plan.actions.some((a) => a.kind === 'release_reservation' && a.reservationId === 'gr'))
+  assert.ok(plan.actions.some((a) => a.kind === 'stop_idle_complete_supervisor' && a.projectId === 'web'))
+  assert.equal(shouldEscalateRemediation({
+    attempts: 3,
+    emptyFleetActionable: true,
+    available: 0,
+    remaining: 22,
+  }), true)
+  assert.equal(shouldEscalateRemediation({
+    attempts: 1,
+    emptyFleetActionable: true,
+    available: 0,
+    remaining: 22,
+  }), false)
+})
+
+test('representative-brief plans progress notifies and judgment wakes', async () => {
+  const {
+    planProgressBrief,
+    isJudgmentWake,
+  } = await import('../skills/supervisor/lib/representative-brief.mjs')
+  const first = planProgressBrief({
+    previous: null,
+    progress: { total: 26, integrated: 24, implemented: 24, qa: 24 },
+    status: 'running',
+    claims: [{ context: 'oss-golden-path', phase: 'coding' }],
+    pendingInputs: 0,
+  })
+  assert.equal(first.brief, true)
+  assert.match(first.body, /24\/26/)
+
+  const unchanged = planProgressBrief({
+    previous: first.snapshot,
+    progress: { total: 26, integrated: 24, implemented: 24, qa: 24 },
+    status: 'running',
+    claims: [{ context: 'oss-golden-path', phase: 'coding' }],
+    now: Date.parse(first.snapshot.at) + 60_000,
+    minIntervalMs: 15 * 60_000,
+  })
+  assert.equal(unchanged.brief, false)
+
+  const advanced = planProgressBrief({
+    previous: first.snapshot,
+    progress: { total: 26, integrated: 25, implemented: 25, qa: 25 },
+    status: 'running',
+    claims: [],
+    now: Date.parse(first.snapshot.at) + 60_000,
+  })
+  assert.equal(advanced.brief, true)
+  assert.match(advanced.body, /25\/26/)
+
+  assert.equal(isJudgmentWake({ kind: 'worker_stuck' }), true)
+  assert.equal(isJudgmentWake({ kind: 'progress', wakeTriage: { action: 'wake' } }), false)
+  assert.equal(isJudgmentWake({ kind: 'input_required' }), true)
+})
+
+test('workerActivityAgeMs ignores orchestrator heartbeat when agent is silent', async () => {
+  const { mkdtempSync, writeFileSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  const { workerActivityAgeMs, isWorkerStuck } = await import('../skills/generator/lib/worker-outcome.mjs')
+  const dir = mkdtempSync(join(tmpdir(), 'silent-agent-'))
+  const logFile = join(dir, 'empty.log')
+  writeFileSync(logFile, '')
+  const now = Date.now()
+  const age = await workerActivityAgeMs({
+    logFile,
+    runState: {
+      heartbeatEpoch: Math.floor(now / 1000),
+      lastAgentOutputAt: null,
+      startedAt: new Date(now - 20 * 60_000).toISOString(),
+    },
+    now,
+  })
+  assert.ok(age >= 15 * 60_000, `expected silent age >= 15m, got ${age}`)
+  assert.equal(await isWorkerStuck({
+    logFile,
+    runState: {
+      heartbeatEpoch: Math.floor(now / 1000),
+      lastAgentOutputAt: null,
+      startedAt: new Date(now - 20 * 60_000).toISOString(),
+    },
+    thresholdMs: 600_000,
+  }), true)
+})
+
+test('anomaly-detect never-started, crash-loop, and spawn-failed planners', async () => {
+  const {
+    planNeverStarted,
+    planCrashLoop,
+    planSpawnFailed,
+  } = await import('../skills/supervisor/lib/anomaly-detect.mjs')
+
+  const within = planNeverStarted({
+    context: 'alpha',
+    startedAt: new Date().toISOString(),
+    runState: {},
+    deadlineMs: 120_000,
+    processAlive: () => false,
+  })
+  assert.equal(within.emit, false)
+
+  const never = planNeverStarted({
+    context: 'alpha',
+    startedAt: new Date(Date.now() - 200_000).toISOString(),
+    runState: { status: 'starting', phase: 'coding' },
+    workerPid: null,
+    deadlineMs: 120_000,
+    processAlive: () => false,
+  })
+  assert.equal(never.emit, true)
+  assert.equal(never.kind, 'worker_never_started')
+
+  const live = planNeverStarted({
+    context: 'alpha',
+    startedAt: new Date(Date.now() - 200_000).toISOString(),
+    runState: { status: 'running', ownerPid: 42 },
+    deadlineMs: 120_000,
+    processAlive: (pid) => pid === 42,
+  })
+  assert.equal(live.emit, false)
+
+  const first = planCrashLoop({
+    context: 'alpha',
+    recentExits: [],
+    exitAt: 1000,
+    windowMs: 60_000,
+    threshold: 3,
+  })
+  assert.equal(first.emit, false)
+  assert.deepEqual(first.recentExits, [1000])
+
+  const loop = planCrashLoop({
+    context: 'alpha',
+    recentExits: [1000, 2000],
+    exitAt: 3000,
+    windowMs: 60_000,
+    threshold: 3,
+  })
+  assert.equal(loop.emit, true)
+  assert.equal(loop.kind, 'worker_crash_loop')
+  assert.equal(loop.detail.count, 3)
+
+  const once = planCrashLoop({
+    context: 'alpha',
+    recentExits: [1000, 2000, 3000],
+    exitAt: 4000,
+    windowMs: 60_000,
+    threshold: 3,
+    alreadyEmitted: true,
+  })
+  assert.equal(once.emit, false)
+
+  assert.equal(planSpawnFailed({ context: 'alpha', pid: 9 }).emit, false)
+  const spawnFail = planSpawnFailed({ context: 'alpha', pid: null })
+  assert.equal(spawnFail.emit, true)
+  assert.equal(spawnFail.kind, 'worker_spawn_failed')
+})
+
+test('wake triage wakes on anomaly kinds and absorbs single worker_closed', async () => {
+  const { classify, shouldWake } = await import('../skills/supervisor/lib/wake-triage.mjs')
+  assert.deepEqual(classify({ kind: 'worker_never_started', context: 'a' }), {
+    action: 'wake',
+    reason: 'worker_never_started',
+  })
+  assert.deepEqual(classify({ kind: 'worker_crash_loop', context: 'a' }), {
+    action: 'wake',
+    reason: 'worker_crash_loop',
+  })
+  assert.deepEqual(classify({ kind: 'worker_spawn_failed', context: 'a' }), {
+    action: 'wake',
+    reason: 'worker_spawn_failed',
+  })
+  assert.deepEqual(classify({ kind: 'worker_closed', context: 'a' }), {
+    action: 'absorb',
+    reason: 'worker_closed',
+  })
+  assert.deepEqual(classify({ kind: 'worker_started', context: 'a' }), {
+    action: 'absorb',
+    reason: 'worker_started',
+  })
+  assert.equal(shouldWake([
+    { kind: 'worker_started' },
+    { kind: 'worker_closed' },
+  ]), false)
+  assert.equal(shouldWake([
+    { kind: 'worker_started' },
+    { kind: 'worker_crash_loop', context: 'a' },
+  ]), true)
+})
+
+test('fleet snapshot counts live Claim Leases as workers (no false empty-fleet)', async () => {
+  const { buildProjectSnapshot, isEmptyFleetActionable } = await import('../skills/supervisor/lib/fleet-snapshot.mjs')
+  const { countLiveClaims } = await import('../skills/supervisor/lib/orphan-claims.mjs')
+  assert.equal(countLiveClaims({
+    claims: { a: { context: 'web-oss-dashboard', status: 'building' } },
+    runStatesByContext: {
+      'web-oss-dashboard': { status: 'running', ownerPid: 1, childPid: 2 },
+    },
+    processAlive: (pid) => pid === 1 || pid === 2,
+  }), 1)
+  const project = buildProjectSnapshot({
+    id: 'root',
+    state: {
+      status: 'running',
+      workers: {},
+      progress: { total: 26, integrated: 21 },
+      pendingInputs: {},
+      retryQueue: {},
+    },
+    liveClaimWorkers: 1,
+  })
+  assert.equal(project.workers, 1)
+  assert.equal(project.emptyFleetActionable, false)
+  assert.equal(isEmptyFleetActionable(null, {
+    workers: 1,
+    status: 'running',
+    counts: { total: 26, integrated: 21 },
+    pendingInputs: 0,
+    retryQueueSize: 0,
+  }), false)
 })
 
 test('failure-policy blocks coding exhaustion and routes quota/infra', async () => {
@@ -2556,6 +2824,55 @@ test('tick context computes event-driven delay with poll fallback', () => {
   const watched = tickWatchPaths({ controlRoot: '/c', runsDir: '/r', commonGit: '/g' })
   assert.ok(watched.includes('/c/responses'))
   assert.equal(watched.includes('/c'), false)
+})
+
+test('resolveGeneratorDir prefers complete harness-generator over incomplete generator alias', async () => {
+  const {
+    generatorRuntimeReady,
+    resolveGeneratorDir,
+    tickFailureDelay,
+    GENERATOR_RUNTIME_MARKERS,
+  } = await import('../skills/supervisor/lib/runtime-layout.mjs')
+  const root = mkdtempSync(join(tmpdir(), 'harness-runtime-layout-'))
+  const skills = join(root, 'skills')
+  const scriptFile = join(skills, 'harness-supervisor', 'scripts', 'harness-control.mjs')
+  mkdirSync(dirname(scriptFile), { recursive: true })
+  writeFileSync(scriptFile, '// stub\n')
+
+  const incomplete = join(skills, 'generator')
+  mkdirSync(join(incomplete, 'lib'), { recursive: true })
+  writeFileSync(join(incomplete, 'orchestrator.mjs'), '// incomplete\n')
+  writeFileSync(join(incomplete, 'lib', 'observation-method.mjs'), '// present\n')
+  // adapters/hosts.mjs intentionally missing
+
+  const complete = join(skills, 'harness-generator')
+  mkdirSync(join(complete, 'lib'), { recursive: true })
+  mkdirSync(join(complete, 'adapters'), { recursive: true })
+  for (const rel of GENERATOR_RUNTIME_MARKERS) {
+    const abs = join(complete, rel)
+    mkdirSync(dirname(abs), { recursive: true })
+    writeFileSync(abs, '// ok\n')
+  }
+
+  assert.equal(generatorRuntimeReady(incomplete), false)
+  assert.equal(generatorRuntimeReady(complete), true)
+  assert.equal(resolveGeneratorDir(scriptFile), complete)
+
+  assert.equal(tickFailureDelay({ pollMs: 2000, consecutiveFailures: 0 }), 2000)
+  assert.equal(tickFailureDelay({ pollMs: 2000, consecutiveFailures: 1 }), 4000)
+  assert.equal(tickFailureDelay({ pollMs: 2000, consecutiveFailures: 2 }), 8000)
+  assert.ok(tickFailureDelay({ pollMs: 2000, consecutiveFailures: 20 }) <= 60_000)
+})
+
+test('mergeLockHolder tolerates missing owner file (ENOENT race)', async () => {
+  const { mergeLockHolder } = await import('../skills/generator/lib/claim-lease.mjs')
+  const root = mkdtempSync(join(tmpdir(), 'harness-merge-lock-'))
+  mkdirSync(join(root, '.git'), { recursive: true })
+  // No generator-merge dir → unlocked
+  assert.deepEqual(mergeLockHolder(root), { busy: false, owner: '', host: '' })
+  // Empty lock dir (no owner) → unlocked, must not throw
+  mkdirSync(join(root, '.git', 'harness-locks', 'generator-merge'), { recursive: true })
+  assert.deepEqual(mergeLockHolder(root), { busy: false, owner: '', host: '' })
 })
 
 test('fleet snapshot ops fields derive supervisor, ghosts, and run_completed summary', async () => {

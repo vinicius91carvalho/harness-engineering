@@ -253,8 +253,12 @@ Coding soft-aligns its prompt to those methods but does not hard-exclude hosts.
 _Avoid_: soft reorder, pre-suite phase, host preference hint
 
 **Wake Triage**:
-A zero-token classifier over Control Journal deltas that absorbs or folds benign progress, including empty-fleet progress already repaired by Hybrid Empty-Fleet Recovery, and wakes the Control Host LLM only for actionable events: unrepaired `empty_fleet_actionable` / `dead_runtime`, Input Requests, stuck workers, and other fail-closed gaps.
-_Avoid_: peer agent bus, supervisor tick replacement, event-driven coding↔QA channel
+A zero-token classifier over Control Journal deltas that absorbs or folds benign progress, including empty-fleet progress already repaired by Hybrid Empty-Fleet Recovery, and wakes the Control Host LLM only for actionable events: unrepaired `empty_fleet_actionable` / `dead_runtime`, Input Requests, stuck workers, anomaly events (`worker_never_started`, `worker_crash_loop`, `worker_spawn_failed`), and other fail-closed gaps. Delivered by `wake-control-host.mjs` (consumer `control-host-wake`) — not by Cursor `/loop` status polling.
+_Avoid_: peer agent bus, supervisor tick replacement, event-driven coding↔QA channel, token-burning status polling
+
+**Anomaly Detect**:
+Pure planners in `skills/supervisor/lib/anomaly-detect.mjs` that emit Control Events when a worker never starts, flaps in a crash loop, or fails to spawn — so Wake Triage can wake the Control Host once without per-tick LLM cost.
+_Avoid_: LLM health probes, peer worker heartbeats
 
 **Evidence Corpus**:
 A read-only index over create-only Evidence Artifacts used by the learning loop to cluster recurring defects and propose workflow-skill patches with operator approval.
