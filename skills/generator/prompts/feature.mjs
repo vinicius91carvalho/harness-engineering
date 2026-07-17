@@ -95,7 +95,14 @@ export function featurePrompt(kind, feature, attempt, repairPlan = null, workdir
   if (kind === 'CODING') {
     const methods = resolveObservationMethods(feature, options)
     const verifyAlign = codingObservationAlign(methods)
-    const verifyFirst = feature.verify_first === undefined ? getVerifyFirst(workdir) : feature.verify_first === true
+    // Repair Plan / Control Host guidance means implement the named fix — never
+    // VERIFY-FIRST zero-diff. CauseFlow root 2026-07-17: GR reopen seeded
+    // "NOT verify-first" guidance but coding still launched VERIFY-FIRST because
+    // project_specs mode=existing-codebase, so AC-025 claimed green while plan
+    // HEAD still shipped Ornith 127.0.0.1:8081.
+    const repairForcesImplement = Boolean(repairPlan)
+    const verifyFirst = !repairForcesImplement
+      && (feature.verify_first === undefined ? getVerifyFirst(workdir) : feature.verify_first === true)
     const head = verifyFirst
       ? `You are the coding-agent in VERIFY-FIRST mode (existing codebase). ${verifyFirstBoundaryHint(methods)} If all pass, set implementation=true and make NO code changes (a zero-diff checkpoint is valid; commit only if you intentionally changed tracked files). If any check fails, fix only the root cause with the smallest possible diff — do not refactor, restructure, or rewrite working code. The bar is "the AC passes at a real boundary," not "the code is idiomatic."\n${base}`
       : `You are the coding-agent. Implement exactly this Work Item, then stop.\n${base}`

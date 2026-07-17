@@ -51,33 +51,50 @@ must pass through its Resource Governor.
    `monorepo-supervisor-ops` empty-fleet recovery (RAM / sibling cases).
 7. **Supervise means keep work moving — never go silent.** The Control Host must
    not end a turn while the project is not `complete` / `run_completed` unless
-   an armed durable heartbeat is running (`ops-remediate` systemd timer **and**
-   a live `harness-control run`). “Workers are healthy” is not done. If chat
-   cannot stay awake, the **process supervisor + ops-remediate timer** must
-   auto-remediate (sibling goal-review ghosts, stale `index.lock`, empty-fleet
-   re-admit, idle complete sibling supervisors) and **escalate to the operator**
-   (`input_required` + desktop notify) when playbooks fail — never wait for the
-   operator to ask “is it working?”. Detecting issues only after the operator
-   pings chat is a supervisor defect.
+   an armed durable heartbeat is running (`ops-remediate` systemd timer **with
+   `--notify --invoke-agent`** **and** a live `harness-control run`). “Workers
+   are healthy” is not done. The **process supervisor + ops-remediate timer**
+   must auto-remediate (including Goal Review evidence reopen — see
+   `goal-review-recovery.mjs`) and **escalate to the operator** (`input_required`
+   + desktop notify) when playbooks fail — never wait for the operator to ask
+   “is it working?”. Detecting issues only after the operator pings chat is a
+   supervisor defect.
 8. **Escalate, don’t stall.** After bounded auto-remediation misses
    (`remediationAttempts` / `REMEDIATION_ESCALATE_AFTER`), raise a goal-scoped
    Input Request with capacity/reservation evidence. Do not loop quietly.
    Count **live Claim Leases / external orchestrators** as workers — never raise
    empty-fleet escalation while a lease owner PID is alive.
-9. **Event-driven Control Host — no token polling.** The process supervisor tick
-   and `ops-remediate` own continuous supervision at **zero LLM tokens**. The
-   Control Host LLM must **sleep until Wake Triage says wake** (journal consumer
-   `control-host-wake` via `wake-control-host.mjs`). Never `/loop` `status` every
-   N minutes “just to check.” Anomaly events (`worker_never_started`,
-   `worker_crash_loop`, `worker_spawn_failed`) wake once; single
-   `worker_started` / `worker_closed` absorb.
+9. **Event-driven durable Control Host — no chat token polling.** The X-minute
+   project-state check is **`ops-remediate` + `wake-control-host`**, not a Cursor
+   `/loop`. Process tick owns admission/recovery at **zero LLM tokens**; Wake
+   Triage invokes the judgment agent (`--invoke-agent`) only when `shouldWake`.
+   Never `/loop` `status` every N minutes in chat “just to check.” Cursor chat
+   that ran `/harness-supervisor` is an **optional overlay** — after stand-down,
+   the durable Control Host is the ops-cron `--invoke-agent` path (composer-2.5 /
+   `HARNESS_WAKE_AGENT`). Anomaly spam is deduped (`dedupeJudgmentWakes`).
 10. **You are the operator’s representative.** Keep them informed (progress
-    briefs via `wake-control-host --brief` / desktop notify), resolve issues
-    intelligently (retry with evidence, recycle silent agents, host remediation),
-    escalate only when playbooks fail, and **drive the run to `run_completed`**.
-    Silent “workers look fine” while remaining WIs > 0 is a defect. Orchestrator
-    heartbeats alone do not prove agent progress — empty logs / null
-    `lastAgentOutputAt` past the stuck threshold must recycle.
+    briefs via `wake-control-host --brief` / desktop notify — never “nearly done”
+    while `needsGoalReviewRetry` or `lastGoalReviewFailure`), resolve issues
+    intelligently (retry with evidence, recycle silent agents, host remediation,
+    GR evidence reopen), escalate only when playbooks fail, and **drive the run
+    to `run_completed`**. Silent “workers look fine” while remaining WIs > 0 is
+    a defect. Orchestrator heartbeats alone do not prove agent progress — empty
+    logs / null `lastAgentOutputAt` past the stuck threshold must recycle.
+10b. **Status questions that reveal a failure are a wake — remediate same turn.**
+    If the operator asks whether work finished / is healthy / needs anything and
+    you find Goal Review `goal:false` / `blocked`, `emptyFleetActionable`,
+    `needsGoalReviewRetry`, open Input Requests, or evidence defects: **fix
+    first** (evidence-backed reopen/retry, dirty-gate harness repair, capacity
+    playbooks), then report what you did. Answering “it failed” / “defects are
+    X” and waiting for “do you need to fix something?” is a supervisor defect
+    (CauseFlow root 2026-07-17: GR blocked on `.harness/wi-ac-*` dirt while
+    evidence already named AC-025/AC-026 — Control Host narrated until asked).
+10c. **Goal Review evidence reopen is zero-token.** On GR close
+    (`goal_review_failed`) or each remediate tick scanning
+    `goal-review.result.json`: if evidence names ACs while those WIs are still
+    integrated — reopen ledger flags, seed `retryQueue[context]`, clear
+    `retryQueue['goal-review']`, emit `goal_review_failed` (wake). Do not only
+    re-queue Goal Review into the same dirty/product wall.
 11. **New `skills/supervisor/lib/*` modules must join `CONTROL_MODULES`.**
     `harness-control.mjs` `importLib` only loads allowlisted control modules from
     `supervisor/lib`; anything else is resolved as `generator/lib` and fails with
@@ -315,18 +332,29 @@ Inspect worker log tails under `.git/harness-control/<project>/logs/` when judgi
 When Run State is terminal, the next tick clears the worker row
 (background workers leave no visible UI panes).
 
-### Event-driven Control Host (preferred)
+### Durable vs chat Control Host
+
+| Role | Who | Cadence |
+| --- | --- | --- |
+| Process supervisor | `harness-control run` | Continuous, 0 LLM tokens |
+| X-minute state check | `ops-remediate` + `wake-control-host` | Timer (default ~5m) |
+| Judgment LLM | `--invoke-agent` (`HARNESS_WAKE_AGENT`) | Only when Wake Triage `shouldWake` |
+| Cursor `/harness-supervisor` chat | Optional operator overlay | Manual / status questions |
 
 Do **not** keep a chat `/loop` that polls `status`. Arm instead:
 
-1. `harness-control run` (process tick — admission/recovery, no LLM tokens)
-2. `install-ops-cron.sh --repo "$REPO" --notify` → `ops-remediate` +
-   `wake-control-host.mjs` (acks fold/absorb; desktop-notifies / optional
-   `--invoke-agent` only when `shouldWake`)
+1. `harness-control run` (process tick — admission/recovery + GR evidence reopen)
+2. `install-ops-cron.sh --repo "$REPO" --notify --invoke-agent` → `ops-remediate` +
+   `wake-control-host.mjs` (acks fold/absorb; desktop-notifies; invokes judgment
+   agent only when `shouldWake`; dedupes spam wake kinds)
+
+**Before standing down from chat**, verify: supervisor live, ops timer has
+`--invoke-agent`, latest `.git/harness-control/wake-control-host.jsonl` shows
+recent brief/invoke, and briefs are not falsely “nearly done” while GR is owed.
 
 Wake kinds include stuck workers, unrepaired empty-fleet / dead-runtime,
-`input_required`, quota, goal defects, and anomaly events
-(`worker_never_started`, `worker_crash_loop`, `worker_spawn_failed`).
+`input_required`, quota, `goal_defects`, **`goal_review_failed`**, and anomaly
+events (`worker_never_started`, `worker_crash_loop`, `worker_spawn_failed`).
 
 ### Every supervisor Control Host turn (ordered)
 

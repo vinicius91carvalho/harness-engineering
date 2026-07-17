@@ -7,7 +7,8 @@
  *    operator informed at zero LLM tokens.
  * 2. Judgment wakes (stuck, crash-loop, input_required, empty-fleet, …) —
  *    notify critically and optionally invoke the judgment agent to fix/escalate.
- * 3. Ack fold/absorb so the journal consumer stays caught up.
+ * 3. Ack fold/absorb so the journal consumer stays caught up — but only after
+ *    --invoke-agent produced a visible post-condition (see wake-ack.mjs).
  *
  * usage:
  *   node wake-control-host.mjs --repo /path [--notify] [--invoke-agent] [--brief]
@@ -115,11 +116,15 @@ function judgmentPrompt({ repo, wakes, statusSummary }) {
     statusSummary ? `Status snapshot:\n${statusSummary}` : '',
     '',
     'Playbook:',
-    '1. Read evidence under .git/harness-evidence/ and worker logs under .git/harness-control/**/logs/.',
-    '2. Auto-fix when safe: respond --action retry with evidence-backed guidance; release dead locks;',
+    '1. ALWAYS open the latest Goal Review evidence under .git/harness-evidence/**/goal-review/',
+    '   and .git/harness-runs/goal-review.result.json — bottom JSON verdict is pass/fail truth.',
+    '2. If goal_review_failed / dirty-gate + AC defects: reopen named WIs (ledger flags false),',
+    '   seed retryQueue[context] with expected/observed pairs, clear retryQueue[goal-review],',
+    '   admit repair before another Goal Review. Harness .harness/wi-ac-* probe dirt is not product.',
+    '3. Auto-fix when safe: respond --action retry with evidence-backed guidance; release dead locks;',
     '   recycle stuck/silent workers; prefer MERGE/IV-only retries for integration thrash.',
-    '3. Escalate to the human with input_required / notify only when you cannot fix it.',
-    '4. Do not stop while remaining WIs > 0 unless status is paused/complete or a goal input blocks you.',
+    '4. Escalate to the human with input_required / notify only when you cannot fix it.',
+    '5. Do not stop while remaining WIs > 0 or needsGoalReviewRetry unless paused/complete or goal input blocks you.',
     'Exit when wakes are handled or escalated.',
   ].filter(Boolean).join('\n')
 }
@@ -144,6 +149,18 @@ function claimRowsFromStatus(st) {
   return rows
 }
 
+function fleetNeedsGoalReviewRetry(st) {
+  const projects = st?.fleetSnapshot?.projects || []
+  if (projects.some((p) => p.needsGoalReviewRetry)) return true
+  return Boolean(st?.retryGoalReview || st?.retryQueue?.['goal-review'])
+}
+
+function loadStatus(control, repo, env) {
+  const statusRun = run(process.execPath, [control, 'status', '--repo', repo, '--host', env.HARNESS_HOST || 'agent'], env)
+  if (statusRun.status !== 0) return null
+  try { return JSON.parse(statusRun.stdout) } catch { return null }
+}
+
 async function maybeProgressBrief({ args, repo, control, env, controlDir, st }) {
   const briefPath = resolveLib('representative-brief.mjs')
   if (!briefPath || !st) return { briefed: false }
@@ -160,6 +177,8 @@ async function maybeProgressBrief({ args, repo, control, env, controlDir, st }) 
     claims: claimRowsFromStatus(st),
     pendingInputs,
     remaining,
+    needsGoalReviewRetry: fleetNeedsGoalReviewRetry(st),
+    goalReviewFailed: st.lastGoalReviewFailure || null,
     now: Date.now(),
     minIntervalMs: Number(process.env.HARNESS_BRIEF_INTERVAL_MS || 15 * 60_000),
   })
@@ -192,11 +211,8 @@ async function main() {
   const logPath = join(controlDir, 'wake-control-host.jsonl')
 
   // Always load status for briefing + judgment context.
-  let st = null
-  const statusRun = run(process.execPath, [control, 'status', '--repo', repo, '--host', env.HARNESS_HOST || 'agent'], env)
-  if (statusRun.status === 0) {
-    try { st = JSON.parse(statusRun.stdout) } catch { st = null }
-  }
+  let st = loadStatus(control, repo, env)
+  const statusBefore = st
 
   // First run: seed cursor at journal tip (unless --catch-up).
   if (!args.catchUp && !existsSync(cursorPath)) {
@@ -251,16 +267,35 @@ async function main() {
   }
 
   let classifyFn = (event) => event.wakeTriage || { action: event.immediate ? 'wake' : 'absorb', reason: 'attached-or-immediate' }
+  let dedupeJudgmentWakes = (wakes) => wakes
   let isJudgmentWake = (event) => {
     const kind = String(event.kind || '')
     return !['progress', 'worker_started', 'worker_closed', 'worker_health', 'context_completed', 'host_remediation', 'supervisor_preflight'].includes(kind)
       && (event.wakeTriage?.action === 'wake' || event.immediate === true)
   }
+  let planWakeAck = null
+  let fleetSnapshotForWakeTriage = null
   const triagePath = resolveLib('wake-triage.mjs')
+  const ackPath = resolveLib('wake-ack.mjs')
+  if (ackPath) {
+    try {
+      const mod = await import(`file://${ackPath}`)
+      planWakeAck = mod.planWakeAck
+      fleetSnapshotForWakeTriage = mod.fleetSnapshotForWakeTriage
+    } catch { /* optional */ }
+  }
   if (triagePath) {
     try {
       const mod = await import(`file://${triagePath}`)
-      classifyFn = (event) => mod.classify(event, {})
+      const projectId = st?.projectId || st?.fleetSnapshot?.projects?.find((p) => p.id)?.id || 'root'
+      const fleet = typeof fleetSnapshotForWakeTriage === 'function'
+        ? fleetSnapshotForWakeTriage(st || {}, projectId)
+        : (st?.fleetSnapshot?.projects?.find((p) => p.id === 'root')
+          || st?.fleetSnapshot?.projects?.[0]
+          || st?.fleetSnapshot
+          || null)
+      classifyFn = (event) => mod.classify(event, fleet)
+      if (typeof mod.dedupeJudgmentWakes === 'function') dedupeJudgmentWakes = mod.dedupeJudgmentWakes
     } catch { /* attached */ }
   }
   const briefLib = resolveLib('representative-brief.mjs')
@@ -276,7 +311,7 @@ async function main() {
     wakeTriage: e.wakeTriage || classifyFn(e),
   }))
   const wakes = classified.filter((e) => e.wakeTriage.action === 'wake')
-  const judgmentWakes = wakes.filter((e) => isJudgmentWake(e))
+  const judgmentWakes = dedupeJudgmentWakes(wakes.filter((e) => isJudgmentWake(e)))
   const maxId = classified.length
     ? Math.max(...classified.map((e) => Number(e.id) || 0))
     : 0
@@ -309,6 +344,7 @@ async function main() {
       progress: st.progress,
       pendingInputs: Object.values(st.pendingInputs || {}).filter((i) => i.status === 'pending').length,
       lastRemediation: st.lastRemediation,
+      lastGoalReviewFailure: st.lastGoalReviewFailure || null,
     }, null, 2)
     : ''
 
@@ -322,8 +358,13 @@ async function main() {
     brief,
   }
 
+  // Chat ≠ wake: durable Control Host owns remediation. Notify that ops path
+  // is handling it; escalate only if invoke-noop / playbook miss.
   if (args.notify || args.invokeAgent) {
-    notifyDesktop('Harness needs you (representative)', wakeSummary, 'critical')
+    const body = args.invokeAgent
+      ? `${wakeSummary}\nDurable Control Host is remediating (ops-remediate --invoke-agent). Cursor chat is optional overlay — escalate only if this wake repeats.`
+      : wakeSummary
+    notifyDesktop('Harness needs you (representative)', body, 'critical')
   }
 
   if (args.invokeAgent && !args.dryRun) {
@@ -344,20 +385,59 @@ async function main() {
       status: invoked.status,
       error: invoked.error?.message || null,
       promptFile,
+      stdoutTail: String(invoked.stdout || '').slice(-2000),
+      stderrTail: String(invoked.stderr || '').slice(-1000),
     }
-  }
 
-  if (!args.dryRun && maxId > 0) {
-    const invokeFailed = args.invokeAgent && result.invoke && result.invoke.status !== 0
-    if (!invokeFailed) {
-      run(process.execPath, [
-        control, 'ack', '--repo', repo, '--consumer', consumer, '--event', String(maxId),
-      ], env)
-      result.ackedThrough = maxId
+    // Re-status after invoke; ack only when a post-condition is visible.
+    const statusAfter = loadStatus(control, repo, env)
+    st = statusAfter || st
+    if (typeof planWakeAck === 'function') {
+      const ackPlan = planWakeAck({
+        invokeAgent: true,
+        invokeStatus: invoked.status,
+        invokeStdout: invoked.stdout || '',
+        invokeStderr: invoked.stderr || '',
+        wakes: judgmentWakes,
+        statusBefore,
+        statusAfter,
+      })
+      result.ackPlan = ackPlan
+      if (!args.dryRun && maxId > 0 && ackPlan.ack) {
+        run(process.execPath, [
+          control, 'ack', '--repo', repo, '--consumer', consumer, '--event', String(maxId),
+        ], env)
+        result.ackedThrough = maxId
+      } else {
+        result.ackedThrough = null
+        result.ackDeferred = true
+        if (ackPlan.reason === 'invoke-noop' && args.notify) {
+          notifyDesktop(
+            'Harness wake deferred (agent noop)',
+            `${wakeSummary}\nJudgment agent exited 0 without visible reopen/retry/worker change — ack deferred for next ops tick.`,
+            'critical',
+          )
+        }
+      }
     } else {
-      result.ackedThrough = null
-      result.ackDeferred = true
+      // Legacy fallback when wake-ack.mjs is not synced yet.
+      const invokeFailed = result.invoke.status !== 0
+      if (!args.dryRun && maxId > 0 && !invokeFailed) {
+        run(process.execPath, [
+          control, 'ack', '--repo', repo, '--consumer', consumer, '--event', String(maxId),
+        ], env)
+        result.ackedThrough = maxId
+      } else {
+        result.ackedThrough = null
+        result.ackDeferred = true
+      }
     }
+  } else if (!args.dryRun && maxId > 0) {
+    // Notify-only / dry path: ack so the consumer advances (no invoke to validate).
+    run(process.execPath, [
+      control, 'ack', '--repo', repo, '--consumer', consumer, '--event', String(maxId),
+    ], env)
+    result.ackedThrough = maxId
   }
 
   appendFileSync(logPath, `${JSON.stringify({ at: new Date().toISOString(), ...result })}\n`)

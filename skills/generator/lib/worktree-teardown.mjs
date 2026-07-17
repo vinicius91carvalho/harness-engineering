@@ -33,6 +33,30 @@ export function readOwnedRuntime(workdir) {
   return rows
 }
 
+/** Coerce manifest pid/name fields to a flat list (agents often write maps). */
+export function normalizeRuntimeIdList(value) {
+  if (value == null || value === '') return []
+  if (Array.isArray(value)) return value.filter((item) => item != null && item !== '')
+  if (typeof value === 'number' || typeof value === 'bigint') return [value]
+  if (typeof value === 'string') return [value]
+  if (typeof value === 'object') return Object.values(value).filter((item) => item != null && item !== '')
+  return []
+}
+
+/**
+ * Inventory / reuse bookkeeping rows are not private teardown targets.
+ * Goal Review on the integration checkout often records shared core/worker
+ * PIDs as a map (`pids: { core, worker }`) plus `shared_reused` /
+ * `preexisting` — iterating that object used to throw "object is not
+ * iterable" and crash supervisor `workerClosed` on every SIGTERM recycle.
+ */
+export function isRuntimeInventoryRow(row = {}) {
+  if (!row || typeof row !== 'object') return false
+  if (row.kind === 'goal-review-runtime') return true
+  if (row.shared_reused != null || row.preexisting != null) return true
+  return false
+}
+
 const COMPOSE_FILES = [
   'compose.yaml',
   'compose.yml',
@@ -228,16 +252,33 @@ export function cleanupWorktreeRuntime({
   const manifest = readOwnedRuntime(workdir)
   let manifestKilled = 0
   let containersRemoved = 0
+  // Goal Review / integration-checkout cleanup must not reap historical
+  // `.harness/runtime-owned.jsonl` PIDs, stop root init.sh, or pkill by
+  // monorepo path — those hit live shared core/worker (CauseFlow 2026-07-17).
+  const integrationCheckout = typeof workdir === 'string'
+    && workdir.length > 0
+    && !/-wt-/.test(workdir)
+  const skipSharedCheckoutTeardown = context === 'goal-review' || integrationCheckout
   for (const row of manifest) {
-    for (const pid of row.pids || []) {
+    if (skipSharedCheckoutTeardown || isRuntimeInventoryRow(row)) continue
+    for (const pid of normalizeRuntimeIdList(row.pids ?? row.pid)) {
       if (pid) {
         terminateProcessTree(pid, 'SIGTERM')
         manifestKilled += 1
       }
     }
-    for (const name of row.containers || []) {
+    for (const name of normalizeRuntimeIdList(row.containers)) {
       const result = spawnSync('docker', ['rm', '-f', String(name)], { stdio: 'ignore' })
       if (result.status === 0) containersRemoved += 1
+    }
+  }
+  if (skipSharedCheckoutTeardown) {
+    return {
+      appPid: { stopped: false },
+      killed: 0,
+      manifestKilled,
+      containersRemoved,
+      compose: { ran: false, dir: null, skipped: 'shared-checkout' },
     }
   }
   const appPid = stopWorktreeApp(workdir)

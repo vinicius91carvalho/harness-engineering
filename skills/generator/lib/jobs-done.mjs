@@ -64,12 +64,27 @@ export function acceptanceIdsFromText(text) {
  * (not the agent all-AC dump). Ledger-integrated WIs with proven product/runtime
  * defects stay reopenable — flag drift filtering must not drop them.
  */
-export function filterGoalReviewFlagDrift({ defects = [], acceptanceCheckIds = [], catalog, ledger } = {}) {
+const PRODUCT_SUMMARY_RE = /\b(fail|failed|failure|defect|broken|unreachable|ECONNREFUSED|compose|docker|http|expected\b.+\bobserved)\b/i
+
+export function filterGoalReviewFlagDrift({
+  defects = [],
+  acceptanceCheckIds = [],
+  summary = '',
+  catalog,
+  ledger,
+} = {}) {
   const keptDefects = (defects || []).filter((d) => !isFeatureListFlagDriftDefect(d))
   const strippedDrift = (defects || []).length > 0 && keptDefects.length < (defects || []).length
   let keptIds = acceptanceCheckIds || []
   if (strippedDrift && keptDefects.length === 0) {
-    keptIds = []
+    // Summary still looks like a real product fail — keep AC ids / do not
+    // treat as flag-drift-only empty (orchestrator would mute into GR-retry).
+    if (PRODUCT_SUMMARY_RE.test(String(summary || ''))) {
+      const fromSummary = acceptanceIdsFromText(summary)
+      keptIds = fromSummary.length ? fromSummary : (acceptanceCheckIds || [])
+    } else {
+      keptIds = []
+    }
   } else if (keptDefects.length > 0) {
     const fromDefects = keptDefects.flatMap((d) => acceptanceIdsFromText(d))
     if (fromDefects.length) {

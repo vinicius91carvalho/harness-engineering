@@ -16,9 +16,11 @@ const WAKE_KINDS = new Set([
   'supervisor_tick_failed',
   'harness_issue',
   'goal_defects',
+  'goal_review_failed',
+  'goal_review_retry_exhausted',
   'quota_wait',
   'run_completed',
-  'supervisor_stopped',
+  // supervisor_stopped: classified below — absorb when already live again
   // Anomaly detectors (anomaly-detect.mjs) — wake Control Host LLM once
   'worker_never_started',
   'worker_crash_loop',
@@ -33,8 +35,18 @@ const ABSORB_KINDS = new Set([
   'input_auto_responded',
   'stale_lock_cleared',
   'goal_review_started',
+  'goal_review_retry',
   'retry_deferred_orphan_pid',
   'host_remediation',
+])
+
+/** Spam kinds collapse to one wake per batch (keep latest). */
+export const DEDUPE_WAKE_KINDS = new Set([
+  'supervisor_tick_failed',
+  'worker_crash_loop',
+  'worker_spawn_failed',
+  'supervisor_stopped',
+  'empty_fleet_actionable',
 ])
 
 /**
@@ -53,15 +65,34 @@ export function classify(event, fleetSnapshot = null) {
     }
   }
 
+  if (kind === 'supervisor_stopped') {
+    // ops-remediate / ensure_supervisor_running often restarts before the wake
+    // bridge runs — do not burn a Control Host turn when already live again.
+    if (fleetSnapshot?.supervisorLive === true) {
+      return { action: 'absorb', reason: 'supervisor already live after remediation' }
+    }
+    return { action: 'wake', reason: 'supervisor_stopped' }
+  }
+
   if (WAKE_KINDS.has(kind)) {
     return { action: 'wake', reason: kind }
   }
 
   if (kind === 'empty_fleet_actionable') {
+    const snapshotWorkers = Number(fleetSnapshot?.workers ?? 0)
+    const liveClaims = Number(fleetSnapshot?.liveClaimWorkers ?? 0)
+    const eventWorkers = event.workers
+    // Never let a stale event.workers=0 clobber liveClaimWorkers / snapshot workers.
+    const workers = Math.max(
+      snapshotWorkers,
+      liveClaims,
+      eventWorkers == null ? 0 : Number(eventWorkers),
+    )
     const repaired = event.repaired === true || isEmptyFleetRepaired({
       ...fleetSnapshot,
       repaired: event.repaired,
-      workers: event.workers ?? fleetSnapshot?.workers,
+      workers,
+      liveClaimWorkers: Math.max(liveClaims, workers),
     })
     if (repaired) {
       return { action: 'absorb', reason: 'empty fleet repaired by tick' }
@@ -110,6 +141,27 @@ export function classify(event, fleetSnapshot = null) {
 export function shouldWake(batch, fleetSnapshot = null) {
   if (!Array.isArray(batch) || batch.length === 0) return false
   return batch.some((event) => classify(event, fleetSnapshot).action === 'wake')
+}
+
+/**
+ * Collapse repeated spam wake kinds to the latest event per kind.
+ * Always keeps non-spam wakes (input_required, goal_review_failed, …).
+ */
+export function dedupeJudgmentWakes(wakes = [], spamKinds = DEDUPE_WAKE_KINDS) {
+  if (!Array.isArray(wakes) || wakes.length === 0) return []
+  const spam = spamKinds instanceof Set ? spamKinds : new Set(spamKinds || [])
+  const latestSpam = new Map()
+  const kept = []
+  for (const event of wakes) {
+    const kind = String(event?.kind || '')
+    if (spam.has(kind)) {
+      latestSpam.set(kind, event)
+      continue
+    }
+    kept.push(event)
+  }
+  // Preserve relative order: non-spam first (original order), then spam latest by kind name.
+  return [...kept, ...latestSpam.values()]
 }
 
 /**

@@ -13,7 +13,8 @@ directory and shared execution primitives from `skills/generator/lib/`.
 | `fleet-snapshot.mjs` | Fleet Snapshot + runtime-recovery planners |
 | `supervisor-tick.mjs` | Pure tick delay / watch / retry-drain helpers |
 | `supervisor-admission.mjs` | Post-drain admission planner |
-| `wake-triage.mjs` | Event wake / fold / absorb |
+| `wake-triage.mjs` | Event wake / fold / absorb + judgment-wake dedupe |
+| `wake-ack.mjs` | Post-condition planner for wake-control-host ack after `--invoke-agent` |
 | `supervisor-lease.mjs` | Fenced Supervisor Lease |
 | `resource-governor.mjs` | Host-wide Resource Governor |
 | `host-resources.mjs` | Host CPU/memory/load snapshot |

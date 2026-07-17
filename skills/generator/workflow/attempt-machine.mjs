@@ -65,7 +65,50 @@ export async function runAttemptLoop({
     })
     commitPaths(options.workdir, [file], `chore(harness): resume ${context}`)
   }
-  await writeState({ status: 'running', phase: state.phase || 'starting', nextAction: state.nextAction || 'coding', featureIds: wanted })
+  // Control Host / GR repair: --guidance must become a repairPlan even when the
+  // run is not status=blocked (abandoned / interrupted after goal_review_failed).
+  // Otherwise orchestrator argv carries --guidance but coding VERIFY-FIRST never
+  // sees it (CauseFlow root AC-025 2026-07-17: orphaned 53b09cad + empty prompt).
+  // Also force nextAction=coding — interrupted resumes often keep integration-qa.
+  const guidedRepairPlan = options.guidance
+    ? {
+        summary: 'Operator / Goal Review repair guidance',
+        rootCause: 'guided-repair',
+        actions: [options.guidance],
+        validation: [],
+      }
+    : null
+  if (guidedRepairPlan) {
+    const id = getState().currentFeatureId || wanted[0]
+    const file = await journal(options.workdir, 'Operator guidance', {
+      WorkItem: id,
+      Outcome: 'retryQueue / Control Host guidance applied to coding Repair Plan',
+      Guidance: options.guidance,
+      NextAction: 'Coding',
+    })
+    commitPaths(options.workdir, [file], `chore(harness): apply guidance for ${id}`)
+    // CauseFlow root AC-018 2026-07-17: GR reopen can leave implementation=true
+    // (stale verify-first / partial ledger) while --guidance carries a Repair Plan.
+    // Without clearing flags, the loop skips CODING and jumps to QA on the broken
+    // HEAD. Force coding for every guided feature.
+    for (const featureId of wanted) {
+      await updateFeature(options.workdir, featureId, {
+        implementation: false,
+        qa: false,
+        integration: false,
+      })
+    }
+    await writeState({
+      status: 'running',
+      phase: 'coding',
+      nextAction: 'coding',
+      featureIds: wanted,
+      repairPlan: guidedRepairPlan,
+    })
+    state = getState()
+  } else {
+    await writeState({ status: 'running', phase: state.phase || 'starting', nextAction: state.nextAction || 'coding', featureIds: wanted })
+  }
   setHeartbeatTimer(startStateHeartbeat(() => writeState(), { label: 'orchestrator' }))
   verifyFirstCache.set(options.workdir, await isVerifyFirst(options.workdir))
   const initial = await readFeatures()
@@ -81,11 +124,12 @@ export async function runAttemptLoop({
     const itemPlan = getItemPlan()
     const resumingCurrent = String(state.currentFeatureId) === String(current.id)
     let attempt = resumingCurrent ? Number(state.attempt || current.retries + 1 || 1) : Number(current.retries || 0) + 1
-    let repairPlan = resumingCurrent ? state.repairPlan : null
+    // Prefer live --guidance over a stale interrupted repairPlan / null resume.
+    let repairPlan = guidedRepairPlan || (resumingCurrent ? state.repairPlan : null)
     let operationalFailures = 0
 
     if (attempt > MAX_ATTEMPTS) { results.push(await block(current, MAX_ATTEMPTS, 'Attempt budget already exhausted')); break }
-    if (resumingCurrent && state.nextAction === 'repair-plan' && state.defectReport) {
+    if (!guidedRepairPlan && resumingCurrent && state.nextAction === 'repair-plan' && state.defectReport) {
       repairPlan = await planRepair(current, attempt, state.defectReport)
       attempt++
     }

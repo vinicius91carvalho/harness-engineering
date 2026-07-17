@@ -16,9 +16,10 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, appendFileSync, writeFileSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, appendFileSync, writeFileSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { isWorkerSideChannelArtifact } from '../../generator/lib/worker-outcome.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const SILENT_MS = Math.max(60_000, Number(process.env.HARNESS_OPS_SILENT_MS || 600_000))
@@ -207,29 +208,6 @@ function deepAlertsForProject(project, { commonGit, status }) {
       })
     }
 
-    // Silent coding/QA agent: no output for SILENT_MS (or never, after grace)
-    const grace = Math.min(SILENT_MS, 180_000)
-    if (['coding', 'qa', 'integration_qa'].includes(phase)) {
-      const silent = outputAge == null
-        ? (startedAge != null && startedAge > grace)
-        : outputAge > SILENT_MS
-      if (silent) {
-        alerts.push({
-          severity: 'warn',
-          code: 'silent_agent',
-          message: `${context} phase=${phase} lastAgentOutputAt=${h.lastAgentOutputAt || 'null'} startedAgeMs=${startedAge}`,
-        })
-      }
-    }
-
-    if (logBytes === 0 && startedAge != null && startedAge > grace) {
-      alerts.push({
-        severity: 'warn',
-        code: 'empty_worker_log',
-        message: `${context} log empty for ${Math.round(startedAge / 1000)}s (${logFile})`,
-      })
-    }
-
     // Run-state repair thrash (index.lock / merge) while re-coding after QA green.
     // Root project uses bare `<context>.json`; nested projects use `<id>--<context>.json`.
     const projectKey = String(project.id || '').trim()
@@ -243,6 +221,59 @@ function deepAlertsForProject(project, { commonGit, status }) {
     for (const runPath of runCandidates) {
       run = readJsonSafe(runPath, null)
       if (run) break
+    }
+
+    // Side-channel freshness: Cursor agent often leaves harness-control worker
+    // logs empty while still advancing .harness/wi-* / goal-review / runtime-
+    // owned probes (and supervisor workers[].worktree when Run State omits it).
+    let sideChannelFresh = false
+    try {
+      const evidencePath = run?.evidence
+      if (evidencePath && existsSync(evidencePath)) {
+        const eAge = Date.now() - statSync(evidencePath).mtimeMs
+        if (eAge <= SILENT_MS) sideChannelFresh = true
+      }
+      const wt = run?.worktree || worker.worktree
+      if (!sideChannelFresh && wt) {
+        const harnessDir = join(wt, '.harness')
+        if (existsSync(harnessDir)) {
+          for (const name of readdirSync(harnessDir)) {
+            if (!isWorkerSideChannelArtifact(name)) continue
+            try {
+              const a = Date.now() - statSync(join(harnessDir, name)).mtimeMs
+              if (a <= SILENT_MS) { sideChannelFresh = true; break }
+            } catch { /* skip */ }
+          }
+        }
+      }
+    } catch { /* ignore */ }
+
+    // Silent coding/QA agent: no output for SILENT_MS (or never, after grace)
+    const grace = Math.min(SILENT_MS, 180_000)
+    if (['coding', 'qa', 'integration_qa'].includes(phase)) {
+      const silent = sideChannelFresh
+        ? false
+        : (outputAge == null
+          ? (startedAge != null && startedAge > grace)
+          : outputAge > SILENT_MS)
+      if (silent) {
+        alerts.push({
+          severity: 'warn',
+          code: 'silent_agent',
+          message: `${context} phase=${phase} lastAgentOutputAt=${h.lastAgentOutputAt || 'null'} startedAgeMs=${startedAge}`,
+        })
+      }
+    }
+
+    // Empty worker log alone is not stuck when run-state / probe artifacts move.
+    if (logBytes === 0 && startedAge != null && startedAge > grace
+      && !sideChannelFresh
+      && !(outputAge != null && outputAge <= SILENT_MS)) {
+      alerts.push({
+        severity: 'warn',
+        code: 'empty_worker_log',
+        message: `${context} log empty for ${Math.round(startedAge / 1000)}s (${logFile})`,
+      })
     }
     const repairText = JSON.stringify(run?.repairPlan || {})
     if (/index\.lock|stash failed|integration could not complete|integration merge\/checkpoint failure/i.test(repairText)) {

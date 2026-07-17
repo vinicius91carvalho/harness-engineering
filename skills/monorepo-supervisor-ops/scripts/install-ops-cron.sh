@@ -102,6 +102,10 @@ After=default.target
 
 [Service]
 Type=oneshot
+# Detached supervisors/workers started by remediate stay in this cgroup.
+# Default KillMode=control-group SIGTERMs them when the oneshot exits
+# (CauseFlow root 2026-07-17: goal_review_started → supervisor_stopped ~1s later).
+KillMode=process
 # exit 1 = fleet needs attention (still a successful check run)
 SuccessExitStatus=1
 WorkingDirectory=${REPO}
@@ -133,7 +137,9 @@ EOF
 
 systemctl --user daemon-reload
 systemctl --user enable --now "${UNIT_NAME}.timer"
-systemctl --user start "${UNIT_NAME}.service" || true
+# --no-block: oneshot may already be activating (Control Host --invoke-agent);
+# a blocking start hangs the installer until that agent exits.
+systemctl --user start --no-block "${UNIT_NAME}.service" || true
 
 echo "installed ${TIMER}"
 echo "installed ${SERVICE}"

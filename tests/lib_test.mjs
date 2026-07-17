@@ -100,6 +100,29 @@ test('parseVerdict reads delimited verdict', () => {
   assert.deepEqual(parseVerdict(body), { goal: true })
 })
 
+test('parseVerdict reads trailing verdict after route={…} evidence preamble', () => {
+  const log = [
+    'project=root',
+    'run=9f1c7756-60b6-43ff-acd7-a6a6af1a7bc1',
+    'context=goal-review',
+    'id=goal',
+    'kind=GOAL_REVIEW',
+    'route={"adapter":"direct","kind":"GOAL_REVIEW","id":"goal","harness":"agent","model":null}',
+    'at=2026-07-17T18:05:12.819Z',
+    '',
+    JSON.stringify({
+      goal: false,
+      acceptanceCheckIds: ['AC-025', 'AC-026'],
+      defects: ['expected Ornith compose; observed 127.0.0.1:8081 unreachable'],
+      summary: 'Golden-path fails on compose Ornith preset',
+    }, null, 2),
+    '',
+  ].join('\n')
+  const parsed = parseVerdict(log)
+  assert.equal(parsed?.goal, false)
+  assert.deepEqual(parsed?.acceptanceCheckIds, ['AC-025', 'AC-026'])
+})
+
 test('isProviderQuotaLimited detects common quota messages', () => {
   assert.equal(isProviderQuotaLimited('429 rate limit'), true)
   assert.equal(isProviderQuotaLimited('usage limit Try again at midnight'), true)
@@ -1080,6 +1103,15 @@ test('jobs-done ledger helpers and flag-drift filtering', async () => {
   assert.match(filtered.defects[0], /500/)
   // Real defects derive AC ids from prose — keep ledger-integrated ACs with product failures
   assert.deepEqual(filtered.acceptanceCheckIds, ['AC-054'])
+  // Drift-stripped but product-failing summary keeps AC ids (not mute GR-retry).
+  const summaryKeep = filterGoalReviewFlagDrift({
+    defects: ['WI-1 not integrated per feature_list.json integration=false'],
+    acceptanceCheckIds: ['AC-025'],
+    summary: 'AC-025 Ornith compose path failed; expected host reachability',
+  })
+  assert.equal(summaryKeep.strippedDrift, true)
+  assert.equal(summaryKeep.defects.length, 0)
+  assert.deepEqual(summaryKeep.acceptanceCheckIds, ['AC-025'])
   assert.ok(formatJobsDoneForPrompt(catalog, ledger).includes('Integrated Work Items (2/2)'))
 })
 
@@ -1200,6 +1232,71 @@ test('meaningfulCheckoutDirt ignores harness-progress Workflow Journals', () => 
   )
   assert.equal(
     isCheckoutCleanForGoalReview(' M harness-progress/goal-review.md\n M src/app.ts\n'),
+    false,
+  )
+})
+
+test('meaningfulCheckoutDirt ignores Cursor harness skill/plugin mirrors', () => {
+  const porcelain = [
+    ' M .cursor/plugins/local/harness/AGENTS.md',
+    ' D .cursor/skills/generator',
+    ' M .cursor/skills/.harness-owned-harness-skills.json',
+    '?? .cursor/skills/harness-generator/',
+    ' M src/app.ts',
+  ].join('\n')
+  assert.equal(meaningfulCheckoutDirt(porcelain), ' M src/app.ts')
+  assert.equal(
+    isCheckoutCleanForGoalReview(
+      ' M .cursor/plugins/local/harness/skills/supervisor/scripts/harness-control.mjs\n'
+      + ' D .cursor/skills/supervisor\n',
+    ),
+    true,
+  )
+  assert.equal(
+    isCheckoutCleanForGoalReview(
+      ' M .cursor/plugins/local/harness/AGENTS.md\n M src/app.ts\n',
+    ),
+    false,
+  )
+})
+
+test('meaningfulCheckoutDirt ignores tracked .harness WI / Goal Review probe artifacts', () => {
+  const porcelain = [
+    ' M .harness/wi-ac-013-verify-first.json',
+    ' M .harness/wi-ac-025-iv-browser.json',
+    ' M .harness/goal-review-ac025.json',
+    ' M .harness/goal-review-probes.json',
+    ' M .harness/gr-dashboard.log',
+    ' M .harness/runtime-owned.jsonl',
+    ' M .harness/app.pid',
+    ' M src/app.ts',
+  ].join('\n')
+  assert.equal(meaningfulCheckoutDirt(porcelain), ' M src/app.ts')
+  assert.equal(
+    isCheckoutCleanForGoalReview(
+      ' M .harness/wi-ac-013-verify-first.json\n'
+      + ' M .harness/wi-ac-014-verify-first.json\n'
+      + ' M .harness/goal-review-ac025.json\n',
+    ),
+    true,
+  )
+  assert.equal(
+    isCheckoutCleanForGoalReview(
+      ' M .harness/wi-ac-013-verify-first.json\n M web/apps/dashboard/src/x.ts\n',
+    ),
+    false,
+  )
+})
+
+test('meaningfulCheckoutDirt ignores feature_list.json harness flag churn', () => {
+  const porcelain = [
+    ' M feature_list.json',
+    ' M src/app.ts',
+  ].join('\n')
+  assert.equal(meaningfulCheckoutDirt(porcelain), ' M src/app.ts')
+  assert.equal(isCheckoutCleanForGoalReview(' M feature_list.json\n'), true)
+  assert.equal(
+    isCheckoutCleanForGoalReview(' M feature_list.json\n M src/app.ts\n'),
     false,
   )
 })
@@ -1443,6 +1540,554 @@ test('planWorkerClosedActions blocked input', () => {
   })
   assert.equal(plan.action, 'blocked_input')
   assert.equal(plan.scope, 'context')
+})
+
+test('planWorkerClosedActions Goal Review dirty+AC defects → goal_review_failed', () => {
+  const plan = planWorkerClosedActions({
+    key: 'goal-review',
+    exitCode: 0,
+    tail: '',
+    result: {
+      goal: false,
+      blocked: true,
+      acceptanceCheckIds: ['AC-025', 'AC-026'],
+      summary: 'Ornith compose path fails',
+      defects: [
+        'Goal Review must be read-only; checkout changed:  M .harness/wi-ac-013-verify-first.json',
+        'expected AC-025 Ornith local; observed investigation failed; evidence .harness/goal-review-ac025.json',
+      ],
+    },
+    rateLimited: false,
+    crashCount: 0,
+    harnessRepairs: {},
+    retryQueue: {},
+    autoRepair: false,
+    logFile: '/tmp/gr.log',
+  })
+  assert.equal(plan.action, 'goal_review_failed')
+  assert.deepEqual(plan.acceptanceCheckIds, ['AC-025', 'AC-026'])
+  assert.equal(plan.dirtyBlocked, true)
+  assert.match(plan.guidance, /AC-025/)
+})
+
+test('planWorkerClosedActions prefers evidence ACs over wrong agent reopened list', () => {
+  // CauseFlow root 2026-07-17: agent reopened WI-AC-025 (pass mention in prose)
+  // while acceptanceCheckIds named the real failing AC-018.
+  const plan = planWorkerClosedActions({
+    key: 'goal-review',
+    exitCode: 0,
+    tail: '',
+    result: {
+      goal: false,
+      acceptanceCheckIds: ['AC-018'],
+      reopened: ['WI-AC-025'],
+      summary: 'AC-025/026 pass, but AC-018 fallback still fails',
+      defects: [
+        'expected fallbackProfileId hops to healthy Ornith; observed CircuitBreakerOpenError '
+        + 'while good-only Ornith completes (AC-025)',
+      ],
+    },
+    rateLimited: false,
+    crashCount: 0,
+    harnessRepairs: {},
+    retryQueue: {},
+    autoRepair: false,
+    logFile: '/tmp/gr.log',
+  })
+  assert.equal(plan.action, 'goal_review_failed')
+  assert.deepEqual(plan.acceptanceCheckIds, ['AC-018'])
+  assert.match(plan.guidance, /AC-018/)
+  assert.notEqual(plan.action, 'goal_defects')
+})
+
+test('planWorkerClosedActions Goal Review dirt-only → goal_review_retry', () => {
+  const plan = planWorkerClosedActions({
+    key: 'goal-review',
+    exitCode: 0,
+    tail: '',
+    result: {
+      goal: false,
+      blocked: true,
+      defects: ['Goal Review must be read-only; checkout changed:  M .harness/wi-ac-013-verify-first.json'],
+    },
+    rateLimited: false,
+    crashCount: 0,
+    harnessRepairs: {},
+    retryQueue: {},
+    autoRepair: false,
+    logFile: '/tmp/gr.log',
+  })
+  assert.equal(plan.action, 'goal_review_retry')
+  assert.equal(plan.dirtyBlocked, true)
+})
+
+test('goal-review-recovery plans evidence reopen and stale recovery', async () => {
+  const {
+    planGoalReviewCloseRecovery,
+    planEvidenceReopen,
+    shouldRecoverStaleGoalReviewResult,
+    extractAcceptanceCheckIds,
+    enrichResultFromEvidence,
+    workItemsForAcceptanceChecksAcrossProjects,
+  } = await import('../skills/generator/lib/goal-review-recovery.mjs')
+  const result = {
+    goal: false,
+    blocked: true,
+    acceptanceCheckIds: ['AC-025'],
+    defects: [
+      'Goal Review must be read-only; checkout changed:  M .harness/wi-ac-013-verify-first.json',
+      'expected AC-025; observed fail',
+    ],
+  }
+  const recovery = planGoalReviewCloseRecovery(result)
+  assert.equal(recovery.kind, 'evidence_reopen')
+  assert.deepEqual(extractAcceptanceCheckIds(result), ['AC-025'])
+  assert.deepEqual(
+    extractAcceptanceCheckIds({ summary: 'AC-026 and AC-027 fail on compose', defects: [] }),
+    ['AC-026', 'AC-027'],
+  )
+  const catalog = [{ id: 'WI-AC-025', context: 'oss-golden-path', acceptance_checks: ['AC-025'] }]
+  const ledger = { items: { 'WI-AC-025': { implementation: true, qa: true, integration: true, retries: 0 } } }
+  const plan = planEvidenceReopen({
+    catalog, ledger, acceptanceCheckIds: recovery.acceptanceCheckIds, defects: recovery.defects, dirtyBlocked: true,
+  })
+  assert.deepEqual(plan.reopenIds, ['WI-AC-025'])
+  assert.deepEqual(plan.contexts, ['oss-golden-path'])
+  const stale = shouldRecoverStaleGoalReviewResult(result, { catalog, ledger })
+  assert.ok(stale)
+  assert.deepEqual(stale.plan.reopenIds, ['WI-AC-025'])
+  const alreadyOpen = shouldRecoverStaleGoalReviewResult(result, {
+    catalog,
+    ledger: { items: { 'WI-AC-025': { implementation: false, qa: false, integration: false, retries: 1 } } },
+  })
+  assert.equal(alreadyOpen, null)
+
+  // Evidence-log enrich when result.json is dirt-only.
+  const dirtOnly = {
+    goal: false,
+    blocked: true,
+    defects: ['Goal Review must be read-only; checkout changed:  M .harness/wi-ac-013-verify-first.json'],
+  }
+  const enriched = enrichResultFromEvidence(dirtOnly, [
+    '===HARNESS-VERDICT-BEGIN===',
+    JSON.stringify({
+      goal: false,
+      acceptanceCheckIds: ['AC-026'],
+      defects: ['expected AC-026 host.docker.internal; observed unreachable 127.0.0.1:8081'],
+      summary: 'Ornith preset fails in compose',
+    }),
+    '===HARNESS-VERDICT-END===',
+  ].join('\n'))
+  assert.deepEqual(extractAcceptanceCheckIds(enriched), ['AC-026'])
+  assert.equal(planGoalReviewCloseRecovery(enriched).kind, 'evidence_reopen')
+
+  // Prose product fail without AC tags → unmapped_defects (not dirt_retry).
+  const prose = planGoalReviewCloseRecovery({
+    goal: false,
+    defects: ['compose stack unreachable from dashboard worker'],
+    summary: 'Ornith local preset failed end-to-end',
+  })
+  assert.equal(prose.kind, 'unmapped_defects')
+
+  // Monorepo catalog fallback.
+  const cross = workItemsForAcceptanceChecksAcrossProjects([
+    { projectId: 'root', path: '', items: catalog },
+    { projectId: 'core', path: 'core', items: [{ id: 'WI-AC-099', context: 'core-api', acceptance_checks: ['AC-099'] }] },
+  ], ['AC-099'])
+  assert.equal(cross.length, 1)
+  assert.equal(cross[0].projectId, 'core')
+  const foreignPlan = planEvidenceReopen({
+    catalog: [],
+    projectCatalogs: [
+      { projectId: 'core', path: 'core', items: [{ id: 'WI-AC-099', context: 'core-api', acceptance_checks: ['AC-099'] }] },
+    ],
+    ledgersByProject: {
+      core: { items: { 'WI-AC-099': { implementation: true, qa: true, integration: true } } },
+    },
+    acceptanceCheckIds: ['AC-099'],
+    homeProjectId: 'root',
+  })
+  assert.deepEqual(foreignPlan.reopenForeign.map((r) => r.id), ['WI-AC-099'])
+
+  // Home catalog already maps AC-025 — do not reopen sibling WI-AC-025 duplicates.
+  const homeOwns = planEvidenceReopen({
+    catalog: [{ id: 'WI-AC-025', context: 'oss-golden-path', acceptance_checks: ['AC-025'] }],
+    projectCatalogs: [
+      { projectId: 'root', path: '', items: [{ id: 'WI-AC-025', context: 'oss-golden-path', acceptance_checks: ['AC-025'] }] },
+      { projectId: 'core', path: 'core', items: [{ id: 'WI-AC-025', context: 'remediation', acceptance_checks: ['AC-025'] }] },
+      { projectId: 'web', path: 'web', items: [{ id: 'WI-AC-025', context: 'dashboard', acceptance_checks: ['AC-025'] }] },
+    ],
+    ledger: { items: { 'WI-AC-025': { implementation: true, qa: true, integration: false } } },
+    ledgersByProject: {
+      core: { items: { 'WI-AC-025': { implementation: true, qa: true, integration: true } } },
+      web: { items: { 'WI-AC-025': { implementation: true, qa: true, integration: true } } },
+    },
+    acceptanceCheckIds: ['AC-025'],
+    homeProjectId: 'root',
+  })
+  assert.deepEqual(homeOwns.reopenForeign, [])
+  assert.deepEqual(homeOwns.mappedForeign, [])
+
+
+  // Fingerprint debounce suppresses duplicate stale recovery within window.
+  const debounced = shouldRecoverStaleGoalReviewResult(result, {
+    catalog,
+    ledger,
+    lastFailure: { fingerprint: stale.fingerprint, at: new Date().toISOString() },
+    now: Date.now(),
+    debounceMs: 15_000,
+  })
+  assert.equal(debounced, null)
+})
+
+test('wake-ack requires post-condition after invoke-agent', async () => {
+  const { planWakeAck, fleetSnapshotForWakeTriage, STRICT_ACK_WAKE_KINDS } = await import(
+    '../skills/supervisor/lib/wake-ack.mjs'
+  )
+  assert.ok(STRICT_ACK_WAKE_KINDS.has('goal_review_failed'))
+  const noop = planWakeAck({
+    invokeAgent: true,
+    invokeStatus: 0,
+    wakes: [{ kind: 'goal_review_failed' }],
+    statusBefore: { progress: { total: 26, integrated: 24 }, workers: {}, retryQueue: {} },
+    statusAfter: { progress: { total: 26, integrated: 24 }, workers: {}, retryQueue: {} },
+  })
+  assert.equal(noop.ack, false)
+  assert.equal(noop.reason, 'invoke-noop')
+  const timedOut = planWakeAck({
+    invokeAgent: true,
+    invokeStatus: null,
+    wakes: [{ kind: 'goal_review_failed' }],
+    statusBefore: {},
+    statusAfter: {},
+  })
+  assert.equal(timedOut.ack, false)
+  assert.equal(timedOut.reason, 'invoke-status-null')
+  const alreadyRecovered = planWakeAck({
+    invokeAgent: true,
+    invokeStatus: 0,
+    wakes: [{ kind: 'goal_review_failed' }],
+    statusBefore: {
+      progress: { total: 26, integrated: 24 },
+      lastGoalReviewFailure: { unmapped: true, reopened: [], at: 't0' },
+      pendingInputs: { 9: { status: 'pending', scope: 'goal', detail: { unmappedDefects: true } } },
+    },
+    statusAfter: {
+      progress: { total: 26, integrated: 24 },
+      lastGoalReviewFailure: { unmapped: true, reopened: [], at: 't0' },
+      pendingInputs: { 9: { status: 'pending', scope: 'goal', detail: { unmappedDefects: true } } },
+    },
+  })
+  assert.equal(alreadyRecovered.ack, true)
+  assert.equal(alreadyRecovered.reason, 'goal-review-already-recovered')
+  const repairInFlight = planWakeAck({
+    invokeAgent: true,
+    invokeStatus: 0,
+    wakes: [{ kind: 'goal_review_failed' }],
+    statusBefore: {
+      lastGoalReviewFailure: { repairInFlight: true, reopened: [], acceptanceCheckIds: ['AC-025'] },
+      retryQueue: { 'oss-golden-path': { guidance: 'fix' } },
+    },
+    statusAfter: {
+      lastGoalReviewFailure: { repairInFlight: true, reopened: [], acceptanceCheckIds: ['AC-025'] },
+      retryQueue: { 'oss-golden-path': { guidance: 'fix' } },
+    },
+  })
+  assert.equal(repairInFlight.ack, true)
+  assert.equal(repairInFlight.reason, 'goal-review-already-recovered')
+  const inputPending = planWakeAck({
+    invokeAgent: true,
+    invokeStatus: 0,
+    wakes: [{ kind: 'input_required' }],
+    statusBefore: { pendingInputs: { 1: { status: 'pending', scope: 'goal' } } },
+    statusAfter: { pendingInputs: { 1: { status: 'pending', scope: 'goal' } } },
+  })
+  assert.equal(inputPending.ack, true)
+  assert.equal(inputPending.reason, 'input-already-pending')
+  const contextInputPending = planWakeAck({
+    invokeAgent: true,
+    invokeStatus: 0,
+    wakes: [{ kind: 'input_required' }],
+    statusBefore: { pendingInputs: { 2: { status: 'pending', scope: 'context', context: 'oss-golden-path' } } },
+    statusAfter: { pendingInputs: { 2: { status: 'pending', scope: 'context', context: 'oss-golden-path' } } },
+  })
+  assert.equal(contextInputPending.ack, true)
+  assert.equal(contextInputPending.reason, 'input-already-pending')
+  const exhausted = planWakeAck({
+    invokeAgent: true,
+    invokeStatus: 0,
+    wakes: [{ kind: 'goal_review_retry_exhausted' }],
+    statusBefore: { retryQueue: { 'goal-review': { attempts: 3 } } },
+    statusAfter: { retryQueue: { 'goal-review': { attempts: 3 } } },
+  })
+  assert.equal(exhausted.ack, true)
+  assert.equal(exhausted.reason, 'goal-review-retry-exhausted-recorded')
+  const grRetry = planWakeAck({
+    invokeAgent: true,
+    invokeStatus: 0,
+    wakes: [{ kind: 'goal_review_failed' }],
+    statusBefore: { progress: { total: 26, integrated: 26 }, retryQueue: {} },
+    statusAfter: {
+      progress: { total: 26, integrated: 26 },
+      retryQueue: { 'goal-review': { attempts: 1, guidance: 'dirt retry' } },
+    },
+  })
+  assert.equal(grRetry.ack, true)
+  assert.equal(grRetry.reason, 'goal-review-retry-updated')
+  const reopened = planWakeAck({
+    invokeAgent: true,
+    invokeStatus: 0,
+    wakes: [{ kind: 'goal_review_failed' }],
+    statusBefore: { progress: { total: 26, integrated: 26 }, workers: {} },
+    statusAfter: {
+      progress: { total: 26, integrated: 24 },
+      workers: {},
+      retryQueue: { 'oss-golden-path': { guidance: 'fix' } },
+      lastGoalReviewFailure: { reopened: ['WI-AC-025'] },
+    },
+  })
+  assert.equal(reopened.ack, true)
+  const fleet = fleetSnapshotForWakeTriage({
+    status: 'running',
+    progress: { total: 2, integrated: 1 },
+    workers: { a: {} },
+    pendingInputs: {},
+    retryQueue: { 'goal-review': { attempts: 1 } },
+    fleetSnapshot: { projects: [{ id: 'root', workers: 0, liveClaimWorkers: 1, emptyFleetActionable: true }] },
+    supervisorPid: 1,
+  }, 'root')
+  assert.equal(fleet.workers, 1)
+  assert.equal(fleet.retryGoalReview, true)
+})
+
+test('planWorkerClosedActions unmapped GR defects → goal_review_failed', async () => {
+  const { UNMAPPED_DEFECTS_REASON } = await import('../skills/generator/lib/goal-review-recovery.mjs')
+  const plan = planWorkerClosedActions({
+    key: 'goal-review',
+    exitCode: 0,
+    tail: '',
+    result: {
+      goal: false,
+      summary: 'compose path failed without AC tags',
+      defects: ['dashboard cannot reach ornith local preset'],
+    },
+    rateLimited: false,
+    crashCount: 0,
+    harnessRepairs: {},
+    retryQueue: {},
+    autoRepair: false,
+    logFile: '/tmp/gr.log',
+  })
+  assert.equal(plan.action, 'goal_review_failed')
+  assert.equal(plan.kind, 'unmapped_defects')
+  assert.equal(plan.unmappedDefects, true)
+  assert.match(plan.summary, /compose|Ornith|failed|without AC/i)
+  assert.ok(plan.guidance || plan.summary)
+  assert.equal(typeof UNMAPPED_DEFECTS_REASON, 'string')
+})
+
+test('goal-review-recovery edge cases: dirt summary AC, repair-in-flight, unmapped debounce', async () => {
+  const {
+    planGoalReviewCloseRecovery,
+    planEvidenceReopen,
+    shouldRecoverStaleGoalReviewResult,
+    enrichResultFromEvidence,
+  } = await import('../skills/generator/lib/goal-review-recovery.mjs')
+
+  // Dirt-only + summary AC mention (no explicit array / product defects) → dirt_retry
+  const dirtSummary = planGoalReviewCloseRecovery({
+    goal: false,
+    blocked: true,
+    defects: ['Goal Review must be read-only; checkout changed:  M .harness/wi-ac-013-verify-first.json'],
+    summary: 'Could not finish AC-025 due to dirty checkout',
+  })
+  assert.equal(dirtSummary.kind, 'dirt_retry')
+
+  // Explicit acceptanceCheckIds still reopen even when dirt-masked.
+  const dirtExplicit = planGoalReviewCloseRecovery({
+    goal: false,
+    blocked: true,
+    acceptanceCheckIds: ['AC-025'],
+    defects: ['Goal Review must be read-only; checkout changed:  M .harness/x.json'],
+  })
+  assert.equal(dirtExplicit.kind, 'evidence_reopen')
+
+  // Dirty base with partial product + richer evidence merges evidence defects.
+  const merged = enrichResultFromEvidence({
+    goal: false,
+    blocked: true,
+    acceptanceCheckIds: ['AC-025'],
+    defects: [
+      'Goal Review must be read-only; checkout changed:  M .harness/x.json',
+      'expected AC-025; observed fail',
+    ],
+  }, [
+    '===HARNESS-VERDICT-BEGIN===',
+    JSON.stringify({
+      goal: false,
+      acceptanceCheckIds: ['AC-025', 'AC-026'],
+      defects: [
+        'expected AC-025; observed fail',
+        'expected AC-026; observed unreachable 127.0.0.1:8081',
+      ],
+      summary: 'both ornith checks fail',
+    }),
+    '===HARNESS-VERDICT-END===',
+  ].join('\n'))
+  assert.ok(merged.acceptanceCheckIds.includes('AC-026'))
+  assert.ok(merged.defects.some((d) => /AC-026/.test(d)))
+
+  const catalog = [{ id: 'WI-AC-025', context: 'oss-golden-path', acceptance_checks: ['AC-025'] }]
+  const plan = planEvidenceReopen({
+    catalog,
+    ledger: { items: { 'WI-AC-025': { implementation: false, qa: false, integration: false } } },
+    acceptanceCheckIds: ['AC-025'],
+  })
+  assert.equal(plan.repairInFlight, true)
+  assert.equal(plan.unmapped, false)
+
+  const unmapped = {
+    goal: false,
+    defects: ['compose unreachable'],
+    summary: 'product failed without AC tags',
+  }
+  const first = shouldRecoverStaleGoalReviewResult(unmapped, { catalog: [], ledger: { items: {} } })
+  assert.ok(first)
+  assert.equal(first.recovery.kind, 'unmapped_defects')
+  const skippedPending = shouldRecoverStaleGoalReviewResult(unmapped, {
+    catalog: [],
+    ledger: { items: {} },
+    hasPendingUnmappedInput: true,
+  })
+  assert.equal(skippedPending, null)
+  // Fingerprint debounce still suppresses tight re-entry; cleared pending can re-escalate later.
+  const debouncedUnmapped = shouldRecoverStaleGoalReviewResult(unmapped, {
+    catalog: [],
+    ledger: { items: {} },
+    lastFailure: { fingerprint: first.fingerprint, at: new Date().toISOString(), unmapped: true },
+    now: Date.now(),
+    unmappedDebounceMs: 15 * 60_000,
+  })
+  assert.equal(debouncedUnmapped, null)
+
+  // Stale dirt_retry when retryQueue not yet seeded (queue fully integrated).
+  const dirtStale = shouldRecoverStaleGoalReviewResult({
+    goal: false,
+    blocked: true,
+    defects: ['Goal Review must be read-only; checkout changed:  M .harness/x.json'],
+  }, { catalog: [], ledger: { items: {} }, hasGoalReviewRetry: false })
+  assert.ok(dirtStale)
+  assert.equal(dirtStale.recovery.kind, 'dirt_retry')
+  assert.equal(shouldRecoverStaleGoalReviewResult({
+    goal: false,
+    blocked: true,
+    defects: ['Goal Review must be read-only; checkout changed:  M .harness/x.json'],
+  }, { catalog: [], ledger: { items: {} }, hasGoalReviewRetry: true }), null)
+  // Do not spam dirt_retry while any WI remains open (repair / INTEGRATION in flight).
+  assert.equal(shouldRecoverStaleGoalReviewResult({
+    goal: false,
+    blocked: true,
+    defects: ['Goal Review must be read-only; checkout changed:  M .harness/x.json'],
+  }, {
+    catalog: [],
+    ledger: { items: { 'WI-AC-025': { implementation: true, qa: true, integration: false } } },
+    hasGoalReviewRetry: false,
+  }), null)
+
+  
+
+  // Newer green INTEGRATION_QA supersedes stale GR reopen.
+  const { mkdtempSync, writeFileSync, mkdirSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  const { hasNewerGreenIntegrationQa, shouldRecoverStaleGoalReviewResult: shouldRecover2 } = await import('../skills/generator/lib/goal-review-recovery.mjs')
+  const gitTmp = mkdtempSync(join(tmpdir(), 'gr-iv-green-'))
+  const evDir = join(gitTmp, 'harness-evidence', 'root', 'run', 'oss-golden-path')
+  mkdirSync(evDir, { recursive: true })
+  const ivLog = join(evDir, 'WI-AC-025-3-integration_qa-deadbeef.log')
+  writeFileSync(ivLog, '===HARNESS-VERDICT-BEGIN===\n{"id":"WI-AC-025","integration":true,"implementation":true,"defects":[]}\n===HARNESS-VERDICT-END===\n')
+  assert.equal(hasNewerGreenIntegrationQa(gitTmp, 'root', 'WI-AC-025', Date.now() - 60_000), true)
+  const staleReopen = shouldRecover2({
+    goal: false,
+    acceptanceCheckIds: ['AC-025'],
+    defects: ['expected AC-025; observed fail'],
+    summary: 'old GR',
+  }, {
+    catalog: [{ id: 'WI-AC-025', context: 'oss-golden-path', acceptance_checks: ['AC-025'] }],
+    ledger: { items: { 'WI-AC-025': { implementation: true, qa: true, integration: true } } },
+    commonGit: gitTmp,
+    resultMtimeMs: Date.now() - 120_000,
+  })
+  assert.equal(staleReopen, null)
+
+  // Control Host / enrich rewrite of result.json bumps mtime + `at` after IV —
+  // must still prefer GR evidence mtime so the just-integrated WI is not reopened
+  // (CauseFlow root AC-025 2026-07-17).
+  const ivBeforeRewrite = shouldRecover2({
+    goal: false,
+    at: new Date().toISOString(),
+    acceptanceCheckIds: ['AC-025', 'AC-026'],
+    defects: ['expected AC-025; observed fail', 'expected AC-026; observed fail'],
+    summary: 'stale GR after IV integrate',
+  }, {
+    catalog: [
+      { id: 'WI-AC-025', context: 'oss-golden-path', acceptance_checks: ['AC-025'] },
+      { id: 'WI-AC-026', context: 'oss-golden-path', acceptance_checks: ['AC-026'] },
+    ],
+    ledger: {
+      items: {
+        'WI-AC-025': { implementation: true, qa: true, integration: true },
+        'WI-AC-026': { implementation: false, qa: false, integration: false },
+      },
+    },
+    commonGit: gitTmp,
+    resultMtimeMs: Date.now() + 60_000,
+    evidenceMtimeMs: Date.now() - 120_000,
+  })
+  assert.equal(ivBeforeRewrite, null)
+
+  // Non-dirty base still merges extra evidence ACs.
+  const extra = enrichResultFromEvidence({
+    goal: false,
+    acceptanceCheckIds: ['AC-025'],
+    defects: ['expected AC-025; observed fail'],
+  }, [
+    '===HARNESS-VERDICT-BEGIN===',
+    JSON.stringify({
+      goal: false,
+      acceptanceCheckIds: ['AC-025', 'AC-026'],
+      defects: ['expected AC-025; observed fail', 'expected AC-026; observed fail'],
+    }),
+    '===HARNESS-VERDICT-END===',
+  ].join('\n'))
+  assert.ok(extra.acceptanceCheckIds.includes('AC-026'))
+
+  // CauseFlow root 2026-07-17 AC-018: product fail with AC only in summary +
+  // evidence acceptanceCheckIds — must materialize ACs (not early-return base
+  // without the array) so close recovery reopens instead of unmapped escalate.
+  const summaryOnlyBase = {
+    goal: false,
+    summary: 'OSS golden path passes but AC-018 fallback chain does not work at runtime',
+    defects: [
+      'expected when active Investigation LLM fails, Core follows fallbackProfileId; observed CircuitBreakerOpenError for chain hops',
+    ],
+    reopened: ['WI-AC-018'],
+  }
+  const ac018Evidence = [
+    'route={"adapter":"direct","kind":"GOAL_REVIEW"}',
+    JSON.stringify({
+      goal: false,
+      summary: summaryOnlyBase.summary,
+      acceptanceCheckIds: ['AC-018'],
+      defects: summaryOnlyBase.defects,
+    }),
+  ].join('\n')
+  const ac018Enriched = enrichResultFromEvidence(summaryOnlyBase, ac018Evidence)
+  assert.deepEqual(ac018Enriched.acceptanceCheckIds, ['AC-018'])
+  assert.equal(ac018Enriched.enrichedFromEvidence, true)
+  const ac018Plan = planGoalReviewCloseRecovery(ac018Enriched)
+  assert.equal(ac018Plan.kind, 'evidence_reopen')
+  assert.deepEqual(ac018Plan.acceptanceCheckIds, ['AC-018'])
 })
 
 test('classifyFailure treats host-death strings as operational', () => {
@@ -1797,10 +2442,9 @@ test('host remediation releases sibling goal-review ghosts and clears stale inde
       },
       {
         id: 'web',
-        status: 'running',
+        status: 'complete',
         workers: 0,
         progress: { total: 91, integrated: 91 },
-        needsGoalReviewRetry: true,
         supervisorLive: true,
         supervisorPid: 410635,
         root: '/repo/web',
@@ -1823,6 +2467,8 @@ test('host remediation releases sibling goal-review ghosts and clears stale inde
   assert.ok(plan.actions.some((a) => a.kind === 'clear_index_lock'))
   assert.ok(plan.actions.some((a) => a.kind === 'release_reservation' && a.reservationId === 'gr'))
   assert.ok(plan.actions.some((a) => a.kind === 'stop_idle_complete_supervisor' && a.projectId === 'web'))
+  assert.ok(plan.actions.some((a) => a.kind === 'ensure_supervisor_running' && a.projectId === 'root'),
+    'dead blocker supervisor with remaining work must be ensured')
   assert.equal(shouldEscalateRemediation({
     attempts: 3,
     emptyFleetActionable: true,
@@ -1834,6 +2480,54 @@ test('host remediation releases sibling goal-review ghosts and clears stale inde
     emptyFleetActionable: true,
     available: 0,
     remaining: 22,
+  }), false)
+
+  const livePlan = planHostRemediation({
+    projects: [{
+      id: 'root',
+      status: 'interrupted',
+      workers: 1,
+      supervisorLive: true,
+      supervisorPid: 99,
+      progress: { total: 26, integrated: 25 },
+      capacity: { available: 1 },
+    }],
+    blockerProjectId: 'root',
+  })
+  assert.ok(!livePlan.actions.some((a) => a.kind === 'ensure_supervisor_running'),
+    'live supervisor must not be restarted by ensure')
+
+  // N/N integrated + Goal Review owed: remaining WI count is 0 but supervisor
+  // must still be ensured (CauseFlow root OSS after WI-AC-026, 2026-07-17).
+  const grPlan = planHostRemediation({
+    projects: [{
+      id: 'root',
+      status: 'interrupted',
+      workers: 0,
+      supervisorLive: false,
+      supervisorPid: null,
+      emptyFleetActionable: true,
+      needsGoalReviewRetry: true,
+      progress: { total: 26, integrated: 26, implemented: 26, qa: 26, blocked: 0 },
+      capacity: { available: 1 },
+      root: '/repo',
+    }],
+  })
+  assert.ok(grPlan.actions.some((a) => a.kind === 'ensure_supervisor_running' && a.projectId === 'root'),
+    'needsGoalReviewRetry with remaining=0 must ensure supervisor')
+  assert.equal(shouldEscalateRemediation({
+    attempts: 3,
+    emptyFleetActionable: true,
+    available: 0,
+    remaining: 0,
+    needsGoalReviewRetry: true,
+  }), true)
+  assert.equal(shouldEscalateRemediation({
+    attempts: 3,
+    emptyFleetActionable: true,
+    available: 0,
+    remaining: 0,
+    needsGoalReviewRetry: false,
   }), false)
 })
 
@@ -1872,9 +2566,62 @@ test('representative-brief plans progress notifies and judgment wakes', async ()
   assert.equal(advanced.brief, true)
   assert.match(advanced.body, /25\/26/)
 
+  const grFailed = planProgressBrief({
+    previous: null,
+    progress: { total: 26, integrated: 26, implemented: 26, qa: 26 },
+    status: 'running',
+    needsGoalReviewRetry: true,
+    goalReviewFailed: {
+      summary: 'Ornith fails',
+      acceptanceCheckIds: ['AC-025', 'AC-026'],
+      defects: ['expected AC-025; observed fail'],
+    },
+  })
+  assert.equal(grFailed.brief, true)
+  assert.match(grFailed.title, /Goal Review failed/)
+  assert.doesNotMatch(grFailed.title, /nearly done/)
+  assert.match(grFailed.body, /AC-025/)
+  assert.equal(grFailed.urgency, 'critical')
+
+  const dirtOnlyBrief = planProgressBrief({
+    previous: null,
+    progress: { total: 26, integrated: 24, implemented: 25, qa: 25 },
+    status: 'running',
+    remaining: 2,
+    goalReviewFailed: {
+      dirtRetry: true,
+      summary: '',
+      acceptanceCheckIds: [],
+      defects: ['Goal Review must be read-only; checkout changed:  M .harness/wi-ac-013-verify-first.json'],
+    },
+    claims: [{ context: 'oss-golden-path', status: 'running', phase: 'integration_qa' }],
+  })
+  assert.doesNotMatch(dirtOnlyBrief.title, /Goal Review failed/)
+
   assert.equal(isJudgmentWake({ kind: 'worker_stuck' }), true)
   assert.equal(isJudgmentWake({ kind: 'progress', wakeTriage: { action: 'wake' } }), false)
   assert.equal(isJudgmentWake({ kind: 'input_required' }), true)
+  assert.equal(isJudgmentWake({ kind: 'goal_review_failed' }), true)
+})
+
+test('wake-triage dedupes spam judgment wakes and wakes on goal_review_failed', async () => {
+  const { classify, dedupeJudgmentWakes } = await import('../skills/supervisor/lib/wake-triage.mjs')
+  assert.equal(classify({ kind: 'goal_review_failed' }).action, 'wake')
+  assert.equal(classify({ kind: 'goal_review_retry' }).action, 'absorb')
+  const batch = [
+    { id: 1, kind: 'supervisor_tick_failed' },
+    { id: 2, kind: 'supervisor_tick_failed' },
+    { id: 3, kind: 'goal_review_failed' },
+    { id: 4, kind: 'empty_fleet_actionable' },
+    { id: 5, kind: 'empty_fleet_actionable' },
+    { id: 6, kind: 'input_required' },
+  ]
+  const deduped = dedupeJudgmentWakes(batch)
+  assert.equal(deduped.filter((e) => e.kind === 'supervisor_tick_failed').length, 1)
+  assert.equal(deduped.filter((e) => e.kind === 'empty_fleet_actionable').length, 1)
+  assert.ok(deduped.some((e) => e.kind === 'goal_review_failed' && e.id === 3))
+  assert.ok(deduped.some((e) => e.kind === 'input_required' && e.id === 6))
+  assert.equal(deduped.find((e) => e.kind === 'supervisor_tick_failed').id, 2)
 })
 
 test('workerActivityAgeMs ignores orchestrator heartbeat when agent is silent', async () => {
@@ -1905,6 +2652,83 @@ test('workerActivityAgeMs ignores orchestrator heartbeat when agent is silent', 
     },
     thresholdMs: 600_000,
   }), true)
+})
+
+test('workerActivityAgeMs treats fresh worktree probe artifacts as activity when log empty', async () => {
+  const { mkdirSync, mkdtempSync, writeFileSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  const { workerActivityAgeMs, isWorkerStuck } = await import('../skills/generator/lib/worker-outcome.mjs')
+  const dir = mkdtempSync(join(tmpdir(), 'probe-side-channel-'))
+  const logFile = join(dir, 'empty.log')
+  writeFileSync(logFile, '')
+  const worktree = join(dir, 'wt')
+  mkdirSync(join(worktree, '.harness'), { recursive: true })
+  writeFileSync(join(worktree, '.harness', 'wi-ac-026-verify-first.json'), '{"pass":true}\n')
+  const now = Date.now()
+  const age = await workerActivityAgeMs({
+    logFile,
+    runState: {
+      heartbeatEpoch: Math.floor(now / 1000),
+      lastAgentOutputAt: null,
+      startedAt: new Date(now - 20 * 60_000).toISOString(),
+      worktree,
+    },
+    now,
+  })
+  assert.ok(age < 60_000, `expected fresh probe age < 60s, got ${age}`)
+  assert.equal(await isWorkerStuck({
+    logFile,
+    runState: {
+      lastAgentOutputAt: null,
+      startedAt: new Date(now - 20 * 60_000).toISOString(),
+      worktree,
+    },
+    thresholdMs: 600_000,
+  }), false)
+})
+
+test('workerActivityAgeMs counts Goal Review runtime side channels via worktree override', async () => {
+  const { mkdirSync, mkdtempSync, writeFileSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  const {
+    workerActivityAgeMs,
+    isWorkerStuck,
+    isWorkerSideChannelArtifact,
+  } = await import('../skills/generator/lib/worker-outcome.mjs')
+  assert.equal(isWorkerSideChannelArtifact('runtime-owned.jsonl'), true)
+  assert.equal(isWorkerSideChannelArtifact('goal-review-probes.json'), true)
+  assert.equal(isWorkerSideChannelArtifact('gr-ornith.pid'), true)
+  assert.equal(isWorkerSideChannelArtifact('unrelated.txt'), false)
+  const dir = mkdtempSync(join(tmpdir(), 'gr-side-channel-'))
+  const logFile = join(dir, 'empty.log')
+  writeFileSync(logFile, '')
+  const worktree = join(dir, 'wt')
+  mkdirSync(join(worktree, '.harness'), { recursive: true })
+  writeFileSync(join(worktree, '.harness', 'runtime-owned.jsonl'), '{"kind":"compose-stack"}\n')
+  const now = Date.now()
+  // Claim-less Goal Review Run State often omits worktree — supervisor passes it.
+  const age = await workerActivityAgeMs({
+    logFile,
+    runState: {
+      lastAgentOutputAt: null,
+      startedAt: new Date(now - 20 * 60_000).toISOString(),
+      phase: 'goal_review',
+    },
+    worktree,
+    now,
+  })
+  assert.ok(age < 60_000, `expected fresh GR runtime age < 60s, got ${age}`)
+  assert.equal(await isWorkerStuck({
+    logFile,
+    runState: {
+      lastAgentOutputAt: null,
+      startedAt: new Date(now - 20 * 60_000).toISOString(),
+    },
+    worktree,
+    thresholdMs: 600_000,
+  }), false)
 })
 
 test('anomaly-detect never-started, crash-loop, and spawn-failed planners', async () => {
@@ -2022,6 +2846,14 @@ test('fleet snapshot counts live Claim Leases as workers (no false empty-fleet)'
     },
     processAlive: (pid) => pid === 1 || pid === 2,
   }), 1)
+  // Claim-less Goal Review Run State still counts (no generator-claims row).
+  assert.equal(countLiveClaims({
+    claims: {},
+    runStatesByContext: {
+      'goal-review': { status: 'running', phase: 'goal_review', ownerPid: 9, childPid: 10 },
+    },
+    processAlive: (pid) => pid === 9 || pid === 10,
+  }), 1)
   const project = buildProjectSnapshot({
     id: 'root',
     state: {
@@ -2137,6 +2969,35 @@ test('coding prompt soft-aligns to grep-only observation methods', async () => {
   const prompt = featurePrompt('CODING', feature, 1, null, '/wt', { port: 5170 })
   assert.match(prompt, /grep audit/i)
   assert.doesNotMatch(prompt, /Bring up the app on the assigned ports and run black-box behavior tests\./)
+})
+
+test('coding Repair Plan disables VERIFY-FIRST even for existing-codebase mode', async () => {
+  const { featurePrompt } = await import('../skills/generator/prompts/feature.mjs')
+  const feature = {
+    id: 'WI-AC-025',
+    context: 'oss-golden-path',
+    description: 'golden path',
+    acceptance_checks: ['AC-025'],
+    observation_methods: ['browser'],
+  }
+  const repairPlan = {
+    summary: 'Operator / Goal Review repair guidance',
+    rootCause: 'guided-repair',
+    actions: ['NOT verify-first — cherry-pick Ornith host.docker.internal preset'],
+    validation: [],
+  }
+  const withRepair = featurePrompt('CODING', feature, 3, repairPlan, '/wt', {
+    port: 5170,
+    getVerifyFirst: () => true,
+  })
+  assert.doesNotMatch(withRepair, /VERIFY-FIRST mode/)
+  assert.match(withRepair, /Implement exactly this Work Item/)
+  assert.match(withRepair, /Repair Plan/)
+  const withoutRepair = featurePrompt('CODING', feature, 1, null, '/wt', {
+    port: 5170,
+    getVerifyFirst: () => true,
+  })
+  assert.match(withoutRepair, /VERIFY-FIRST mode/)
 })
 
 test('control journal fails closed on corrupt JSONL', async () => {
@@ -2291,6 +3152,39 @@ test('runtime manifest records exact resources for cleanup', () => {
   const rows = readOwnedRuntime(root)
   assert.equal(rows.length, 1)
   assert.deepEqual(rows[0].containers, ['wi-ac-1'])
+})
+
+test('cleanupWorktreeRuntime tolerates goal-review pids maps (no iterable crash)', async () => {
+  const {
+    appendOwnedRuntime,
+    cleanupWorktreeRuntime,
+    normalizeRuntimeIdList,
+    isRuntimeInventoryRow,
+  } = await import('../skills/generator/lib/worktree-teardown.mjs')
+  assert.deepEqual(normalizeRuntimeIdList({ core: 11, worker: 22 }), [11, 22])
+  assert.equal(isRuntimeInventoryRow({
+    kind: 'goal-review-runtime',
+    pids: { core: 11 },
+    shared_reused: ['core-postgres'],
+  }), true)
+  const integration = mkdtempSync(join(tmpdir(), 'runtime-gr-map-'))
+  mkdirSync(join(integration, '.harness'), { recursive: true })
+  appendOwnedRuntime(integration, {
+    kind: 'goal-review-runtime',
+    pids: { core: 999999991, worker: 999999992 },
+    shared_reused: ['core-causeflow-postgres-1'],
+    preexisting: { ornith: 999999993 },
+  })
+  appendOwnedRuntime(integration, { kind: 'private', pids: [999999994], containers: ['wi-ac-fake-never'] })
+  // Must not throw on pids maps; integration checkout + goal-review skip manifest reap.
+  const gr = cleanupWorktreeRuntime({ workdir: integration, port: 5170, context: 'goal-review' })
+  assert.equal(gr.manifestKilled, 0)
+  // Worktree path may reap private array pids (dead PID is fine).
+  const wt = mkdtempSync(join(tmpdir(), 'proj-wt-runtime-'))
+  mkdirSync(join(wt, '.harness'), { recursive: true })
+  appendOwnedRuntime(wt, { kind: 'private', pids: [999999995] })
+  const result = cleanupWorktreeRuntime({ workdir: wt, port: 5199, context: 'oss-golden-path' })
+  assert.ok(result.manifestKilled >= 1)
 })
 
 test('control journal compaction preserves pending input lineage', async () => {
@@ -2924,6 +3818,52 @@ test('fleet snapshot ops fields derive supervisor, ghosts, and run_completed sum
     { ghostClaims: [], repaired: true },
   )
   assert.equal(isEmptyFleetRepaired(repairedFleet), true)
+  assert.equal(isEmptyFleetRepaired({ workers: 0, liveClaimWorkers: 1 }), true)
+  assert.equal(isEmptyFleetRepaired({ workers: 0, liveClaimWorkers: 0 }), false)
+})
+
+test('wake triage absorbs recovered supervisor_stopped and live-claim empty fleet', async () => {
+  const { classify, shouldWake } = await import('../skills/supervisor/lib/wake-triage.mjs')
+  const liveFleet = {
+    workers: 0,
+    liveClaimWorkers: 1,
+    supervisorLive: true,
+    counts: { total: 26, integrated: 26, blocked: 0 },
+    pendingInputs: 0,
+    status: 'running',
+    ghostClaims: [],
+    emptyFleetActionable: false,
+  }
+  assert.deepEqual(classify({
+    id: 4179,
+    kind: 'supervisor_stopped',
+    signal: 'SIGTERM',
+  }, liveFleet), {
+    action: 'absorb',
+    reason: 'supervisor already live after remediation',
+  })
+  assert.deepEqual(classify({
+    id: 4182,
+    kind: 'empty_fleet_actionable',
+    workers: 0,
+    repaired: false,
+  }, liveFleet), {
+    action: 'absorb',
+    reason: 'empty fleet repaired by tick',
+  })
+  assert.equal(shouldWake([
+    { id: 4179, kind: 'supervisor_stopped', signal: 'SIGTERM' },
+    { id: 4182, kind: 'empty_fleet_actionable', workers: 0, repaired: false },
+  ], liveFleet), false)
+
+  assert.deepEqual(classify({
+    id: 99,
+    kind: 'supervisor_stopped',
+    signal: 'SIGTERM',
+  }, { supervisorLive: false }), {
+    action: 'wake',
+    reason: 'supervisor_stopped',
+  })
 })
 
 test('wake triage hybrid empty-fleet rules absorb repaired actionable events', async () => {

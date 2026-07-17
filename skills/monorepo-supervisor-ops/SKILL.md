@@ -117,7 +117,9 @@ kill -9 on old supervisors so their `stop()` path does not interrupt live worker
 Use guarded harness-control fleet commands instead of raw `kill`/`rm`:
 
 ```bash
+# Default SIGKILL = recycle supervisor only (preserves live workers / GR).
 node "$CONTROL" kill-supervisor --repo "$REPO" --force true
+# Explicit reclaim (tears down workers): --signal SIGTERM or --teardown-workers true
 node "$CONTROL" release-supervisor-lock --repo "$REPO" --force true
 node "$CONTROL" clear-dead-lock --repo "$REPO" --lock merge --force true
 node "$CONTROL" kill-worker --repo "$REPO" --context <context> --force true
@@ -127,29 +129,68 @@ node "$CONTROL" release-lease --repo "$REPO" --context <context> --force true
 `--force true` is required when a local supervisor PID is still recorded as live
 (harness-control parses `--key value` pairs; bare `--force` is invalid).
 Pass `HARNESS_SUPERVISOR_TOKEN` instead when you hold the active lease.
+**Do not** use `kill-supervisor` when you only need to attach new `--guidance` —
+seed `retryQueue` with non-generic text (triggers `retry_guidance_recycle`) or
+`kill-worker` for that context. Pre-2026-07-17 `kill-supervisor --force` always
+tore workers down before SIGKILL (Control Host AC-025 false-stuck wake).
 
 ## Restart one subproject supervisor (keep workers)
+
+**Prefer `harness-control start` (detached + unref / transient systemd unit).**
+Do **not** rely on Cursor/`agent` shell `setsid -f … run` — session teardown
+often SIGTERMs that tree and re-fires `supervisor_stopped` while Claim Leases
+stay healthy (CauseFlow root 2026-07-17: QA/IV kept running; ops only saw
+`supervisor_dead_with_work`).
+
+`ops-remediate` → `harness-control remediate` now plans
+`ensure_supervisor_running` when `supervisorLive=false` and remaining WIs > 0
+(status not paused/stopped/complete), then calls detached `start`. Control Host
+judgment wakes for `supervisor_stopped` should **resume + start** only when
+still dead — never `kill-supervisor` first if `supervisorPid` is already null
+or the PID is dead. If `status` shows a live supervisor + healthy external
+claim, ack and exit.
+
+**ops-cron oneshot KillMode (CauseFlow root 2026-07-17):**
+`harness-ops-cron.service` is `Type=oneshot`. Default `KillMode=control-group`
+SIGTERMs every process still in that cgroup when the oneshot exits — including
+a supervisor that `start` detached+unref'd from `ops-remediate` / Control Host
+`--invoke-agent`. Symptom: `goal_review_started` → `worker_health` →
+`supervisor_stopped` SIGTERM within ~1s, repeating every timer tick; GR Run
+State `interrupted` / `orchestrator received SIGTERM`; false
+`empty_fleet_actionable` + memory `input_required` while ledger is N/N.
+Same-turn: set `KillMode=process` on the unit (`install-ops-cron.sh` does),
+`daemon-reload`, `respond --action retry` for the escalation, recycle
+supervisor via `kill-supervisor --force true` + `start` (under systemd,
+`start` also uses a transient `harness-supervisor-<project>.service` with
+`KillMode=process` and passes `HARNESS_*` / `PATH` via `--setenv` — without
+that, approved `HARNESS_MAX_SWAP_USED_RATIO` is lost and GR spuriously
+escalates on swap). Do not escalate host RAM while the real bug is cgroup
+kill-on-exit.
+
+**False wake after remediate already restarted (CauseFlow root 2026-07-17):**
+Cursor session SIGTERM → `supervisor_stopped` + transient `empty_fleet_actionable`
+(workers=0 between preflight and `goal_review_started`) while ops-remediate has
+already detached-started the supervisor and admitted claim-less Goal Review.
+Wake triage must **absorb** when the current fleet snapshot shows
+`supervisorLive=true` and/or `liveClaimWorkers>=1` — do not let stale
+`event.workers=0` clobber live claims in `isEmptyFleetRepaired`. Control Host
+still acks and exits when GR is healthy; the absorb path avoids burning another
+LLM turn next time.
 
 ```bash
 CONTROL=~/.agents/skills/harness-supervisor/scripts/harness-control.mjs
 REPO=/path/to/monorepo/<subproject>
-STATE=/path/to/monorepo/.git/harness-control/<subproject>/state.json
-TOP=$(git -C "$REPO" rev-parse --show-toplevel)
 
-# Optional: seed custom guidance before start (wins over auto-retry generics)
-# Set retryQueue[context].guidance in state.json, clear workers={}, supervisorPid=null
-# Neutralize pending inputs for that context so auto-respond cannot race.
-
-node "$CONTROL" kill-supervisor --repo "$REPO" --force true
+# Only when supervisor is actually dead / wedged:
+# node "$CONTROL" kill-supervisor --repo "$REPO" --force true
 node "$CONTROL" release-supervisor-lock --repo "$REPO" --force true
-# Prefer `run` + setsid/nohup for long-lived supervisors; `start` may exit after spawn.
-# CauseFlow ops: --host agent (composer-2.5). Use pi only when the operator asks.
+node "$CONTROL" resume --repo "$REPO" 2>/dev/null || true
+# CauseFlow ops: --host agent. Pass HARNESS_MAX_SWAP_USED_RATIO when approved.
 # harness-control parses argv as `--key value` pairs — use `--force true`, not bare `--force`.
-setsid -f node "$CONTROL" run --repo "$REPO" --host agent \
+node "$CONTROL" start --repo "$REPO" --host agent \
   --max-workers 3 --quota-workers 3 --cpu-per-worker 1 \
   --memory-per-worker-mb 640 --reserve-memory-mb 1024 --max-load-ratio 0.9 \
-  --summary-minutes 20 \
-  >>/tmp/<subproject>-supervisor.log 2>&1
+  --summary-minutes 20
 ```
 
 Background orchestrators survive supervisor restart; `status` and worker logs
@@ -286,6 +327,56 @@ live claim) and `lastAgentOutputAt` goes stale. Probe evidence shows
 Recycle with evidence-backed guidance only if Ornith cannot stay up or the
 agent is past the stuck threshold with no shell child making progress.
 
+**Empty harness-control worker log ≠ stuck (root WI-AC-026, 2026-07-17):**
+Cursor `agent` sessions often leave `.git/harness-control/**/logs/<ctx>-*.log`
+at 0 bytes because agent stdout is captured inside `runHostAgentSession` and
+never reaches the orchestrator pipe, while VERIFY-FIRST still advances
+`.harness/wi-ac-*-verify-first.json` (and evidence artifacts) via shell/browser
+tools without `onAgentOutput`. Observed false wakes: `worker_stuck` /
+`empty_worker_log` / `silent_agent` while Chrome + `ac-025-browser-probe.mjs`
+were live and `pass:true` was written. Same-turn judgment: read Run State
+(`harness-runs/<ctx>.json` → `phase` / `childPid` / `lastAgentOutputAt` /
+`evidence`) and worktree probe mtimes — do **not** recycle when those move.
+Durable fix: `workerActivityAgeMs` + ops-cron-check treat evidence /
+`.harness/wi-*` side channels as activity; empty log alone is only a warn when
+those are also stale. Free swap (stale Playwright MCP / completed-sibling
+`next-server`) so re-admit stays possible after a real recycle.
+
+**Goal Review false stuck on empty log (root, 2026-07-17):** claim-less Goal
+Review Run State often omits `worktree` / `startedAt` while
+`state.workers['goal-review'].worktree` is the integration checkout. Side-channel
+detection that only reads `runState.worktree` + `wi-ac-*` then ignores live
+`.harness/runtime-owned.jsonl`, `goal-review-probes.json`, and `gr-*` compose/
+Ornith probes — supervisor marks `log/heartbeat stale` at 10m and SIGTERMs a
+busy GR agent (exit 130). Same-turn: leave a live GR alone when those files
+move; durable: merge `worker.worktree`/`startedAt` into stuck inspection,
+count GR harness artifacts via `isWorkerSideChannelArtifact`, persist
+`worktree`+`startedAt` from orchestrator on GR start, sync generator +
+supervisor, SIGKILL-recycle supervisor only (not the GR worker).
+
+**`supervisor_failed` "object is not iterable" on SIGTERM (root Goal Review,
+2026-07-17):** after N/N integrate, Goal Review on the integration checkout
+appended `.harness/runtime-owned.jsonl` with
+`kind: goal-review-runtime` and `pids: { core, worker }` (object map) plus
+`shared_reused` / `preexisting`. Cursor session teardown SIGTERMs the
+supervisor → `workerClosed` → `cleanupWorktreeRuntime` →
+`for (const pid of row.pids)` throws → `supervisor_failed` and a dead
+supervisor until `ops-remediate` `ensure_supervisor_running`. Same-turn fix:
+1. Harden `worktree-teardown.mjs` (`normalizeRuntimeIdList`, skip inventory
+   / shared-checkout teardown); wrap `cleanupWorkerResources` so teardown
+   never reaches `this.crash()`.
+2. Sync generator + supervisor scripts; **SIGKILL** recycle the supervisor
+   (`kill-supervisor --force true` default signal) so `stop()` does not
+   interrupt the live Goal Review orchestrator, then `start` with CauseFlow
+   ops (`--host agent`, approved swap override).
+3. Goal Review is **claim-less** (no `generator-claims.json` row). After
+   supervisor recycle, `liveClaimWorkers` must still count
+   `harness-runs/goal-review.json` live PIDs — otherwise false
+   `empty_fleet_actionable` + swap `input_required` while GR is running.
+   Fixed in `countLiveClaims` + `loadLiveCountRunStates` /
+   `hasGoalReviewWorker` live-run checks. Do **not** escalate while those
+   PIDs are alive (empty worker log is normal for Cursor `agent`).
+
 **Durable heartbeat (required for unattended runs):** install
 `skills/monorepo-supervisor-ops/scripts/install-ops-cron.sh --repo "$REPO"
 --notify` so `ops-remediate.mjs` runs every N minutes without Cursor chat.
@@ -346,12 +437,123 @@ after `context_completed` (observed 2026-07-11 on web after WI-AC-061; restart
 admitted `goal-review` immediately).
 Do not narrate "waiting for Goal Review" across ticks without this recovery.
 
+**N/N + `needsGoalReviewRetry` + dead supervisor (CauseFlow root 2026-07-17):**
+after the last WI integrates, `remaining` WI count is 0 while
+`needsGoalReviewRetry=true`. If the supervisor is SIGTERM'd mid Goal Review
+(session teardown / `setsid` tree), `ops-remediate` used to skip
+`ensure_supervisor_running` because `remainingOf<=0`, leaving
+`status=interrupted`, empty fleet wakes, and a dead merge-lock holder.
+Same-turn: `clear-dead-lock --lock merge`, `resume` + detached `start`
+(CauseFlow ops), seed `retryQueue['goal-review']` if the prior GR run was
+interrupted. Durable: `host-remediation.mjs` treats `needsGoalReviewRetry` as
+supervisor work (same as remaining WIs) and does not classify N/N+GR-owed as
+complete for reservation/stop logic.
+
+**Ledger N/N + empty fleet + dirty-checkout from `.cursor/` (2026-07-17 root):**
+Execution Ledger can be fully integrated (`harness-ledger/<project>.json`) with
+evidence INTEGRATION_QA green while `feature_list.json` flags still show all
+`false` (flag drift — ignore for GR). If `needsGoalReviewRetry=true` but no
+`goal_review_started`, probe `goalReviewAdmissible` / porcelain: tracked M/D
+under `.cursor/plugins/local/harness/` or `.cursor/skills/` from harness-*
+rename/sync is **not** product dirt. `checkout-dirt.mjs` must ignore those
+mirrors (same class as `harness-progress/`). Same-turn: sync the fixed
+`checkout-dirt.mjs`, seed `retryQueue['goal-review']` with
+flag-drift-ignore guidance, recycle the supervisor (`kill-supervisor` +
+`start` with CauseFlow ops). Do not escalate "dirty checkout" for skill-mirror
+churn alone, and do not reopen WIs from `feature_list` when the ledger is green.
+
+**Ledger N/N + empty fleet + dirty `feature_list.json` (2026-07-17 root):**
+after GR reopen repair re-integrates (e.g. WI-AC-026 IV `integration:true`)
+the ledger is N/N and `needsGoalReviewRetry=true`, but workers leave
+`M feature_list.json` (flag flips + unicode escapes) uncommitted. That alone
+keeps `goalReviewAdmissible` at `dirty-checkout` → repeating
+`empty_fleet_actionable` with capacity free and `workers={}`. Same-turn:
+confirm latest IV evidence is green and ledger N/N; ignore `feature_list.json`
+in `checkout-dirt.mjs` (ledger is truth); optionally
+`git checkout -- feature_list.json` to clear porcelain noise; seed
+`retryQueue['goal-review']` (ignore flag drift; do not reopen from
+feature_list); recycle supervisor (`kill-supervisor` + CauseFlow `start`).
+Do not reopen repair WIs or escalate host RAM for catalog-flag dirt.
+
 **Goal Review `harness-progress` dirty ≠ product block:** if Input Request is
 `Execution blocked` / `Goal Review must be read-only` solely for
 `harness-progress/*.md` while evidence already names real ACs (e.g. AC-014),
 do not only re-queue Goal Review. Ignore journal dirt in `checkout-dirt.mjs`,
 reopen the named WIs (ledger flags false), seed that context's repair guidance,
 and clear a stale `retryQueue['goal-review']` so repair admits before GR.
+
+**Goal Review `.harness/wi-ac-*` / `goal-review*` dirty ≠ product block
+(2026-07-17 root):** GR black-box probes rewrite tracked verify-first /
+compose probe JSON under `.harness/`. If `goal-review.result.json` is
+`blocked:true` solely for `Goal Review must be read-only; checkout changed:
+M .harness/wi-ac-*-verify-first.json` (etc.) while the Evidence Artifact
+already names real ACs (e.g. AC-025/AC-026 Ornith `127.0.0.1:8081` vs
+`host.docker.internal`), treat that as harness dirty-gate defect — not a clean
+GR pass. Same-turn: extend `checkout-dirt.mjs` side-channel ignore (aligned with
+`isWorkerSideChannelArtifact`), sync to `~/.agents`, restore or leave the
+probe files (they no longer block), reopen the named WIs from the evidence
+verdict, seed `retryQueue[<context>]` with expected/observed pairs, and clear
+`retryQueue['goal-review']` so repair admits before another GR.
+**Do not stop at narrating the failure to the operator** — discovering this on
+a “has it finished?” status check is already a Control Host wake; remediate
+before/with the answer (supervisor hard rule 10b).
+
+**Unmapped escalate when evidence already names AC-NNN (CauseFlow root AC-018, 2026-07-17):**
+`goal-review.result.json` can omit `acceptanceCheckIds` while the Evidence Artifact
+has `acceptanceCheckIds:["AC-018"]` and the summary mentions AC-018. Old
+`enrichResultFromEvidence` early-returned because mined `baseIds` looked complete,
+leaving no explicit array — `planGoalReviewCloseRecovery` (includeSummary:false)
+then escalated `unmapped_defects` / `input_required` even though WI-AC-018 was
+already in `reopened`. Same-turn Control Host: patch result ACs from the evidence
+log, force ledger WI flags false (coding must run — do not resume at QA on a
+stale `implementation:true`), seed `retryQueue[<context>]` with expected/observed
+(shared circuit breaker blocking fallbackProfileId hops), clear
+`retryQueue['goal-review']`, admit repair. Durable: (1) enrich materializes evidence
+`acceptanceCheckIds` onto result before close recovery; (2) `attempt-machine`
+clears implementation/qa/integration when `--guidance` / guided Repair Plan is
+present so CODING cannot be skipped. Regression in `lib_test.mjs`. Do not re-poll
+chat `/loop`.
+
+**Wrong agent `reopened` beats evidence ACs (CauseFlow root AC-018→WI-AC-025, 2026-07-17):**
+GR evidence `acceptanceCheckIds:["AC-018"]` (circuit breaker blocks fallback hops)
+while the agent result set `reopened:["WI-AC-025"]` because defect prose said
+"AC-025 completes". Old `planWorkerClosedActions` short-circuited on
+`result.reopened` → `goal_defects` (emit only; no `applyGoalReviewFailedRecovery`)
+and admitted oss-golden-path VERIFY-FIRST with empty guidance. Same-turn Control
+Host: `kill-worker` the false repair; `kill-supervisor`; restore ledger WI-AC-025
+green; reopen WI-AC-018 (all flags false); patch result `acceptanceCheckIds` +
+`reopened` to AC-018/WI-AC-018; seed `retryQueue[core-oss-runtime]` with
+expected/observed (forbid verify-first / MERGE-grep-only); clear
+`retryQueue[goal-review]`; `start`. Durable: evidence `goal_review_failed` path
+runs **before** trusting agent `reopened` (`failure-policy.mjs`). Regression in
+`lib_test.mjs`. Do not re-poll chat `/loop`.
+
+**Evidence log `route={…}` preamble must parse (2026-07-17 root):** harness
+evidence headers include `route={"adapter":…}` before the verdict JSON.
+`parseVerdict` must prefer the **last** parseable `{…}` object — first-brace
+slices fail JSON.parse and leave `enrichResultFromEvidence` blind, so
+`recoverStaleGoalReviewFailure` spams `goal_review_retry` on dirt while the
+evidence artifact already names AC-025/AC-026. Fix lives in
+`worker-outcome.mjs`; dirt_retry must also no-op while any ledger WI remains
+unintegrated; briefs must not title dirt-only `dirtRetry` as “Goal Review
+failed”.
+
+**Home-project AC ownership beats sibling WI id collisions (2026-07-17 root):**
+when root catalog maps AC-025/AC-026, do **not** reopen completed `core`/`web`
+ledgers that reuse the same `WI-AC-025` ids from older plans. Restore sibling
+ledgers + clear falsely seeded sibling `retryQueue` if a bad reopen already
+landed; `planEvidenceReopen` skips foreign rows whose ACs are already covered
+by the home catalog.
+
+**Durable X-minute path owns the run (2026-07-17):** Cursor chat is optional.
+`ops-remediate --notify --invoke-agent` is the automatic project-state check.
+Mechanical path: `goal-review-recovery.mjs` + `workerClosed` action
+`goal_review_failed` + tick `recoverStaleGoalReviewFailure` reopen integrated
+WIs from evidence without waiting for chat. Briefs must say “Goal Review
+failed/owed” (never “nearly done”) when `needsGoalReviewRetry` /
+`lastGoalReviewFailure`. Wake spam (`supervisor_tick_failed`, crash-loop,
+empty_fleet) is deduped via `dedupeJudgmentWakes` so judgment agent sees
+`goal_review_failed` / `input_required`.
 
 ## Temporary capacity boost (more parallel contexts)
 
@@ -403,6 +605,73 @@ it. Goal Review correctly failed again. Ops response: kill-worker, force ledger
 requires Dockerfile `ARG`/`ENV NEXT_PUBLIC_DASHBOARD_URL` before `next build` plus
 compose `build.args`, and gates on curl against the **compose image** (not
 `next dev`). Do not leave a QA-phase worker running on a false coding green.
+
+**Stuck recycle must not drop GR repair guidance (CauseFlow root oss-golden-path,
+2026-07-17):** `worker_stuck` / exit-130 auto-retry raced a `repairInFlight`
+Goal Review reopen and rewrote `retryQueue` / coding `repairPlan` to generic
+`Auto-retry: worker process exited…` while AC-025 defects still named Ornith
+`127.0.0.1:8081` vs `host.docker.internal`. Same-turn Control Host: do **not**
+second-recycle when the new worker is healthy with advancing
+`.harness/wi-ac-*` / live `ac-025-browser-probe` / Cursor session log under
+`/tmp/cursor-agent-logs-*` (empty harness-control log alone is still a false
+stuck signal). Durable: `failure-policy` `repairGuidanceFromGoalReviewFailure` +
+`stuckWorkerRetryGuidance` prefer `lastGoalReviewFailure` defects over generic
+Auto-retry on stuck enqueue and `planAutoRetryResponses`. Sync generator lib +
+recycle supervisor only when loading that path mid-fleet.
+
+**Live `childPid` + defer guidance recycle (CauseFlow root oss-golden-path,
+2026-07-17 #4504–#4512):** long AC-025 browser investigation polls freeze
+`.harness/wi-ac-*` mtimes past the stuck threshold while `agent` +
+`ac-025-browser-probe` stay alive → false `log/heartbeat stale` → SIGTERM
+(exit 130). Then `input_required` auto-retry + `retry_guidance_recycle`
+SIGTERM'd a healthy worker that already had `pass:true` / `remCount=1` before
+the harness verdict could emit. Durable: `workerActivityAgeMs` treats a live
+Run State `childPid` as progress (fresh side-channel if <1× threshold; else
+grace 0-age until 3× stuck threshold, ignoring stale leftover `wi-ac-*`);
+`retry_guidance_recycle` emits `retry_guidance_deferred` and keeps the worker
+when `childPid` is live and not stuck. Sync generator lib + supervisor script;
+SIGKILL-recycle supervisor only (preserve workers). Control Host: never
+second-recycle while live QA probe/`childPid` progresses; ack wakes only.
+
+**Orphaned coding commit after Goal Review reopen (CauseFlow root AC-025/AC-026,
+2026-07-17):** coding notes claimed `ORNITH_LOCAL_PRESET.baseUrl` →
+`host.docker.internal:8081` (commit `53b09cad`) and QA/IV went green, but the
+commit was **not an ancestor of** `plan/opensource-docker` — plan HEAD still
+shipped `127.0.0.1:8081`, so Goal Review failed again. Same-turn Control Host:
+1. Open `goal-review.result.json` (product defects, not dirty-gate).
+2. Confirm `git merge-base --is-ancestor <claimed-sha> HEAD` fails while
+   `git cat-file -t <sha>` still has the object.
+3. Kill any IV/coding worker on the unrepaired plan HEAD; reset ledger flags
+   false; seed `retryQueue[oss-golden-path]` with cherry-pick/re-apply guidance
+   (forbid verify-first / manual baseUrl override); clear `retryQueue[goal-review]`.
+4. Live supervisor overwrites raw `state.json` edits — **kill-supervisor first**,
+   seed on disk, then `start`. If auto-retry races with generic
+   `Auto-retry: worker process exited…`, non-generic guidance must still reach
+   `--guidance` (harness-control: `claim_new` attaches queued guidance;
+   `workers.has` recycles when non-generic retry guidance was about to be
+   dropped). Confirm orchestrator argv has `--guidance` **and** the coding
+   prompt includes the Repair Plan (attempt-machine maps `--guidance` →
+   `repairPlan` even when status≠blocked; older generators only did this for
+   blocked Resume — argv alone is not enough).
+5. Gate: compose probe with **shipped** Ornith (local) preset
+   (`activeProfile.baseUrl` must be `host.docker.internal:8081`).
+
+**Stale GR reopen after IV green (CauseFlow root AC-025/AC-026, 2026-07-17):**
+`recoverStaleGoalReviewFailure` used `goal-review.result.json` mtime / rewritten
+`at` as the IV cutoff. Control Host enrich/notes bump those after INTEGRATION_QA
+green → `hasNewerGreenIntegrationQa` returns false → false-reopens WI-AC-025 and
+admits coding against a plan HEAD that already ships
+`ORNITH_LOCAL_PRESET=host.docker.internal` (IV `pass:true`). Same-turn:
+1. Confirm latest `WI-AC-025-*-integration_qa-*.log` has `integration:true` and
+   `.harness/wi-ac-025-iv-browser.json` activate step uses host.docker.internal.
+2. `kill-worker --force true` the false repair; restore ledger WI-AC-025
+   implementation/qa/integration=true; keep WI-AC-026 false if the docs gate
+   is still owed; seed `retryQueue[oss-golden-path]` for AC-026 only; clear
+   `retryQueue[goal-review]`.
+3. Sync HE `goal-review-recovery.mjs` + `harness-control.mjs` (pass
+   `evidenceMtimeMs` from the GR evidence log; prefer it over result mtime/`at`)
+   into `~/.agents` + monorepo mirrors, then SIGKILL-recycle the supervisor.
+4. Do not re-poll chat `/loop` — ops-remediate owns the next tick.
 
 ## Inject guidance without losing it
 
@@ -649,7 +918,10 @@ Every tick:
 2. `ops-cron-check` — durable verdict + desktop notify every tick.
 3. `wake-control-host.mjs` — journal consumer `control-host-wake`; ack
    fold/absorb with zero LLM tokens; desktop-notify / optional `--invoke-agent`
-   only when Wake Triage `shouldWake`.
+   only when Wake Triage `shouldWake`. After `--invoke-agent`, ack only when
+   `wake-ack.mjs` sees a post-condition (reopen / retryQueue / workers / remaining);
+   `invoke-noop` defers ack and re-notifies. Cursor chat ≠ wake target — notify
+   copy says durable Control Host is remediating.
 4. Live supervisor tick promotes `ops-escalate.json` → goal `input_required`
    and also runs the same remediation planner each loop.
 

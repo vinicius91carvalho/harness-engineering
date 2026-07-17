@@ -1,4 +1,5 @@
-import { stat } from 'node:fs/promises'
+import { readdir, stat } from 'node:fs/promises'
+import { join } from 'node:path'
 import { resultFileFromRunState } from './project-keys.mjs'
 import { atomicJson, readJson } from './fs-json.mjs'
 
@@ -36,6 +37,23 @@ export function hasCompleteVerdict(text) {
   return Boolean(body && parseJsonObject(body))
 }
 
+/**
+ * Last parseable `{…}` in text. Evidence artifacts prepend `route={…}` metadata;
+ * slicing from the first `{` to the last `}` then fails JSON.parse and used to
+ * leave Goal Review recovery stuck on dirt-only result.json (CauseFlow root
+ * 2026-07-17: AC-025/AC-026 product defects in goal_review log unread).
+ */
+function lastParseableJsonObject(text) {
+  const source = String(text || '')
+  const end = source.lastIndexOf('}')
+  if (end < 0) return null
+  for (let i = source.lastIndexOf('{', end); i >= 0; i = source.lastIndexOf('{', i - 1)) {
+    const parsed = parseJsonObject(source.slice(i, end + 1))
+    if (parsed) return parsed
+  }
+  return null
+}
+
 export function parseVerdict(text) {
   const trimmed = String(text || '').trim()
   const body = delimitedVerdictBody(trimmed)
@@ -50,7 +68,9 @@ export function parseVerdict(text) {
     const parsed = parseJsonObject(candidate)
     if (parsed) return parsed
   }
-  return null
+  // Prefer the rightmost parseable object after a first-brace slice fails
+  // (route={…} preamble + trailing verdict JSON).
+  return lastParseableJsonObject(trimmed)
 }
 
 /** True when Goal Review markers wrap empty/invalid JSON or prose pass lacks harness JSON. */
@@ -237,7 +257,18 @@ export function interpretClosed({
         durable: true,
       }
     } else if (runState.status === 'blocked') {
-      result = { blocked: true, summary: runState.lastResult, durable: true }
+      // Prefer durable result.json fields (defects / acceptanceCheckIds) when the
+      // orchestrator blocked after writing them — lastResult alone often loses ACs.
+      result = {
+        blocked: true,
+        summary: persisted?.summary || runState.lastResult,
+        defects: Array.isArray(persisted?.defects) ? persisted.defects : undefined,
+        acceptanceCheckIds: Array.isArray(persisted?.acceptanceCheckIds)
+          ? persisted.acceptanceCheckIds
+          : undefined,
+        goal: typeof persisted?.goal === 'boolean' ? persisted.goal : false,
+        durable: true,
+      }
     } else if (key !== 'goal-review' && runState.status === 'complete') {
       const selected = queue.filter((item) => featureIds.includes(item.id))
       if (selected.length === featureIds.length && selected.every((item) => item.integration === true)) {
@@ -261,27 +292,123 @@ export function stuckThresholdMs() {
 }
 
 /**
+ * Worktree `.harness/` files that prove agent progress without harness-control
+ * worker-log bytes (Cursor `agent` often leaves those logs empty).
+ * Includes WI verify/probe artifacts and Goal Review compose/HTTP side channels.
+ */
+export function isWorkerSideChannelArtifact(name = '') {
+  const n = String(name || '')
+  if (/^wi[-_]ac[-_]/i.test(n) && /\.(json|log|txt)$/i.test(n)) return true
+  if (/^goal-review/i.test(n) && /\.(json|log|txt)$/i.test(n)) return true
+  if (n === 'runtime-owned.jsonl') return true
+  if (/^gr[-_]/i.test(n) && /\.(json|log|txt|pid)$/i.test(n)) return true
+  return false
+}
+
+/**
+ * Side-channel activity for Cursor `agent` (and similar) hosts: harness-control
+ * worker logs often stay empty because agent stdout is captured inside
+ * `runHostAgentSession` and never reaches the orchestrator pipe, while shell
+ * tools (browser probes, verify-first JSON, Goal Review compose/runtime
+ * manifests) still advance files under the worktree / evidence dir without
+ * calling `onAgentOutput`.
+ *
+ * `worktree` may be supplied explicitly when Run State omits it (common for
+ * claim-less Goal Review — supervisor `state.workers[].worktree` is authoritative).
+ */
+export async function workerSideChannelActivityAgeMs({
+  runState,
+  worktree = null,
+  now = Date.now(),
+} = {}) {
+  const ages = []
+  const evidence = runState?.evidence
+  if (evidence) {
+    try {
+      const info = await stat(evidence)
+      ages.push(Math.max(0, now - info.mtimeMs))
+    } catch { /* missing */ }
+  }
+  const wt = worktree || runState?.worktree || null
+  if (wt) {
+    try {
+      const harnessDir = join(wt, '.harness')
+      const names = await readdir(harnessDir)
+      let newest = 0
+      for (const name of names) {
+        if (!isWorkerSideChannelArtifact(name)) continue
+        try {
+          const info = await stat(join(harnessDir, name))
+          if (info.mtimeMs > newest) newest = info.mtimeMs
+        } catch { /* skip */ }
+      }
+      if (newest > 0) ages.push(Math.max(0, now - newest))
+    } catch { /* no .harness */ }
+  }
+  if (!ages.length) return null
+  return Math.min(...ages)
+}
+
+/** True when a PID exists (or is alive but unsignalable — treat as live). */
+export function workerPidAlive(pid) {
+  const n = Number(pid)
+  if (!Number.isFinite(n) || n <= 0) return false
+  try {
+    process.kill(n, 0)
+    return true
+  } catch (error) {
+    if (error?.code === 'EPERM') return true
+    return false
+  }
+}
+
+/**
  * Age since last *agent* progress. Orchestrator heartbeats alone must not keep a
  * silent coding/QA agent "healthy" — empty logs with null lastAgentOutputAt are
- * stuck once past the threshold from start.
+ * stuck once past the threshold from start, unless worktree/evidence side
+ * channels show recent probe/verify progress (common with Cursor agent).
+ *
+ * A live Run State `childPid` (host agent) also counts as progress: long
+ * browser/investigation polls (e.g. AC-025) can freeze `.harness/wi-ac-*`
+ * mtimes for > stuck-threshold while the agent + probe are still working
+ * (CauseFlow root oss-golden-path 2026-07-17: false stuck → exit 130 mid-QA).
  */
-export async function workerActivityAgeMs({ logFile, runState, now = Date.now() }) {
+export async function workerActivityAgeMs({
+  logFile,
+  runState,
+  worktree = null,
+  now = Date.now(),
+} = {}) {
   const started = Date.parse(String(
     runState?.startedAt || runState?.codingStartedAt || runState?.createdAt || '',
   ))
   const startedAge = Number.isFinite(started) ? Math.max(0, now - started) : null
+  const childAlive = workerPidAlive(runState?.childPid)
 
   if (runState?.lastAgentOutputAt) {
     const ts = Date.parse(runState.lastAgentOutputAt)
     if (Number.isFinite(ts)) return Math.max(0, now - ts)
   }
 
+  const sideAge = await workerSideChannelActivityAgeMs({ runState, worktree, now })
+  const threshold = stuckThresholdMs()
+  // Live host-agent child: trust fresh side-channels; otherwise grace through
+  // long browser investigation polls that freeze wi-ac JSON mtimes (and ignore
+  // stale leftover artifacts from prior attempts). Fail closed after 3× threshold.
+  if (childAlive) {
+    if (sideAge != null && sideAge < threshold) return sideAge
+    const grace = threshold * 3
+    if (startedAge == null || startedAge < grace) return 0
+  }
   if (logFile) {
     try {
       const info = await stat(logFile)
       if (info.size > 0) {
-        return Math.max(0, now - info.mtimeMs)
+        const logAge = Math.max(0, now - info.mtimeMs)
+        return sideAge == null ? logAge : Math.min(logAge, sideAge)
       }
+      // Empty log ≠ silent when verify/evidence artifacts are advancing.
+      if (sideAge != null) return sideAge
       // Empty log = no agent output. Prefer run start age (file may be freshly touched).
       if (startedAge != null) return startedAge
       const born = Number(info.birthtimeMs) || Number(info.mtimeMs) || now
@@ -289,14 +416,20 @@ export async function workerActivityAgeMs({ logFile, runState, now = Date.now() 
     } catch { /* missing log */ }
   }
 
+  if (sideAge != null) return sideAge
   if (startedAge != null) return startedAge
 
   // No agent signal and no start time — fail-closed as maximally stale.
   return Number.POSITIVE_INFINITY
 }
 
-export async function isWorkerStuck({ logFile, runState, thresholdMs = stuckThresholdMs() }) {
-  const age = await workerActivityAgeMs({ logFile, runState })
+export async function isWorkerStuck({
+  logFile,
+  runState,
+  worktree = null,
+  thresholdMs = stuckThresholdMs(),
+} = {}) {
+  const age = await workerActivityAgeMs({ logFile, runState, worktree })
   return age >= thresholdMs
 }
 

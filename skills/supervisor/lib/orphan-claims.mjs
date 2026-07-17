@@ -51,9 +51,14 @@ export function listGhostClaims({
 }
 
 /**
- * Count Claim Lease contexts whose Run State is live (owner/child PID alive).
+ * Count contexts whose Run State is live (owner/child PID alive).
  * Supervisor `state.workers` under-counts after recycle while an external
  * orchestrator still owns the lease — callers must use this for empty-fleet.
+ *
+ * Goal Review never writes `generator-claims.json`, so callers must also pass
+ * `runStatesByContext['goal-review']` (see harness-control loadLiveCountRunStates).
+ * Counting only claim keys left live GR invisible → false empty_fleet + swap
+ * escalation (CauseFlow root 2026-07-17).
  */
 export function countLiveClaims({
   claims = {},
@@ -62,10 +67,16 @@ export function countLiveClaims({
 } = {}) {
   const seen = new Set()
   let live = 0
+  const contexts = new Set()
   for (const [key, claim] of Object.entries(claims || {})) {
-    const context = claim?.context || key
-    if (seen.has(context)) continue
-    const runState = runStatesByContext[context] || runStatesByContext[key] || {}
+    contexts.add(claim?.context || key)
+  }
+  for (const context of Object.keys(runStatesByContext || {})) {
+    contexts.add(context)
+  }
+  for (const context of contexts) {
+    if (!context || seen.has(context)) continue
+    const runState = runStatesByContext[context] || {}
     const health = classifyRunStateHealth(runState, alive)
     if (health.health !== 'live') continue
     seen.add(context)

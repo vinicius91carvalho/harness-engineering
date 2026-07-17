@@ -609,6 +609,7 @@ async function runGoalReviewLocked() {
     const filtered = filterGoalReviewFlagDrift({
       defects: verdict.defects || [],
       acceptanceCheckIds: verdict.acceptanceCheckIds || [],
+      summary: verdict.summary || '',
       catalog: list,
       ledger,
     })
@@ -619,7 +620,9 @@ async function runGoalReviewLocked() {
     }
     // Flag-drift-only failure must not reopen integrated Work Items or auto-pass.
     // Block and ask for a Goal Review retry that ignores feature_list lag.
-    if (filtered.strippedDrift && filtered.defects.length === 0) {
+    // If filter kept AC ids because the summary still looks product-failing,
+    // fall through so supervisors can evidence-reopen instead of mute GR-retry.
+    if (filtered.strippedDrift && filtered.defects.length === 0 && !(filtered.acceptanceCheckIds || []).length) {
       const summary = `${verdict.summary || 'Goal Review'} [harness: stripped feature_list flag-drift defects; ledger shows full integration — retry Goal Review for compose black-box only]`
       commitPaths(options.workdir, [], 'chore(harness): ignore Goal Review flag-drift')
       clearInterval(heartbeatTimer)
@@ -644,8 +647,18 @@ async function runGoalReviewLocked() {
   const headAfter = git(['rev-parse', 'HEAD'], options.workdir).stdout.trim()
   if (dirtyAfter || headAfter !== headBefore) {
     clearInterval(heartbeatTimer)
+    const dirtDefect = `Goal Review must be read-only; checkout changed: ${dirtyAfter || `${headBefore} -> ${headAfter}`}`
+    // Keep agent AC defects visible so supervisors can reopen even when a
+    // non-ignored dirty path also tripped the gate.
+    const agentDefects = Array.isArray(verdict?.defects) ? verdict.defects.filter(Boolean) : []
     await writeState({ status: 'blocked', phase: 'blocked', nextAction: 'user-guidance', lastResult: 'Goal Review agent modified the checkout', childPid: null })
-    return { goal: false, blocked: true, defects: [`Goal Review must be read-only; checkout changed: ${dirtyAfter || `${headBefore} -> ${headAfter}`}`] }
+    return {
+      goal: false,
+      blocked: true,
+      defects: [dirtDefect, ...agentDefects],
+      acceptanceCheckIds: verdict?.acceptanceCheckIds || [],
+      summary: verdict?.summary,
+    }
   }
   const file = await journal(options.workdir, verdict?.goal === true ? 'Goal Review passed' : 'Goal Review defect', {
     Outcome: verdict?.summary || (reviewed.ok ? 'unstructured verdict' : 'Goal Review agent failed'),
@@ -717,8 +730,15 @@ async function runGoalReview() {
 
 setState(await readJson(stateFile, {}))
 // Clear prior-run agent output timestamps so the supervisor does not treat this
-// invocation as already past the MCP warmup budget.
-await writeState({ invocationId: runId, lastAgentOutputAt: null })
+// invocation as already past the MCP warmup budget. Persist worktree + startedAt
+// so stuck detection can see Goal Review /.harness side channels when the Cursor
+// agent leaves harness-control worker logs empty (claim-less GR).
+await writeState({
+  invocationId: runId,
+  lastAgentOutputAt: null,
+  worktree: options.workdir,
+  startedAt: new Date().toISOString(),
+})
 let result
 try {
   await ensureGovernorAdmission()

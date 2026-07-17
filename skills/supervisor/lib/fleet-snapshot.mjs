@@ -215,6 +215,9 @@ export function deriveSupervisorLive(state = {}, {
 export function isEmptyFleetRepaired(fleetSnapshot = {}) {
   if (fleetSnapshot.repaired === true) return true
   if (Number(fleetSnapshot.workers ?? 0) > 0) return true
+  // Claim-less Goal Review / external orchestrators count as live workers even
+  // when state.workers={} — do not re-wake Control Host after ops-remediate.
+  if (Number(fleetSnapshot.liveClaimWorkers ?? 0) > 0) return true
   return false
 }
 

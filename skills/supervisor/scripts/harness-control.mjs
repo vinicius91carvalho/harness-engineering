@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { appendFile, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { watch } from 'node:fs'
-import { createWriteStream, existsSync, unlinkSync } from 'node:fs'
+import { createWriteStream, existsSync, statSync, unlinkSync } from 'node:fs'
 import { spawn, spawnSync } from 'node:child_process'
 import { hostname } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
@@ -35,6 +35,7 @@ const CONTROL_MODULES = new Set([
   'supervisor-tick.mjs',
   'supervisor-admission.mjs',
   'wake-triage.mjs',
+  'wake-ack.mjs',
   'supervisor-lease.mjs',
   'resource-governor.mjs',
   'host-resources.mjs',
@@ -83,7 +84,12 @@ const {
   isWorkerStuckByHealth,
   stuckThresholdMs,
 } = await importLib('worker-outcome.mjs')
-const { planWorkerClosedActions, shouldEnqueueStuckWorkerRetry, planAutoRetryResponses } = await importLib('failure-policy.mjs')
+const {
+  planWorkerClosedActions,
+  shouldEnqueueStuckWorkerRetry,
+  planAutoRetryResponses,
+  stuckWorkerRetryGuidance,
+} = await importLib('failure-policy.mjs')
 const { enrichGuidanceWithEvidence } = await importLib('evidence-guidance.mjs')
 const {
   buildOrchestratorArgv,
@@ -105,7 +111,17 @@ const {
 const { isCheckoutCleanForGoalReview } = await importLib('checkout-dirt.mjs')
 const { selectClaim, resumeClaim, releaseClaim, mergeLockHolder, clearDeadLock, clearStaleGeneratorLocks } = await importLib('claim-lease.mjs')
 const { integrationBranchName, integrationBranchRef } = await importLib('integration-branch.mjs')
-const { ledgerPath, readLedger, applyLedgerToCatalog } = await importLib('execution-ledger.mjs')
+const { ledgerPath, readLedger, applyLedgerToCatalog, updateLedgerItem } = await importLib('execution-ledger.mjs')
+const {
+  planEvidenceReopen,
+  shouldRecoverStaleGoalReviewResult,
+  readLatestGoalReviewEvidence,
+  recoveryFingerprint,
+  enrichResultFromEvidence,
+  workItemsForAcceptanceChecks,
+  workItemsForAcceptanceChecksAcrossProjects,
+  UNMAPPED_DEFECTS_REASON,
+} = await importLib('goal-review-recovery.mjs')
 const { catalogFullyIntegrated } = await importLib('completion-contract.mjs')
 const { observeCapacity, pruneDeadReservations, releaseAdmission } = await importLib('resource-governor.mjs')
 const { evidenceGuidanceExcerpt } = await importLib('evidence-guidance.mjs')
@@ -209,11 +225,7 @@ async function fleetForWakeTriage(state, { ghostClaims = null, events = null } =
   let liveClaimWorkers = 0
   try {
     const claims = await ownClaims()
-    const runStatesByContext = {}
-    for (const [key, claim] of Object.entries(claims)) {
-      const context = claim.context || key
-      runStatesByContext[context] = await readJson(runStateFile(context), {})
-    }
+    const runStatesByContext = await loadLiveCountRunStates(claims)
     liveClaimWorkers = countLiveClaims({ claims, runStatesByContext, processAlive })
   } catch { /* best-effort */ }
   const extras = {
@@ -289,6 +301,20 @@ async function loadRunStatesByContext(contexts) {
     runStatesByContext[context] = await readJson(runStateFile(context), {})
   }))
   return runStatesByContext
+}
+
+/** Claim rows plus claim-less Goal Review Run State (GR has no generator-claims entry). */
+async function loadLiveCountRunStates(claims = {}) {
+  const contexts = [
+    ...Object.entries(claims || {}).map(([key, claim]) => claim.context || key),
+    'goal-review',
+  ]
+  return loadRunStatesByContext(contexts)
+}
+
+async function liveGoalReviewRunning() {
+  const runState = await readJson(runStateFile('goal-review'), {})
+  return classifyRunStateHealth(runState, processAlive).health === 'live'
 }
 
 async function listProjectGhostClaims() {
@@ -609,9 +635,20 @@ class Supervisor {
   cleanupWorkerResources(worker) {
     if (!worker) return { browsers: { killed: 0 }, runtime: null }
     const targets = planWorkerCleanupTargets(worker)
-    return {
-      browsers: cleanupBrowserOrphans(targets),
-      runtime: cleanupWorktreeRuntime(targets),
+    // Never let teardown throw into workerClosed → supervisor_failed.
+    // CauseFlow 2026-07-17: goal-review-runtime pids map made cleanup
+    // throw "object is not iterable" on every SIGTERM recycle.
+    try {
+      return {
+        browsers: cleanupBrowserOrphans(targets),
+        runtime: cleanupWorktreeRuntime(targets),
+      }
+    } catch (error) {
+      return {
+        browsers: { killed: 0 },
+        runtime: null,
+        error: error?.message || String(error),
+      }
     }
   }
 
@@ -921,6 +958,7 @@ class Supervisor {
 
   async completeGoal(result) {
     this.pendingGoalResult = null
+    delete this.state.lastGoalReviewFailure
     await this.emit('run_completed', { summary: result.summary }, true)
     // Mark stopping before save so supervisorPid is cleared in the complete snapshot.
     this.stopping = true
@@ -934,9 +972,17 @@ class Supervisor {
 
     for (const [key, worker] of [...this.workers]) {
       const runState = runStates?.[key] ?? await readJson(runStateFile(key), {})
+      // Claim-less Goal Review often omits worktree/startedAt on Run State while
+      // supervisor workers[] still has them — merge so side-channel probes count.
+      const activityState = {
+        ...runState,
+        worktree: runState.worktree || worker.worktree || null,
+        startedAt: runState.startedAt || worker.startedAt || null,
+      }
       const stuck = await isWorkerStuck({
         logFile: worker.logFile,
-        runState,
+        runState: activityState,
+        worktree: activityState.worktree,
         thresholdMs: this.config.stuckTimeoutMs,
       })
       const health = stuck
@@ -968,8 +1014,12 @@ class Supervisor {
       if (shouldEnqueueStuckWorkerRetry(health)) {
         this.state.retryQueue ||= {}
         this.state.retryQueue[key] = {
-          guidance: health.reason
-            || 'Supervisor detected a stuck worker with no recent agent output; resume after confirming the worktree is healthy',
+          guidance: stuckWorkerRetryGuidance({
+            context: key,
+            health,
+            existingGuidance: this.state.retryQueue[key]?.guidance || '',
+            lastGoalReviewFailure: this.state.lastGoalReviewFailure || null,
+          }),
           attempts: this.state.retryQueue[key]?.attempts || 0,
         }
       }
@@ -992,12 +1042,30 @@ class Supervisor {
    * External Claim Leases (generator orchestrators not in state.workers) still
    * need stuck recycle — otherwise a silent agent can hold the fleet forever
    * while orchestrator heartbeats look healthy.
+   * Claim-less Goal Review is included: after supervisor SIGKILL recycle the
+   * GR orchestrator stays live but drops out of state.workers.
    */
   async inspectExternalStuckClaims(runStates = null, healthByContext = {}) {
     const claims = await ownClaims()
     let changed = false
-    for (const [claimKey, claim] of Object.entries(claims)) {
-      const key = claim.context || claimKey
+    const targets = [
+      ...Object.entries(claims).map(([claimKey, claim]) => ({
+        key: claim.context || claimKey,
+        worktree: claim.worktree || null,
+        startedAt: claim.startedAt || null,
+        label: 'external live claim',
+      })),
+    ]
+    if (!this.workers.has('goal-review') && !targets.some((t) => t.key === 'goal-review')) {
+      targets.push({
+        key: 'goal-review',
+        worktree: repo,
+        startedAt: null,
+        label: 'external live goal-review',
+      })
+    }
+    for (const target of targets) {
+      const key = target.key
       if (this.workers.has(key)) continue
       const runState = runStates?.[key] ?? await readJson(runStateFile(key), {})
       if (!isLiveRunOwner(runState, processAlive)) continue
@@ -1011,20 +1079,30 @@ class Supervisor {
           .sort()
         if (names.length) resolvedLog = join(logDir, names.at(-1))
       } catch { /* use default */ }
+      const activityState = {
+        ...runState,
+        worktree: runState.worktree || target.worktree || null,
+        startedAt: runState.startedAt || target.startedAt || null,
+      }
       const stuck = await isWorkerStuck({
         logFile: resolvedLog,
-        runState,
+        runState: activityState,
+        worktree: activityState.worktree,
         thresholdMs: this.config.stuckTimeoutMs,
       })
       const health = stuck
         ? { verdict: 'stuck', reason: 'external agent silent (empty log / no lastAgentOutputAt)', recycle: true }
-        : { verdict: 'healthy', reason: 'external live claim', recycle: false }
+        : { verdict: 'healthy', reason: target.label, recycle: false }
       healthByContext[key] = {
         ...health,
         phase: runState.phase || null,
         childPid: runState.childPid || null,
         lastAgentOutputAt: runState.lastAgentOutputAt || null,
         external: true,
+      }
+      const prevHealth = this.state.workerHealth?.[key]
+      if (!prevHealth || prevHealth.verdict !== health.verdict || prevHealth.reason !== health.reason) {
+        await this.emit('worker_health', { context: key, ...health, external: true }, health.verdict === 'stuck')
       }
       if (!isWorkerStuckByHealth(health)) continue
       await this.emit('worker_stuck', {
@@ -1047,8 +1125,12 @@ class Supervisor {
       if (shouldEnqueueStuckWorkerRetry(health)) {
         this.state.retryQueue ||= {}
         this.state.retryQueue[key] = {
-          guidance: health.reason
-            || 'Supervisor recycled a silent external worker; resume after confirming the worktree is healthy',
+          guidance: stuckWorkerRetryGuidance({
+            context: key,
+            health,
+            existingGuidance: this.state.retryQueue[key]?.guidance || '',
+            lastGoalReviewFailure: this.state.lastGoalReviewFailure || null,
+          }),
           attempts: this.state.retryQueue[key]?.attempts || 0,
         }
       }
@@ -1168,7 +1250,7 @@ class Supervisor {
     const integrationHead = key === 'goal-review'
       ? git(['rev-parse', integrationBranchName(repo)], true).stdout.trim()
       : null
-    const result = interpretClosed({
+    let result = interpretClosed({
       key,
       exitCode: code,
       tail,
@@ -1178,6 +1260,19 @@ class Supervisor {
       queue,
       integrationHead,
     })
+    // Zero-token: dirt-only result.json often masks product ACs that live only
+    // in the Goal Review evidence log — enrich before failure-policy classify.
+    if (key === 'goal-review' && result) {
+      const resultPath = join(
+        commonGit,
+        'harness-runs',
+        projectPrefix ? `${projectId}--goal-review.result.json` : 'goal-review.result.json',
+      )
+      const evidence = readLatestGoalReviewEvidence(commonGit, projectId || 'root', { resultPath })
+      if (evidence.text) {
+        result = enrichResultFromEvidence(result, evidence.text)
+      }
+    }
     const plan = planWorkerClosedActions({
       key,
       exitCode: code,
@@ -1230,14 +1325,28 @@ class Supervisor {
         this.pendingGoalResult = plan.result
         break
       case 'goal_defects':
+        delete this.state.lastGoalReviewFailure
         await this.emit('goal_defects', { reopened: plan.reopened, defects: plan.defects }, true)
         break
+      case 'goal_review_failed': {
+        await this.applyGoalReviewFailedRecovery(plan)
+        break
+      }
       case 'goal_review_retry': {
         this.state.retryQueue ||= {}
+        const priorAttempts = Number(this.state.retryQueue['goal-review']?.attempts || 0)
         this.state.retryQueue['goal-review'] = {
           guidance: plan.guidance,
-          attempts: this.state.retryQueue['goal-review']?.attempts || 0,
+          attempts: priorAttempts + 1,
           strippedFlagDrift: plan.strippedFlagDrift === true,
+          dirtyBlocked: plan.dirtyBlocked === true,
+        }
+        // Endless dirt/malformed GR retries must wake after a few attempts.
+        if (this.state.retryQueue['goal-review'].attempts >= 3) {
+          await this.emit('goal_review_retry_exhausted', {
+            attempts: this.state.retryQueue['goal-review'].attempts,
+            guidance: plan.guidance,
+          }, true)
         }
         if (plan.clearGoalBlock) {
           for (const request of Object.values(this.state.pendingInputs || {})) {
@@ -1294,6 +1403,7 @@ class Supervisor {
       retryQueue: this.state.retryQueue,
       crashCounts: this.state.crashCounts,
       isCrashBound: (context) => isCrashBoundContext(context, this.state.crashCounts),
+      lastGoalReviewFailure: this.state.lastGoalReviewFailure || null,
     })
     if (!planned.length) return 0
     await mkdir(responseDir, { recursive: true })
@@ -1358,13 +1468,14 @@ class Supervisor {
 
   async maybeGoalReview(snapshot, active, available, guidance = '') {
     const { goalState, head, clean, ledger } = await goalReviewContext()
+    const hasGoalReviewWorker = this.workers.has('goal-review') || await liveGoalReviewRunning()
     const gate = goalReviewGate({
       catalog: snapshot.queue,
       ledger,
       counts: snapshot.counts,
       activeWorkers: active,
       slots: available,
-      hasGoalReviewWorker: this.workers.has('goal-review'),
+      hasGoalReviewWorker,
       integrationHead: head,
       reviewedHead: goalState.reviewedHead || '',
       cleanCheckout: clean,
@@ -1392,6 +1503,360 @@ class Supervisor {
     })
   }
 
+  /**
+   * Load sibling feature_list + ledger catalogs for monorepo AC→WI fallback.
+   */
+  async loadMonorepoRecoveryCatalogs() {
+    const registry = topology.registry
+    const projects = Array.isArray(registry?.projects) ? registry.projects : []
+    if (!projects.length) return { projectCatalogs: [], ledgersByProject: {} }
+    const projectCatalogs = []
+    const ledgersByProject = {}
+    for (const entry of projects) {
+      const id = String(entry?.id || '').trim() || 'root'
+      const rel = String(entry?.path ?? '').replace(/\/$/, '')
+      const projectRepo = rel ? join(topology.gitRoot, rel) : topology.gitRoot
+      let items = []
+      try {
+        items = readFeatureListFromIntegration(projectRepo) ?? []
+      } catch {
+        items = []
+      }
+      projectCatalogs.push({ projectId: id, path: rel, items })
+      try {
+        ledgersByProject[id] = await readLedger(ledgerPath(commonGit, id === 'root' ? '' : id))
+      } catch {
+        ledgersByProject[id] = { version: 1, items: {} }
+      }
+    }
+    return { projectCatalogs, ledgersByProject }
+  }
+
+  /**
+   * Seed retryQueue on a sibling supervisor state when GR evidence maps there.
+   */
+  async seedSiblingRetryQueue(siblingProjectId, contexts = [], guidance = '') {
+    if (!siblingProjectId || siblingProjectId === (projectId || 'root')) return false
+    const siblingRoot = siblingProjectId === 'root'
+      ? join(commonGit, 'harness-control')
+      : join(commonGit, 'harness-control', siblingProjectId)
+    const siblingStateFile = join(siblingRoot, 'state.json')
+    if (!existsSync(siblingStateFile)) return false
+    // Re-read under atomic write path to reduce lost-update races with sibling ticks.
+    const state = await readJson(siblingStateFile, {})
+    const next = { ...state, retryQueue: { ...(state.retryQueue || {}) } }
+    delete next.retryQueue['goal-review']
+    const keys = (contexts || []).filter((c) => c && !String(c).includes(':'))
+    for (const context of keys) {
+      const existing = next.retryQueue[context]
+      next.retryQueue[context] = {
+        guidance,
+        attempts: existing?.attempts || 0,
+      }
+    }
+    await atomicJson(siblingStateFile, next)
+    return keys.length > 0
+  }
+
+  /**
+   * Zero-token reopen from Goal Review evidence (dirty-gate mask or goal:false).
+   * Seeds context retryQueue, clears goal-review retry, emits goal_review_failed.
+   * Monorepo: reopen sibling ledgers when ACs live in another project catalog.
+   */
+  async applyGoalReviewFailedRecovery(plan = {}) {
+    const catalog = readFeatureListFromIntegration(repo) ?? []
+    const ledgerFile = ledgerPath(commonGit, projectId === 'root' ? '' : projectId)
+    const ledger = await readLedger(ledgerFile)
+    const { projectCatalogs, ledgersByProject } = await this.loadMonorepoRecoveryCatalogs()
+    const recoveryKind = plan.kind || (plan.unmappedDefects ? 'unmapped_defects' : 'evidence_reopen')
+
+    if (recoveryKind === 'unmapped_defects') {
+      const pendingUnmapped = Object.values(this.state.pendingInputs || {}).some(
+        (item) => item.status === 'pending' && item.scope === 'goal'
+          && (item.detail?.unmappedDefects || item.reason === UNMAPPED_DEFECTS_REASON),
+      )
+      if (pendingUnmapped) {
+        return { reopened: [], contexts: [], unmapped: true, skipped: 'already-escalated' }
+      }
+      this.state.lastGoalReviewFailure = {
+        at: new Date().toISOString(),
+        fingerprint: plan.fingerprint || recoveryFingerprint({
+          acceptanceCheckIds: plan.acceptanceCheckIds,
+          defects: plan.defects,
+          summary: plan.summary,
+          blocked: plan.dirtyBlocked,
+          goal: false,
+        }),
+        summary: plan.summary || '',
+        acceptanceCheckIds: plan.acceptanceCheckIds || [],
+        defects: (plan.defects || []).slice(0, 8),
+        dirtyBlocked: plan.dirtyBlocked === true,
+        reopened: [],
+        unmapped: true,
+        unmappedEscalated: true,
+      }
+      await this.input('goal', UNMAPPED_DEFECTS_REASON, {
+        defects: plan.defects || [],
+        acceptanceCheckIds: plan.acceptanceCheckIds || [],
+        unmappedDefects: true,
+        summary: plan.summary || '',
+        guidance: plan.guidance || '',
+      }, null)
+      await this.emit('goal_review_failed', {
+        acceptanceCheckIds: plan.acceptanceCheckIds || [],
+        defects: plan.defects || [],
+        summary: plan.summary || '',
+        dirtyBlocked: plan.dirtyBlocked === true,
+        reopened: [],
+        unmapped: true,
+        guidance: plan.guidance || '',
+      }, true)
+      await this.save()
+      return { reopened: [], contexts: [], unmapped: true }
+    }
+
+    const reopenPlan = planEvidenceReopen({
+      catalog,
+      projectCatalogs,
+      ledger,
+      ledgersByProject,
+      acceptanceCheckIds: plan.acceptanceCheckIds || [],
+      defects: plan.defects || [],
+      summary: plan.summary || '',
+      dirtyBlocked: plan.dirtyBlocked === true,
+      guidance: plan.guidance || '',
+      homeProjectId: projectId || 'root',
+    })
+    const reopened = []
+    for (const id of reopenPlan.reopenIds) {
+      const prev = ledger.items?.[id] || {}
+      await updateLedgerItem(ledgerFile, id, {
+        implementation: false,
+        qa: false,
+        integration: false,
+        blocked: false,
+        retries: Number(prev.retries || 0) + 1,
+      })
+      reopened.push(id)
+    }
+    const foreignReopened = []
+    const siblingContexts = new Map()
+    for (const foreign of reopenPlan.reopenForeign || []) {
+      const foreignLedgerFile = ledgerPath(commonGit, foreign.projectId === 'root' ? '' : foreign.projectId)
+      const foreignLedger = ledgersByProject[foreign.projectId] || await readLedger(foreignLedgerFile)
+      const prev = foreignLedger.items?.[foreign.id] || {}
+      await updateLedgerItem(foreignLedgerFile, foreign.id, {
+        implementation: false,
+        qa: false,
+        integration: false,
+        blocked: false,
+        retries: Number(prev.retries || 0) + 1,
+      })
+      foreignReopened.push(`${foreign.projectId}:${foreign.id}`)
+      if (foreign.context) {
+        const list = siblingContexts.get(foreign.projectId) || []
+        list.push(foreign.context)
+        siblingContexts.set(foreign.projectId, list)
+      }
+    }
+    // Seed sibling retry queues for every mapped foreign WI (including repair-in-flight).
+    for (const row of reopenPlan.foreignMappedRows || []) {
+      if (!row.context) continue
+      const list = siblingContexts.get(row.projectId) || []
+      if (!list.includes(row.context)) list.push(row.context)
+      siblingContexts.set(row.projectId, list)
+    }
+    for (const [siblingId, contexts] of siblingContexts) {
+      await this.seedSiblingRetryQueue(siblingId, contexts, reopenPlan.guidance || plan.guidance || '')
+    }
+    this.state.retryQueue ||= {}
+    if (reopenPlan.clearGoalReviewRetry) delete this.state.retryQueue['goal-review']
+    for (const [context, guidance] of Object.entries(reopenPlan.perContextGuidance || {})) {
+      // Skip monorepo-qualified keys (seeded on sibling state).
+      if (String(context).includes(':')) continue
+      const existing = this.state.retryQueue[context]
+      this.state.retryQueue[context] = {
+        guidance,
+        attempts: existing?.attempts || 0,
+      }
+    }
+    // Mapped ACs with repair already in flight (ledger not integrated) — seed
+    // retryQueue only; do NOT escalate as unmapped.
+    if (!reopened.length && !foreignReopened.length && (plan.acceptanceCheckIds || []).length) {
+      if (reopenPlan.repairInFlight || (reopenPlan.mappedLocal || []).length || (reopenPlan.mappedForeign || []).length) {
+        // contexts / retryQueue already seeded above
+      } else if (reopenPlan.unmapped) {
+        return this.applyGoalReviewFailedRecovery({
+          ...plan,
+          kind: 'unmapped_defects',
+          unmappedDefects: true,
+        })
+      } else {
+        // Defensive: catalog miss after race — verify with fresh helpers.
+        const mappedLocal = workItemsForAcceptanceChecks(catalog, plan.acceptanceCheckIds || [])
+        const mappedForeign = workItemsForAcceptanceChecksAcrossProjects(
+          projectCatalogs,
+          plan.acceptanceCheckIds || [],
+        ).filter((item) => (item.projectId || 'root') !== (projectId || 'root'))
+        if (!mappedLocal.length && !mappedForeign.length) {
+          return this.applyGoalReviewFailedRecovery({
+            ...plan,
+            kind: 'unmapped_defects',
+            unmappedDefects: true,
+          })
+        }
+      }
+    }
+    // If no catalog contexts mapped, keep a goal-review retry with evidence guidance.
+    if (!reopened.length && !foreignReopened.length && !(reopenPlan.contexts || []).length && plan.guidance) {
+      this.state.retryQueue['goal-review'] = {
+        guidance: plan.guidance,
+        attempts: this.state.retryQueue['goal-review']?.attempts || 0,
+      }
+    }
+    this.state.lastGoalReviewFailure = {
+      at: new Date().toISOString(),
+      fingerprint: plan.fingerprint || recoveryFingerprint({
+        acceptanceCheckIds: plan.acceptanceCheckIds,
+        defects: plan.defects,
+        summary: plan.summary,
+        blocked: plan.dirtyBlocked,
+        goal: false,
+      }),
+      summary: plan.summary || '',
+      acceptanceCheckIds: plan.acceptanceCheckIds || [],
+      defects: (plan.defects || []).slice(0, 8),
+      dirtyBlocked: plan.dirtyBlocked === true,
+      reopened: [...reopened, ...foreignReopened],
+      repairInFlight: Boolean(reopenPlan.repairInFlight)
+        || (!(reopened.length || foreignReopened.length)
+          && ((reopenPlan.mappedLocal || []).length > 0 || (reopenPlan.mappedForeign || []).length > 0)),
+      contexts: reopenPlan.contexts || [],
+    }
+    await this.emit('goal_review_failed', {
+      acceptanceCheckIds: plan.acceptanceCheckIds || [],
+      defects: plan.defects || [],
+      summary: plan.summary || '',
+      dirtyBlocked: plan.dirtyBlocked === true,
+      reopened: [...reopened, ...foreignReopened],
+      repairInFlight: this.state.lastGoalReviewFailure.repairInFlight,
+      contexts: reopenPlan.contexts || [],
+      guidance: reopenPlan.guidance || plan.guidance || '',
+    }, true)
+    if (reopened.length || foreignReopened.length) {
+      await this.emit('goal_defects', {
+        reopened: [...reopened, ...foreignReopened],
+        defects: plan.defects || [],
+      }, true)
+    }
+    await this.save()
+    return {
+      reopened: [...reopened, ...foreignReopened],
+      contexts: reopenPlan.contexts || [],
+      foreignReopened,
+    }
+  }
+
+  /**
+   * Ops/tick safety net: if goal-review.result.json still shows evidence ACs while
+   * those WIs remain integrated (pre-fix blocked_input path), reopen now.
+   * Falls back to newest harness-evidence goal_review log when result.json is dirt-only.
+   */
+  async recoverStaleGoalReviewFailure() {
+    // Never reopen / escalate mid-flight Goal Review.
+    if (this.workers.has('goal-review') || await liveGoalReviewRunning()) return null
+    const resultPath = join(commonGit, 'harness-runs', projectPrefix ? `${projectId}--goal-review.result.json` : 'goal-review.result.json')
+    let result = null
+    try {
+      result = await readJson(resultPath, null)
+    } catch {
+      result = null
+    }
+    // Durable write nests payload under some hosts — accept both shapes.
+    let payload = result?.payload && typeof result.payload === 'object' ? { ...result, ...result.payload } : result
+    if (!payload) return null
+    const evidence = readLatestGoalReviewEvidence(commonGit, projectId || 'root', { resultPath })
+    if (evidence.text) {
+      payload = enrichResultFromEvidence(payload, evidence.text)
+    }
+    let resultMtimeMs = null
+    let evidenceMtimeMs = null
+    try {
+      resultMtimeMs = statSync(resultPath).mtimeMs
+    } catch {
+      resultMtimeMs = null
+    }
+    if (evidence.file) {
+      try {
+        evidenceMtimeMs = statSync(evidence.file).mtimeMs
+      } catch {
+        evidenceMtimeMs = null
+      }
+    }
+    const catalog = readFeatureListFromIntegration(repo) ?? []
+    const ledgerFile = ledgerPath(commonGit, projectId === 'root' ? '' : projectId)
+    const ledger = await readLedger(ledgerFile)
+    const { projectCatalogs, ledgersByProject } = await this.loadMonorepoRecoveryCatalogs()
+    const hasPendingUnmappedInput = Object.values(this.state.pendingInputs || {}).some(
+      (item) => item.status === 'pending' && item.scope === 'goal'
+        && (item.detail?.unmappedDefects || item.reason === UNMAPPED_DEFECTS_REASON),
+    )
+    const stale = shouldRecoverStaleGoalReviewResult(payload, {
+      catalog,
+      projectCatalogs,
+      ledger,
+      ledgersByProject,
+      homeProjectId: projectId || 'root',
+      evidenceText: '',
+      lastFailure: this.state.lastGoalReviewFailure,
+      now: Date.now(),
+      debounceMs: 15_000,
+      unmappedDebounceMs: 15 * 60_000,
+      hasPendingUnmappedInput,
+      hasGoalReviewRetry: Boolean(this.state.retryQueue?.['goal-review']),
+      commonGit,
+      resultMtimeMs,
+      evidenceMtimeMs,
+    })
+    if (!stale) return null
+    // Dirt-only close whose worker-close never seeded retryQueue — queue GR retry.
+    if (stale.recovery.kind === 'dirt_retry') {
+      this.state.retryQueue ||= {}
+      this.state.retryQueue['goal-review'] = {
+        guidance: stale.recovery.guidance,
+        attempts: Number(this.state.retryQueue['goal-review']?.attempts || 0),
+        dirtyBlocked: true,
+      }
+      this.state.lastGoalReviewFailure = {
+        at: new Date().toISOString(),
+        fingerprint: stale.fingerprint,
+        summary: stale.recovery.summary || '',
+        acceptanceCheckIds: [],
+        defects: (stale.recovery.defects || []).slice(0, 8),
+        dirtyBlocked: true,
+        reopened: [],
+        dirtRetry: true,
+      }
+      await this.emit('goal_review_retry', {
+        reason: stale.recovery.guidance,
+        dirtyBlocked: true,
+        stale: true,
+      }, false)
+      await this.save()
+      return { dirtRetry: true, reopened: [], contexts: [] }
+    }
+    return this.applyGoalReviewFailedRecovery({
+      kind: stale.recovery.kind,
+      acceptanceCheckIds: stale.recovery.acceptanceCheckIds,
+      defects: stale.recovery.defects,
+      summary: stale.recovery.summary,
+      guidance: stale.recovery.guidance,
+      dirtyBlocked: stale.recovery.dirtyBlocked,
+      fingerprint: stale.fingerprint,
+      unmappedDefects: stale.recovery.kind === 'unmapped_defects',
+    })
+  }
+
   async summary(snapshot, cap, runStates = null) {
     const now = Date.now()
     if (now - this.lastSummary < this.config.summaryMinutes * 60_000) return
@@ -1406,11 +1871,11 @@ class Supervisor {
     let externalLive = 0
     try {
       const claims = await ownClaims()
-      const runStatesByContext = {}
-      for (const [key, claim] of Object.entries(claims)) {
-        const context = claim.context || key
-        runStatesByContext[context] = runStates?.[context]
-          ?? await readJson(runStateFile(context), {})
+      const runStatesByContext = await loadLiveCountRunStates(claims)
+      if (runStates) {
+        for (const [context, state] of Object.entries(runStates)) {
+          if (state) runStatesByContext[context] = state
+        }
       }
       externalLive = countLiveClaims({ claims, runStatesByContext, processAlive })
     } catch { /* best-effort */ }
@@ -1432,11 +1897,7 @@ class Supervisor {
     // Count live Claim Leases / external orchestrators — state.workers alone
     // under-counts after supervisor recycle and caused false escalations.
     const claims = await ownClaims()
-    const runStatesByContext = {}
-    for (const [key, claim] of Object.entries(claims)) {
-      const context = claim.context || key
-      runStatesByContext[context] = await readJson(runStateFile(context), {})
-    }
+    const runStatesByContext = await loadLiveCountRunStates(claims)
     const externalLive = countLiveClaims({ claims, runStatesByContext, processAlive })
     const projects = (fleet.projects || []).map((p) => {
       const isSelf = p.id === (projectId || 'root')
@@ -1474,6 +1935,12 @@ class Supervisor {
     })
 
     let applied = 0
+    // Zero-token: reopen WIs when a prior GR close left evidence ACs integrated.
+    try {
+      const recovered = await this.recoverStaleGoalReviewFailure()
+      if (recovered?.reopened?.length) applied += recovered.reopened.length
+    } catch { /* best-effort; tick continues */ }
+
     for (const action of plan.actions) {
       if (action.kind === 'clear_index_lock') {
         try {
@@ -1508,19 +1975,34 @@ class Supervisor {
             reason: action.reason,
           }, false)
         }
+      } else if (action.kind === 'ensure_supervisor_running') {
+        // Never re-enter start for the live supervisor that is executing this tick.
+        if (action.projectId === (projectId || 'root')) continue
+        const started = await ensureSupervisorRunning(action)
+        if (started.ok) {
+          applied += 1
+          await this.emit('host_remediation', {
+            action: 'ensure_supervisor_running',
+            projectId: action.projectId,
+            pid: started.pid || null,
+            reason: action.reason,
+            detail: started.reason || started.started,
+          }, false)
+        }
       }
     }
 
     const self = projects.find((p) => p.id === (projectId || 'root')) || projects[0]
     const remaining = remainingWorkFromProject(self || {})
+    const needsGr = Boolean(self?.needsGoalReviewRetry)
     const afterCap = await capacity(this.config, this.workers.size + externalLive)
     const liveWorkers = Math.max(this.workers.size, externalLive, Number(self?.workers || 0))
-    const empty = liveWorkers === 0 && remaining > 0
+    const empty = liveWorkers === 0 && (remaining > 0 || needsGr)
     if (applied > 0 || liveWorkers > 0) {
       this.state.remediationAttempts = 0
-    } else if (empty && afterCap.available < 1 && remaining > 0) {
+    } else if (empty && afterCap.available < 1 && (remaining > 0 || needsGr)) {
       this.state.remediationAttempts = Number(this.state.remediationAttempts || 0) + 1
-    } else if (afterCap.available >= 1 || remaining <= 0) {
+    } else if (afterCap.available >= 1 || (remaining <= 0 && !needsGr)) {
       this.state.remediationAttempts = 0
     }
 
@@ -1530,6 +2012,7 @@ class Supervisor {
       emptyFleetActionable: empty,
       available: afterCap.available,
       remaining,
+      needsGoalReviewRetry: needsGr,
     })) {
       await this.input('goal', escalationReason({
         blockerId: plan.blockerId || projectId || 'root',
@@ -1659,10 +2142,15 @@ class Supervisor {
     const runContexts = [
       ...Object.entries(claims).map(([key, claim]) => claim.context || key),
       ...this.workers.keys(),
+      'goal-review',
     ]
     const runStates = await loadRunStatesByContext(runContexts)
     await this.inspectStuckWorkers(runStates)
     let { external, recoverable } = await this.inspectClaims(runStates, claims)
+    // Goal Review is claim-less — still counts as an external live worker.
+    if (!this.workers.has('goal-review') && isLiveRunOwner(runStates['goal-review'], processAlive)) {
+      external += 1
+    }
     const snapshot = await this.snapshot()
     const emptyRepair = await this.repairEmptyFleetActionable({ external, snapshot })
     if (emptyRepair.recoverable) {
@@ -1692,11 +2180,69 @@ class Supervisor {
       // Rehydrated workers (or an external live orchestrator) already own
       // this context — drop the retry instead of force-resuming into a race that
       // exhausts attempts and raises "Retry could not resume the Claim Lease".
+      // Exception: non-generic Control Host / GR guidance must not be discarded
+      // when a same-tick claim_new admitted the worker without --guidance
+      // (CauseFlow root AC-025 2026-07-17: orphaned 53b09cad fix + VERIFY-FIRST
+      // false-green while retryQueue guidance was cleared as "success").
       if (this.workers.has(context)) {
-        const outcome = applyRetryResumeOutcome(this.state.retryQueue, context, retry, true)
-        this.state.retryQueue = outcome.updatedQueue
-        await this.save()
-        continue
+        const queuedGuidance = String(retry?.guidance || '')
+        const needsGuidanceRecycle = Boolean(queuedGuidance)
+          && !/^Auto-retry:/i.test(queuedGuidance)
+        if (needsGuidanceRecycle) {
+          const live = this.workers.get(context)
+          const runState = await readJson(runStateFile(context), {})
+          const activityState = {
+            ...runState,
+            worktree: runState.worktree || live?.worktree || null,
+            startedAt: runState.startedAt || live?.startedAt || null,
+          }
+          // Do not SIGTERM a live QA/coding agent mid-probe just to attach
+          // retry guidance (CauseFlow root 2026-07-17: pass:true AC-025 probe
+          // then retry_guidance_recycle → exit 130 before harness verdict).
+          const progressing = processAlive(Number(runState.childPid))
+            && !(await isWorkerStuck({
+              logFile: live?.logFile,
+              runState: activityState,
+              worktree: activityState.worktree,
+              thresholdMs: this.config.stuckTimeoutMs,
+            }))
+          if (progressing) {
+            await this.emit('retry_guidance_deferred', {
+              context,
+              reason: 'live-agent-progressing',
+              guidanceChars: queuedGuidance.length,
+              childPid: runState.childPid || null,
+            }, false)
+            const outcome = applyRetryResumeOutcome(this.state.retryQueue, context, retry, true)
+            this.state.retryQueue = outcome.updatedQueue
+            await this.save()
+            continue
+          }
+          await this.emit('retry_guidance_recycle', {
+            context,
+            reason: 'live-worker-missing-non-generic-retry-guidance',
+            guidanceChars: queuedGuidance.length,
+          }, false)
+          if (live) {
+            try {
+              this.applyWorkerStop(live, 'SIGTERM')
+            } catch { /* continue */ }
+            try {
+              await this.releaseWorkerAdmission(live.governorReservationId)
+            } catch { /* continue */ }
+            try {
+              await this.finalizeWorkerRecord(context, live)
+            } catch {
+              this.workers.delete(context)
+            }
+          }
+          // Fall through to orphan/ghost handling + resumeClaim with guidance.
+        } else {
+          const outcome = applyRetryResumeOutcome(this.state.retryQueue, context, retry, true)
+          this.state.retryQueue = outcome.updatedQueue
+          await this.save()
+          continue
+        }
       }
       if (context === 'goal-review') {
         if (slots < 1) {
@@ -1754,6 +2300,8 @@ class Supervisor {
       }
     }
     const grCtx = await goalReviewContext()
+    const hasGoalReviewWorker = this.workers.has('goal-review')
+      || isLiveRunOwner(runStates['goal-review'], processAlive)
     const plan = planTickAdmission({
       slots,
       retryQueue: this.state.retryQueue,
@@ -1761,7 +2309,7 @@ class Supervisor {
       pendingGoalResult: this.pendingGoalResult,
       snapshot,
       activeWorkers: active,
-      hasGoalReviewWorker: this.workers.has('goal-review'),
+      hasGoalReviewWorker,
       ledger: grCtx.ledger,
       integrationHead: grCtx.head,
       reviewedHead: grCtx.goalState.reviewedHead || '',
@@ -1786,7 +2334,22 @@ class Supervisor {
           for (; slots > 0; slots--) {
             const claim = await this.claim()
             if (!claim) break
-            if (!(await this.spawnWorker(claim))) break
+            // Attach any pending retryQueue guidance (Control Host / GR repair).
+            // Otherwise claim_new can admit VERIFY-FIRST with empty --guidance
+            // while retryQueue still holds the evidence-backed repair text.
+            const queued = this.state.retryQueue?.[claim.context]
+            const claimGuidance = String(queued?.guidance || '')
+            if (!(await this.spawnWorker(claim, claimGuidance))) break
+            if (queued) {
+              const outcome = applyRetryResumeOutcome(
+                this.state.retryQueue,
+                claim.context,
+                queued,
+                true,
+              )
+              this.state.retryQueue = outcome.updatedQueue
+              await this.save()
+            }
           }
           break
         default:
@@ -1898,6 +2461,76 @@ class Supervisor {
   }
 }
 
+/**
+ * Spawn `harness-control run` so it survives the caller exiting.
+ * When INVOCATION_ID is set (systemd oneshot/service), prefer a transient
+ * --user unit with KillMode=process. Plain detached+unref stays in the caller
+ * cgroup and dies under default KillMode=control-group.
+ */
+async function spawnDetachedSupervisor({ argv, cwd, logFd, env, unitName }) {
+  const underSystemd = Boolean(process.env.INVOCATION_ID)
+  const wantSystemd = process.env.HARNESS_START_SYSTEMD !== '0' && underSystemd
+  if (wantSystemd) {
+    // systemd-run does not inherit the caller env; pass harness + PATH explicitly
+    // or swap/memory overrides (HARNESS_MAX_SWAP_USED_RATIO) are lost and admission
+    // spuriously escalates under pressure.
+    const setenv = []
+    for (const [key, value] of Object.entries(env || {})) {
+      if (value == null) continue
+      if (
+        key === 'PATH'
+        || key === 'HOME'
+        || key === 'USER'
+        || key === 'LANG'
+        || key === 'DISPLAY'
+        || key === 'DBUS_SESSION_BUS_ADDRESS'
+        || key === 'XDG_RUNTIME_DIR'
+        || key.startsWith('HARNESS_')
+        || key.startsWith('CAUSEFLOW_')
+      ) {
+        setenv.push(`--setenv=${key}=${String(value)}`)
+      }
+    }
+    const run = spawnSync('systemd-run', [
+      '--user',
+      '--no-block',
+      `--unit=${unitName}`,
+      `--working-directory=${cwd}`,
+      '-p', 'KillMode=process',
+      '-p', 'Restart=no',
+      '-p', `StandardOutput=append:${supervisorLog}`,
+      '-p', `StandardError=append:${supervisorLog}`,
+      ...setenv,
+      process.execPath,
+      ...argv,
+    ], { encoding: 'utf8', env })
+    if (run.status === 0) {
+      // Resolve MainPID from the transient unit (may lag a few ms).
+      for (let i = 0; i < 20; i++) {
+        const show = spawnSync('systemctl', ['--user', 'show', `${unitName}.service`, '-p', 'MainPID', '--value'], {
+          encoding: 'utf8',
+        })
+        const pid = Number(String(show.stdout || '').trim())
+        if (pid > 0 && processAlive(pid)) return { pid }
+        spawnSync('sleep', ['0.05'])
+      }
+    }
+    // Fall through to detached spawn if unit is busy / systemd-run unavailable.
+  }
+  const child = spawn(process.execPath, argv, {
+    cwd,
+    detached: true,
+    stdio: ['ignore', logFd, logFd],
+    env,
+  })
+  await new Promise((done, reject) => {
+    child.once('spawn', done)
+    child.once('error', reject)
+  })
+  child.unref()
+  return { pid: child.pid }
+}
+
 async function start() {
   await mkdir(root, { recursive: true })
   const current = await readJson(stateFile, {})
@@ -1938,13 +2571,18 @@ async function start() {
       startedAt: current.startedAt || new Date().toISOString(),
     })
     const log = await open(supervisorLog, 'a')
-    const child = spawn(process.execPath, [scriptFile, 'run', ...rawArgs], {
-      cwd: repo, detached: true, stdio: ['ignore', log.fd, log.fd],
-      env: { ...process.env, HARNESS_SUPERVISOR_TOKEN: token },
-    })
-    try { await new Promise((done, reject) => { child.once('spawn', done); child.once('error', reject) }) }
-    finally { await log.close() }
-    child.unref()
+    let child
+    try {
+      child = await spawnDetachedSupervisor({
+        argv: [scriptFile, 'run', ...rawArgs],
+        cwd: repo,
+        logFd: log.fd,
+        env: { ...process.env, HARNESS_SUPERVISOR_TOKEN: token },
+        unitName: `harness-supervisor-${String(projectId || 'root').replace(/[^a-zA-Z0-9_-]/g, '-')}`,
+      })
+    } finally {
+      await log.close()
+    }
     await updateSupervisorLock(token, acquired?.fenceGeneration || 1, 'starting', child.pid)
     const latest = await readJson(stateFile, {})
     await atomicJson(stateFile, { ...latest, repo, supervisorPid: child.pid, supervisorHost: hostname() })
@@ -2055,6 +2693,67 @@ async function fleetAuth() {
   return authorizeFleetRecovery(root, { state, token, force, leaseSeconds })
 }
 
+/**
+ * Tear down state.workers trees/claims before killing the supervisor so SIGKILL
+ * recycle does not leave external live-claim ghosts (orphan orchestrators).
+ * Also tears down live Claim Leases not listed in state.workers (post-recycle gap).
+ */
+async function teardownSupervisorWorkers(state, { signal = 'SIGTERM' } = {}) {
+  const workers = { ...(state.workers || {}) }
+  const torn = []
+  // Include live external claims absent from state.workers.
+  try {
+    const claims = await ownClaims()
+    for (const [context, claim] of Object.entries(claims || {})) {
+      if (workers[context]) continue
+      const runState = await readJson(runStateFile(context), {})
+      if (!isLiveRunOwner(runState, processAlive) && !processAlive(claim?.ownerPid || claim?.pid)) continue
+      workers[context] = {
+        pid: claim?.ownerPid || claim?.pid || runState.childPid || null,
+        port: runState.port || claim?.port,
+        worktree: runState.worktree || claim?.worktree,
+        featureIds: claim?.featureIds || runState.featureIds,
+      }
+    }
+  } catch { /* best-effort */ }
+
+  for (const [context, saved] of Object.entries(workers)) {
+    const runState = await readJson(runStateFile(context), {})
+    const worker = {
+      ...saved,
+      type: 'background',
+      childPid: runState.childPid || saved.pid || null,
+      ownedResources: {
+        port: saved.port,
+        worktree: saved.worktree,
+        processGroup: processGroupForWorker(saved, runState),
+      },
+    }
+    const stopPlan = planWorkerStop(worker, { signal })
+    if (stopPlan.kind === 'terminate_tree') {
+      terminateProcessTree(stopPlan.pid, stopPlan.signal)
+    }
+    const targets = planWorkerCleanupTargets(worker)
+    try {
+      cleanupBrowserOrphans(targets)
+      cleanupWorktreeRuntime({
+        ...targets,
+        commonGit: targets.commonGit || commonGit,
+        projectId: targets.projectId || projectId || 'root',
+        context: targets.context || context,
+      })
+    } catch { /* best-effort */ }
+    if (context !== 'goal-review') {
+      try { releaseClaim(repo, context) } catch { /* best-effort */ }
+    }
+    torn.push(context)
+  }
+  if (Object.keys(state.workers || {}).length) {
+    await atomicJson(stateFile, { ...state, workers: {} })
+  }
+  return torn
+}
+
 async function killSupervisor() {
   const auth = await fleetAuth()
   const state = await readJson(stateFile, {})
@@ -2068,12 +2767,33 @@ async function killSupervisor() {
   if (state.supervisorHost && state.supervisorHost !== hostname()) {
     fatal(`supervisor runs on ${state.supervisorHost}, not this host`)
   }
+  // SIGKILL is the "recycle supervisor only" path (CauseFlow 2026-07-17): skip
+  // stop() so live orchestrators / Goal Review keep running; do NOT tear workers
+  // down first. SIGTERM (or explicit --teardown-workers true) still reclaims.
+  const teardownWorkers = options['teardown-workers'] === 'true'
+    || (signal === 'SIGTERM' && options['teardown-workers'] !== 'false')
+  let tornDown = []
+  if (teardownWorkers) {
+    tornDown = await teardownSupervisorWorkers(state, {
+      signal: signal === 'SIGKILL' ? 'SIGKILL' : 'SIGTERM',
+    })
+  } else if (Object.keys(state.workers || {}).length) {
+    // Drop supervisor-owned rows without killing PIDs — next start reattaches
+    // via Claim Leases / Run State (external live claim).
+    await atomicJson(stateFile, { ...state, workers: {}, workerHealth: {} })
+  }
   if (!processAlive(pid)) {
-    process.stdout.write(`${JSON.stringify({ killed: false, reason: 'not-running', pid })}\n`)
+    process.stdout.write(`${JSON.stringify({
+      killed: false, reason: 'not-running', pid, workersTornDown: tornDown,
+      preservedWorkers: !teardownWorkers,
+    })}\n`)
     return
   }
   process.kill(pid, signal)
-  process.stdout.write(`${JSON.stringify({ killed: true, pid, signal })}\n`)
+  process.stdout.write(`${JSON.stringify({
+    killed: true, pid, signal, workersTornDown: tornDown,
+    preservedWorkers: !teardownWorkers,
+  })}\n`)
 }
 
 async function releaseSupervisorLockCmd() {
@@ -2206,6 +2926,16 @@ async function loadProjectFleetInputs(target) {
       {},
     )
   }
+  // Goal Review never writes generator-claims — still count its Run State.
+  const goalStateName = topo.projectPrefix
+    ? `${topo.projectId}--goal-review.json`
+    : 'goal-review.json'
+  if (!runStatesByContext['goal-review']) {
+    runStatesByContext['goal-review'] = await readJson(
+      join(topo.commonGit, 'harness-runs', goalStateName),
+      {},
+    )
+  }
   const ghostClaims = listGhostClaims({ claims, runStatesByContext, processAlive })
   const liveClaimWorkers = countLiveClaims({ claims, runStatesByContext, processAlive })
   const cap = await observeCapacity(topo.commonGit, governorOptions(capacityConfig()))
@@ -2325,16 +3055,81 @@ async function stopIdleCompleteSupervisor(action = {}) {
   return { ok: true, pid: pid || null, killed }
 }
 
+/**
+ * Restart a dead process supervisor with remaining work via detached `start`.
+ * Prefer this over Control Host `setsid` shells — Cursor session teardown often
+ * SIGTERM's non-unref'd supervisor trees and re-fires supervisor_stopped wakes.
+ */
+async function ensureSupervisorRunning(action = {}) {
+  const targetId = action.projectId || projectId || 'root'
+  const targetRepo = action.root || (targetId === (projectId || 'root') ? repo : null)
+  if (!targetRepo) return { ok: false, reason: 'missing-root', projectId: targetId }
+  const topo = resolveProjectTopology(targetRepo)
+  const targetStateFile = join(topo.controlRoot, 'state.json')
+  const targetControlFile = join(topo.controlRoot, 'control.json')
+  const current = await readJson(targetStateFile, {})
+  const statusName = String(current.status || '')
+  if (statusName === 'paused' || statusName === 'stopped' || statusName === 'complete') {
+    return { ok: false, reason: `status-${statusName}`, projectId: targetId }
+  }
+  if (current.supervisorHost === hostname() && processAlive(current.supervisorPid)) {
+    return { ok: true, reason: 'already-live', pid: current.supervisorPid, projectId: targetId }
+  }
+  // interrupted / not_started → resume control to running so start is allowed
+  if (statusName === 'interrupted' || statusName === 'not_started' || !statusName) {
+    await atomicJson(targetControlFile, { status: 'running', at: new Date().toISOString() })
+    await atomicJson(targetStateFile, {
+      ...current,
+      status: 'running',
+      supervisorPid: null,
+      lastSignal: null,
+    })
+  }
+  const host = options.host || process.env.HARNESS_HOST || 'agent'
+  const startArgs = [
+    scriptFile, 'start',
+    '--repo', targetRepo,
+    '--host', host,
+    '--max-workers', String(options['max-workers'] || process.env.HARNESS_MAX_WORKERS || '3'),
+    '--quota-workers', String(options['quota-workers'] || process.env.HARNESS_QUOTA_WORKERS || '3'),
+    '--cpu-per-worker', String(options['cpu-per-worker'] || '1'),
+    '--memory-per-worker-mb', String(options['memory-per-worker-mb'] || '640'),
+    '--reserve-memory-mb', String(options['reserve-memory-mb'] || '1024'),
+    '--max-load-ratio', String(options['max-load-ratio'] || process.env.HARNESS_MAX_LOAD_RATIO || '0.9'),
+    '--summary-minutes', String(options['summary-minutes'] || '20'),
+  ]
+  const result = spawnSync(process.execPath, startArgs, {
+    encoding: 'utf8',
+    env: process.env,
+    cwd: targetRepo,
+  })
+  let parsed = null
+  try { parsed = JSON.parse((result.stdout || '').trim().split('\n').at(-1) || '{}') } catch { /* ignore */ }
+  if (result.status !== 0) {
+    return {
+      ok: false,
+      reason: 'start-failed',
+      projectId: targetId,
+      status: result.status,
+      stderr: (result.stderr || '').slice(0, 500),
+      stdout: (result.stdout || '').slice(0, 500),
+    }
+  }
+  return {
+    ok: Boolean(parsed?.started || parsed?.pid || parsed?.reason === 'already-live'),
+    projectId: targetId,
+    pid: parsed?.pid || null,
+    started: parsed?.started ?? null,
+    detail: parsed,
+  }
+}
+
 /** One-shot host remediation for systemd cron (does not steal the supervisor lease). */
 async function remediateCmd() {
   const state = await readJson(stateFile, { status: 'not_started' })
   const snapshot = await buildFleetSnapshotForRepo(state)
   const claims = await ownClaims()
-  const runStatesByContext = {}
-  for (const [key, claim] of Object.entries(claims)) {
-    const context = claim.context || key
-    runStatesByContext[context] = await readJson(runStateFile(context), {})
-  }
+  const runStatesByContext = await loadLiveCountRunStates(claims)
   const externalLive = countLiveClaims({ claims, runStatesByContext, processAlive })
   const projects = (snapshot.projects || []).map((p) => {
     const isSelf = p.id === (projectId || 'root')
@@ -2385,23 +3180,45 @@ async function remediateCmd() {
     } else if (action.kind === 'stop_idle_complete_supervisor') {
       const stopped = await stopIdleCompleteSupervisor(action)
       applied.push({ ...action, ...stopped })
+    } else if (action.kind === 'ensure_supervisor_running') {
+      const started = await ensureSupervisorRunning(action)
+      applied.push({ ...action, ...started })
+      if (started.ok) {
+        try {
+          spawnSync('notify-send', [
+            '--urgency=normal', '-a', 'Harness', 'Harness remediation',
+            `Restarted ${action.projectId} supervisor (${started.reason || 'start'})`,
+          ], {
+            env: {
+              ...process.env,
+              DISPLAY: process.env.DISPLAY || ':0',
+              DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS
+                || `unix:path=/run/user/${process.getuid?.() || 1000}/bus`,
+            },
+            stdio: 'ignore',
+          })
+        } catch { /* optional */ }
+      }
     }
   }
   const after = await capacity(cfg, externalLive)
   const self = projects.find((p) => p.id === (projectId || 'root')) || projects[0]
   const remaining = remainingWorkFromProject(self || {})
+  const needsGr = Boolean(self?.needsGoalReviewRetry)
   const liveWorkers = Math.max(Number(self?.workers || 0), externalLive)
-  const empty = liveWorkers === 0 && remaining > 0
+  const empty = liveWorkers === 0 && (remaining > 0 || needsGr)
   let attempts = Number(state.remediationAttempts || 0)
-  if (applied.length > 0 || liveWorkers > 0) attempts = 0
-  else if (empty && after.available < 1 && remaining > 0) attempts += 1
-  else if (after.available >= 1 || remaining <= 0) attempts = 0
+  const ensured = applied.some((a) => a.kind === 'ensure_supervisor_running' && a.ok)
+  if (applied.length > 0 || liveWorkers > 0 || ensured) attempts = 0
+  else if (empty && after.available < 1 && (remaining > 0 || needsGr)) attempts += 1
+  else if (after.available >= 1 || (remaining <= 0 && !needsGr)) attempts = 0
   const escalate = shouldEscalateRemediation({
     attempts,
     threshold: REMEDIATION_ESCALATE_AFTER,
     emptyFleetActionable: empty,
     available: after.available,
     remaining,
+    needsGoalReviewRetry: needsGr,
   })
   await atomicJson(stateFile, {
     ...state,
@@ -2425,6 +3242,7 @@ async function remediateCmd() {
         after.pressureReason || null,
         after.available < 1 ? 'no-capacity' : null,
         empty ? 'empty-fleet' : null,
+        !self?.supervisorLive && remaining > 0 ? 'supervisor-dead' : null,
       ].filter(Boolean),
     })
     const pendingPath = join(root, 'ops-escalate.json')

@@ -2,6 +2,10 @@
 
 import { isInfraNoise } from './worker-outcome.mjs'
 import { enrichGuidanceWithEvidence } from './evidence-guidance.mjs'
+import {
+  planGoalReviewCloseRecovery,
+  UNMAPPED_DEFECTS_REASON,
+} from './goal-review-recovery.mjs'
 
 export const FAILURE_CLASSES = [
   'product',
@@ -328,7 +332,49 @@ export function isAutoRetryableInput(request) {
   })
 }
 
-export function autoRetryGuidance(request) {
+/**
+ * Prefer Goal Review product-repair guidance over generic Auto-retry text when
+ * a stuck/SIGTERM recycle races an exit-130 input (CauseFlow root AC-025
+ * 2026-07-17: repairInFlight + host.docker.internal defects were replaced by
+ * "Auto-retry: worker process exited…" and the coding prompt lost the Repair Plan).
+ * Returned text must NOT start with `Auto-retry:` so retry_guidance_recycle can
+ * re-attach it if a same-tick claim_new admitted without --guidance.
+ */
+export function repairGuidanceFromGoalReviewFailure(failure = null, context = null) {
+  if (!failure || failure.repairInFlight !== true) return ''
+  const ctx = context ? String(context) : ''
+  const contexts = Array.isArray(failure.contexts) ? failure.contexts.map(String) : []
+  if (ctx && contexts.length && !contexts.includes(ctx)) return ''
+  const defects = Array.isArray(failure.defects)
+    ? failure.defects.map((d) => String(d || '').trim()).filter(Boolean)
+    : []
+  const acs = Array.isArray(failure.acceptanceCheckIds)
+    ? failure.acceptanceCheckIds.map(String).filter(Boolean)
+    : []
+  if (!defects.length && !String(failure.summary || '').trim()) return ''
+  const parts = [
+    'Goal Review product repair (NOT verify-first / NOT generic resume).',
+    acs.length ? `Acceptance Checks: ${acs.join(', ')}.` : '',
+    String(failure.summary || '').trim(),
+    defects.length ? `Defects:\n- ${defects.join('\n- ')}` : '',
+    'FORBIDDEN: zero-diff VERIFY-FIRST pass, manual baseUrl override in probes only, or shipping 127.0.0.1:8081 for compose-reachable Ornith (local).',
+    'Gate on the shipped Ornith (local) preset (host.docker.internal:8081/v1) via ac-025-browser-probe / AC docs, then commit on the gen branch before implementation=true.',
+  ].filter(Boolean)
+  return parts.join(' ')
+}
+
+export function preferNonGenericRetryGuidance(...candidates) {
+  let fallback = ''
+  for (const raw of candidates) {
+    const g = String(raw || '').trim()
+    if (!g) continue
+    if (!fallback) fallback = g
+    if (!/^Auto-retry:/i.test(g)) return g
+  }
+  return fallback
+}
+
+export function autoRetryGuidance(request, { lastGoalReviewFailure = null } = {}) {
   const reason = String(request?.reason || '')
   const detail = request?.detail || {}
   const routed = routePendingInput(request)
@@ -338,6 +384,12 @@ export function autoRetryGuidance(request) {
   if (routed.action === 'pause' || routed.action === 'recycle') {
     return enrichGuidanceWithEvidence(routed.guidance, detail)
   }
+  const repair = repairGuidanceFromGoalReviewFailure(
+    lastGoalReviewFailure,
+    request?.context || null,
+  )
+  if (repair) return enrichGuidanceWithEvidence(repair, detail)
+
   let base = 'Auto-retry: supervisor default retry without human input.'
   if (reason.startsWith('Retry could not resume the Claim Lease')) {
     base = 'Auto-retry: resume Claim Lease with force after bounded retry exhaustion.'
@@ -363,6 +415,7 @@ export function planAutoRetryResponses(pendingInputs, {
   retryQueue = {},
   crashCounts = {},
   isCrashBound = (context) => (crashCounts?.[context] || 0) >= 5,
+  lastGoalReviewFailure = null,
 } = {}) {
   const planned = []
   for (const [id, request] of Object.entries(pendingInputs || {})) {
@@ -382,13 +435,31 @@ export function planAutoRetryResponses(pendingInputs, {
       response: {
         eventId: Number(id),
         action: 'retry',
-        guidance: queuedGuidance || autoRetryGuidance(request),
+        guidance: preferNonGenericRetryGuidance(
+          queuedGuidance,
+          autoRetryGuidance(request, { lastGoalReviewFailure }),
+        ),
         at: new Date().toISOString(),
         auto: true,
       },
     })
   }
   return planned
+}
+
+/** Stuck-retry guidance: keep prior non-generic / GR repair text over health.reason. */
+export function stuckWorkerRetryGuidance({
+  context = null,
+  health = null,
+  existingGuidance = '',
+  lastGoalReviewFailure = null,
+} = {}) {
+  return preferNonGenericRetryGuidance(
+    existingGuidance,
+    repairGuidanceFromGoalReviewFailure(lastGoalReviewFailure, context),
+    health?.reason,
+    'Supervisor detected a stuck worker with no recent agent output; resume after confirming the worktree is healthy',
+  )
 }
 
 /** Stuck background workers always get a retry-queue entry (log/heartbeat based). */
@@ -456,6 +527,64 @@ export function planWorkerClosedActions({
     }
   }
 
+  // Goal Review blocked / goal:false — prefer evidence-backed reopen over a
+  // mute blocked_input OR a stale agent `reopened` list. CauseFlow root
+  // 2026-07-17: GR agent set reopened:[WI-AC-025] because defect prose said
+  // "AC-025 completes" while acceptanceCheckIds/evidence named AC-018; the
+  // early goal_defects short-circuit skipped applyGoalReviewFailedRecovery and
+  // admitted the wrong VERIFY-FIRST worker with empty guidance.
+  if (goal && (result?.blocked || result?.goal === false)) {
+    const recovery = planGoalReviewCloseRecovery(result)
+    if (recovery?.kind === 'evidence_reopen') {
+      return {
+        action: 'goal_review_failed',
+        acceptanceCheckIds: recovery.acceptanceCheckIds,
+        defects: recovery.defects,
+        summary: recovery.summary,
+        guidance: recovery.guidance,
+        dirtyBlocked: recovery.dirtyBlocked === true,
+        detail: result,
+      }
+    }
+    if (recovery?.kind === 'unmapped_defects') {
+      // Same durable path as evidence_reopen so lastGoalReviewFailure is set and
+      // wake-ack can see a post-condition (avoids strict invoke-noop loop).
+      return {
+        action: 'goal_review_failed',
+        kind: 'unmapped_defects',
+        unmappedDefects: true,
+        acceptanceCheckIds: recovery.acceptanceCheckIds,
+        defects: recovery.defects,
+        summary: recovery.summary || UNMAPPED_DEFECTS_REASON,
+        guidance: recovery.guidance,
+        dirtyBlocked: recovery.dirtyBlocked === true,
+        detail: result,
+      }
+    }
+    if (recovery?.kind === 'dirt_retry') {
+      return {
+        action: 'goal_review_retry',
+        guidance: recovery.guidance,
+        clearGoalBlock: true,
+        dirtyBlocked: true,
+      }
+    }
+    if (recovery?.kind === 'blocked_input') {
+      return {
+        action: 'blocked_input',
+        scope: 'goal',
+        context: null,
+        reason: recovery.guidance || recovery.summary || 'Goal Review blocked',
+        detail: {
+          ...(result || {}),
+          defects: recovery.defects,
+          guidance: recovery.guidance,
+        },
+      }
+    }
+  }
+
+  // Agent-supplied reopened list only when evidence recovery could not map ACs.
   if (result?.reopened?.length) {
     return {
       action: 'goal_defects',

@@ -17,9 +17,16 @@ function remainingOf(project = {}) {
   return Math.max(0, Number(progress.total || 0) - Number(progress.integrated || 0))
 }
 
+/** Ledger remaining WIs, or Goal Review still owed after N/N integrate. */
+function needsSupervisorWork(project = {}) {
+  return remainingOf(project) > 0 || Boolean(project.needsGoalReviewRetry)
+}
+
 function isCompleteProject(project = {}) {
   const status = String(project.status || '')
   if (status === 'complete' || status === 'stopped') return true
+  // N/N integrated but Goal Review not done is not "complete" for ops.
+  if (project.needsGoalReviewRetry) return false
   const total = Number(project.progress?.total || project.counts?.total || 0)
   return total > 0 && remainingOf(project) === 0
 }
@@ -47,8 +54,8 @@ export function planHostRemediation({
 
   const blocker = blockerProjectId
     ? rows.find((p) => p.id === blockerProjectId) || null
-    : rows.find((p) => Number(p.workers || 0) === 0 && remainingOf(p) > 0)
-      || rows.find((p) => remainingOf(p) > 0)
+    : rows.find((p) => Number(p.workers || 0) === 0 && needsSupervisorWork(p))
+      || rows.find((p) => needsSupervisorWork(p))
       || null
 
   if (indexLockPath && existsSync(indexLockPath) && !indexLockHeld) {
@@ -82,7 +89,7 @@ export function planHostRemediation({
   }
 
   const blockerNeedsSlots = Boolean(
-    blocker && remainingOf(blocker) > 0 && Number(blocker.workers || 0) === 0,
+    blocker && needsSupervisorWork(blocker) && Number(blocker.workers || 0) === 0,
   )
 
   for (const row of reservationList) {
@@ -128,6 +135,31 @@ export function planHostRemediation({
     })
   }
 
+  // Dead process supervisor with remaining work — restart without LLM Control Host.
+  // Cursor chat / agent shells that `setsid` a supervisor often SIGTERM it on
+  // session teardown; systemd ops-remediate must own durable restart via
+  // harness-control start (detached + unref).
+  // Also restart when the ledger is N/N but Goal Review is still owed
+  // (`needsGoalReviewRetry`) — remaining WI count alone is 0 then, which used
+  // to skip ensure and leave empty_fleet_actionable + interrupted forever
+  // (CauseFlow root OSS, 2026-07-17, after WI-AC-026 integrate / GR SIGTERM).
+  for (const owner of rows) {
+    if (!owner?.id) continue
+    const statusName = String(owner.status || '')
+    if (statusName === 'paused' || statusName === 'stopped' || statusName === 'complete') continue
+    if (!needsSupervisorWork(owner)) continue
+    if (owner.supervisorLive) continue
+    const why = remainingOf(owner) > 0
+      ? `remaining=${remainingOf(owner)}`
+      : 'needsGoalReviewRetry=true'
+    actions.push({
+      kind: 'ensure_supervisor_running',
+      projectId: owner.id,
+      root: owner.root || null,
+      reason: `supervisorLive=false while ${why} status=${statusName || 'unknown'}`,
+    })
+  }
+
   if (actions.some((a) => a.kind === 'release_reservation')) {
     events.push({
       kind: 'host_remediation',
@@ -150,11 +182,24 @@ export function planHostRemediation({
       immediate: false,
     })
   }
+  if (actions.some((a) => a.kind === 'ensure_supervisor_running')) {
+    events.push({
+      kind: 'host_remediation',
+      detail: {
+        action: 'ensure_supervisor_running',
+        count: actions.filter((a) => a.kind === 'ensure_supervisor_running').length,
+        projects: actions
+          .filter((a) => a.kind === 'ensure_supervisor_running')
+          .map((a) => a.projectId),
+      },
+      immediate: false,
+    })
+  }
 
   const available = blocker?.capacity?.available
   const needsEscalation = Boolean(
     blocker
-    && remainingOf(blocker) > 0
+    && needsSupervisorWork(blocker)
     && Number(blocker.workers || 0) === 0
     && actions.length === 0
     && available === 0,
@@ -182,8 +227,9 @@ export function shouldEscalateRemediation({
   emptyFleetActionable = false,
   available = 0,
   remaining = 0,
+  needsGoalReviewRetry = false,
 } = {}) {
-  if (remaining <= 0) return false
+  if (remaining <= 0 && !needsGoalReviewRetry) return false
   if (!emptyFleetActionable && available > 0) return false
   return Number(attempts || 0) >= threshold
 }
