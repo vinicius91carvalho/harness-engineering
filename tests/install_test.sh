@@ -295,8 +295,10 @@ grep -q '^name: harness-supervisor$' "$HOME/.cursor/skills/harness-supervisor/SK
   || fail 'Cursor Agent CLI harness-supervisor frontmatter name must be harness-supervisor'
 [ ! -L "$HOME/.cursor/skills/harness-supervisor" ] \
   || fail 'Cursor Agent CLI harness-supervisor skill must be a real directory, not a symlink'
-test ! -e "$HOME/.cursor/skills/supervisor" \
-  || fail 'Cursor Agent CLI must not leave unprefixed supervisor skill'
+test -d "$HOME/.cursor/skills/supervisor" \
+  || fail 'Cursor Agent CLI should keep supervisor runtime alias for relative imports'
+test ! -e "$HOME/.cursor/skills/supervisor/SKILL.md" \
+  || fail 'Cursor Agent CLI must not leave unprefixed supervisor skill discovery'
 # Cursor Agent also discovers ~/.agents/skills — unprefixed SKILL.md must not
 # register /supervisor beside /harness-supervisor. Runtime dirs may remain.
 mkdir -p "$HOME/.agents/skills/supervisor" "$HOME/.agents/skills/harness-supervisor"
@@ -654,8 +656,10 @@ for host in claude codex opencode pi agent; do
         || fail 'Cursor project matrix missing harness-supervisor skill copy'
       [ ! -L "$MATRIX_PROJECT/.cursor/skills/harness-supervisor" ] \
         || fail 'Cursor project matrix harness-supervisor skill must not be a symlink'
-      test ! -e "$MATRIX_PROJECT/.cursor/skills/supervisor" \
-        || fail 'Cursor project matrix must not leave unprefixed supervisor skill'
+      test -d "$MATRIX_PROJECT/.cursor/skills/supervisor" \
+        || fail 'Cursor project matrix should keep supervisor runtime alias'
+      test ! -e "$MATRIX_PROJECT/.cursor/skills/supervisor/SKILL.md" \
+        || fail 'Cursor project matrix must not leave unprefixed supervisor skill discovery'
       test -f "$MATRIX_PROJECT/.cursor/plugins/local/crawl4ai/.cursor-plugin/plugin.json" \
         || fail 'Cursor project matrix missing crawl4ai plugin'
       test -f "$MATRIX_PROJECT/.cursor/skills/crawl4ai/SKILL.md" \
