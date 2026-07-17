@@ -11,6 +11,15 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### [3.2.1](https://github.com/vinicius91carvalho/harness-engineering/compare/v3.2.0...v3.2.1) (2026-07-17)
+
+
+### Bug Fixes
+
+* **supervisor:** harden Goal Review recovery and empty-fleet ops ([665ade6](https://github.com/vinicius91carvalho/harness-engineering/commit/665ade6f84a68eaa77525cfe49803bc92cd1ee0d))
+* **supervisor:** stop incomplete generator-alias crash loops ([58a1846](https://github.com/vinicius91carvalho/harness-engineering/commit/58a18462cad1f40cca018d4c5cc190d5fa37ed11))
+* **tests:** allow Cursor supervisor runtime alias without SKILL.md ([e89a503](https://github.com/vinicius91carvalho/harness-engineering/commit/e89a5030c97e1677f12049be615abbe9a46c46ad))
+
 ## [3.2.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v3.1.0...v3.2.0) (2026-07-16)
 
 
