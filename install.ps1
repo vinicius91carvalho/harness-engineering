@@ -16,8 +16,7 @@
   -Cli agent is shown as agent/cursor and installs for both Cursor IDE and Agent CLI.
   -Version pins the GitHub release tag to stage; default is latest.
   -Scope user installs to host user directories; project installs under -ProjectDir
-  (default: current directory). Interactive scope is user|project; -Scope local
-  is Claude-only via flag.
+  (default: current directory); local is Claude-only (plugin scope under the project).
   User-only modules (status-line, shared-config, treehouse) are skipped for project scope.
 #>
 [CmdletBinding()]
@@ -55,8 +54,7 @@ then a checklist of modules compatible with scope + host.
 -Cli agent is shown as agent/cursor and installs for both Cursor IDE and Agent CLI.
 -Version pins the GitHub release tag to stage; default is latest.
 -Scope user installs to per-user host directories; project installs under -ProjectDir
-(or the current directory). Interactive scope is user|project; -Scope local is
-Claude-only via flag.
+(or the current directory); local is valid only when Claude is the sole selected host.
 '@ | Write-Host
 }
 
@@ -228,8 +226,8 @@ function Resolve-ProjectDir {
   $script:ProjectDir = (Resolve-Path $candidate).Path
 }
 
-# Scope is the first interactive question: user (global) vs project (folder).
-# -Scope local remains a Claude-only CLI flag; it is not offered in the menu.
+# Scope (user vs project) is the first interactive question. Host detection
+# already ran above; local is offered only when Claude Code is detected.
 function Select-Scope {
   if ($script:ScopeExplicit) {
     if ($Scope -eq "local" -and $Detected -notcontains "claude") {
@@ -238,7 +236,9 @@ function Select-Scope {
     return $Scope
   }
   if ([Console]::IsInputRedirected -or $Yes -or $No) { return "user" }
-  return @(Select-Menu -Mode single -Items @("user", "project") -Title "Select install scope:" -LabelKind scope)[0]
+  $items = @("user", "project")
+  if ($Detected -contains "claude") { $items += "local" }
+  return @(Select-Menu -Mode single -Items $items -Title "Select install scope:" -LabelKind scope)[0]
 }
 
 $script:Scope = Select-Scope

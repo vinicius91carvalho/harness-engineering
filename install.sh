@@ -46,8 +46,7 @@ then a checklist of modules compatible with scope + host.
 --cli agent is shown as agent/cursor and installs for both Cursor IDE and Agent CLI.
 --version pins the GitHub release tag to stage (e.g. v2.0.0); default is latest.
 --scope user installs to per-user host directories; project installs under
---project-dir (default: current directory). Interactive scope is user|project;
---scope local is Claude-only via flag.
+--project-dir (default: current directory); local is Claude-only.
 User-only modules (status-line, shared-config, treehouse) are skipped for project scope.
 EOF
 }
@@ -273,8 +272,8 @@ resolve_project_dir() {
   fi
 }
 
-# Scope is the first interactive question: user (global) vs project (folder).
-# --scope local remains a Claude-only CLI flag; it is not offered in the menu.
+# Scope (user vs project) is the first interactive question. Host detection
+# already ran above; local is offered only when Claude Code is detected.
 select_scope() {
   if [ -n "$SCOPE_EXPLICIT" ]; then
     if [ "$SCOPE" = local ]; then
@@ -286,7 +285,9 @@ select_scope() {
     SCOPE=user
     return
   fi
-  MENU_MODE=single; MENU_TITLE='Select install scope:'; MENU_ITEMS='user project'; MENU_CHECKED=; MENU_LABEL_KIND=scope
+  items='user project'
+  has_word "$detected_clis" claude && items='user project local'
+  MENU_MODE=single; MENU_TITLE='Select install scope:'; MENU_ITEMS=$items; MENU_CHECKED=; MENU_LABEL_KIND=scope
   select_menu
   SCOPE=$MENU_RESULT
 }

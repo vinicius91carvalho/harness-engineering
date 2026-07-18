@@ -75,21 +75,15 @@ mv "$TMP/bin/opencode.off" "$TMP/bin/opencode"
 rm -rf "$HOME/.opencode"
 pass 'OpenCode is detected in its official user install directory'
 
-# Scope must be the first interactive question (user|project only); host selection follows.
+# Scope must be the first interactive question; host selection follows.
 scope_line=$(grep -n '^select_scope$' "$ROOT/install.sh" | head -1 | cut -d: -f1)
 cli_line=$(grep -n '^select_cli$' "$ROOT/install.sh" | head -1 | cut -d: -f1)
 [ -n "$scope_line" ] && [ -n "$cli_line" ] || fail 'install.sh must call select_scope and select_cli'
 [ "$scope_line" -lt "$cli_line" ] || fail 'install.sh must ask scope before selecting host'
-grep -q "MENU_ITEMS='user project'" "$ROOT/install.sh" \
-  || fail 'interactive scope menu must be user|project only'
-! grep -Eq "MENU_ITEMS=.*local" "$ROOT/install.sh" \
-  || fail 'interactive scope menu must not offer local'
 ps_scope_line=$(grep -n '\$script:Scope = Select-Scope' "$ROOT/install.ps1" | head -1 | cut -d: -f1)
 ps_host_line=$(grep -n '\$Targets = @(Select-Host)' "$ROOT/install.ps1" | head -1 | cut -d: -f1)
 [ -n "$ps_scope_line" ] && [ -n "$ps_host_line" ] || fail 'install.ps1 must call Select-Scope and Select-Host'
 [ "$ps_scope_line" -lt "$ps_host_line" ] || fail 'install.ps1 must ask scope before selecting host'
-grep -Fq 'Items @("user", "project")' "$ROOT/install.ps1" \
-  || fail 'PowerShell interactive scope menu must be user|project only'
 pass 'installers ask scope before host selection'
 
 if "$ROOT/install.sh" --cli codex --scope local --no </dev/null >"$TMP/out" 2>"$TMP/err"; then

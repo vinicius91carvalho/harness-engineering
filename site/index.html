@@ -250,7 +250,7 @@ claude --version  # or: codex --version / opencode --version / pi --version</cod
           <p>The curl one-liner fetches the installer from <code>main</code>, then stages the <strong>latest GitHub Release tag</strong>.
             Override with <code>VERSION=vX.Y.Z</code> or <code>--version vX.Y.Z</code> (for example <code>v3.0.0</code>).
             A local checkout of this repository installs from the working tree.</p>
-          <p>Interactively the installer asks for install scope first (<code>user</code> global vs <code>project</code> folder), then offers only detected hosts compatible with that scope, then a checklist of compatible modules. Requires <code>jq</code> (not auto-installed).</p>
+          <p>Interactively the installer asks for install scope first (<code>user</code> global vs <code>project</code> folder; <code>local</code> when Claude is detected), then offers only detected hosts compatible with that scope, then a checklist of compatible modules. Requires <code>jq</code> (not auto-installed).</p>
           <p>Native Windows users can run <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/install.ps1"><code>install.ps1</code></a>. Re-running either installer refreshes installed content safely.</p>
           <div class="output"><strong>Verify</strong><code>node --version</code><code>claude --version</code><code>codex --version</code><code>opencode --version</code><code>pi --version</code></div>
         </section>
