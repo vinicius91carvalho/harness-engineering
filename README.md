@@ -209,7 +209,7 @@ curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineeri
 The script resolves the latest `vX.Y.Z` release tag (or your pin via `--version`, `VERSION`, or `HARNESS_INSTALL_REF`) and clones that tag - not the moving `main` tip.
 A local checkout of this repository installs from the working tree instead (dev mode).
 
-Interactively the installer asks for host (Claude, Codex, OpenCode, Pi, agent/cursor), then install scope (`user` global vs `project` folder; Claude also offers `local`), then the checklist.
+Interactively the installer asks for install scope first (`user` global vs `project` folder; `local` when Claude is detected), then offers only detected hosts compatible with that scope, then a checklist of modules compatible with the selected scope and host.
 For Cursor, harness lands as a local plugin under `.cursor/plugins/local/harness/` (IDE) and copies each skill into `.cursor/skills/` as real `harness-*` directories (not symlinks) so the `agent` CLI slash menu can see `/harness-supervisor` and the rest.
 `--scope` / `--project-dir` (PowerShell: `-Scope` / `-ProjectDir`) skip the scope menu.
 Arrow-key checklist: keep `harness` checked; add MCP or extras if you want them.

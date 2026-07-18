@@ -118,6 +118,10 @@ grep -Fq 'Then type these in your coding tool' "$README"
 grep -Fq 'latest GitHub Release tag' "$README"
 grep -Fq 'latest GitHub Release tag' "$HTML"
 
+# Installer interactive order: scope first, then compatible hosts/modules
+grep -Fq 'asks for install scope first' "$README"
+grep -Fq 'asks for install scope first' "$HTML"
+
 # v3 clean break surfaced on README and site
 grep -Fq 'v3.0 is a clean break' "$README"
 grep -Fq 'v3.0 is a clean break' "$HTML"

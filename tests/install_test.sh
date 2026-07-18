@@ -75,11 +75,27 @@ mv "$TMP/bin/opencode.off" "$TMP/bin/opencode"
 rm -rf "$HOME/.opencode"
 pass 'OpenCode is detected in its official user install directory'
 
+# Scope must be the first interactive question; host selection follows.
+scope_line=$(grep -n '^select_scope$' "$ROOT/install.sh" | head -1 | cut -d: -f1)
+cli_line=$(grep -n '^select_cli$' "$ROOT/install.sh" | head -1 | cut -d: -f1)
+[ -n "$scope_line" ] && [ -n "$cli_line" ] || fail 'install.sh must call select_scope and select_cli'
+[ "$scope_line" -lt "$cli_line" ] || fail 'install.sh must ask scope before selecting host'
+ps_scope_line=$(grep -n '\$script:Scope = Select-Scope' "$ROOT/install.ps1" | head -1 | cut -d: -f1)
+ps_host_line=$(grep -n '\$Targets = @(Select-Host)' "$ROOT/install.ps1" | head -1 | cut -d: -f1)
+[ -n "$ps_scope_line" ] && [ -n "$ps_host_line" ] || fail 'install.ps1 must call Select-Scope and Select-Host'
+[ "$ps_scope_line" -lt "$ps_host_line" ] || fail 'install.ps1 must ask scope before selecting host'
+pass 'installers ask scope before host selection'
+
 if "$ROOT/install.sh" --cli codex --scope local --no </dev/null >"$TMP/out" 2>"$TMP/err"; then
   fail '--scope local must be rejected for non-Claude selections'
 fi
 grep -q 'local is only valid when Claude' "$TMP/err" || fail 'local scope error should identify Claude restriction'
 pass 'local scope is Claude-only'
+
+"$ROOT/install.sh" --cli claude --scope local --no --dry-run </dev/null >"$TMP/out"
+grep -q 'complete for:claude' "$TMP/out" || fail 'local scope with Claude should succeed in dry-run'
+grep -q 'scope: local' "$TMP/out" || fail 'local-scope dry-run should report scope: local'
+pass 'local scope with Claude dry-runs successfully'
 
 : >"$HARNESS_TEST_LOG"
 before=$(find "$HOME" -mindepth 1 -print | sort)

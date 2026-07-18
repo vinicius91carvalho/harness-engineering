@@ -10,6 +10,8 @@
                      [-Scope user|project|local] [-ProjectDir <path>]
                      [-User|-Project|-Local]
 
+  Interactively: scope first, then detected hosts compatible with that scope,
+  then a checklist of modules compatible with scope + host.
   -Yes/-No choose checklist contents; -Cli chooses target hosts.
   -Cli agent is shown as agent/cursor and installs for both Cursor IDE and Agent CLI.
   -Version pins the GitHub release tag to stage; default is latest.
@@ -46,6 +48,8 @@ Usage: install.ps1 [-Yes|-No] [-DryRun]
                    [-Scope user|project|local] [-ProjectDir <path>]
                    [-User|-Project|-Local]
 
+Interactively: scope first, then detected hosts compatible with that scope,
+then a checklist of modules compatible with scope + host.
 -Yes/-No choose checklist contents; -Cli chooses target hosts.
 -Cli agent is shown as agent/cursor and installs for both Cursor IDE and Agent CLI.
 -Version pins the GitHub release tag to stage; default is latest.
@@ -136,6 +140,9 @@ function Get-MenuBlurb([string]$Kind, [string]$Item) {
     "host:pi" { return "Pi CLI for headless agent workflows." }
     "host:agent" { return "Cursor IDE + Agent CLI (plugins under .cursor/plugins/local, skills under .cursor/skills)." }
     "host:all" { return "Install to every detected host above." }
+    "scope:user" { return "Install into per-user host directories (global for this account)." }
+    "scope:project" { return "Install into a specific project folder (skills, plugins, MCP under that repo)." }
+    "scope:local" { return "Claude-only: plugin scope local (.claude/settings.local.json)." }
     "install:harness" { return "Spec→build→QA pipeline with planner, generator, evaluator, supervisor, learning loop, and project backup." }
     "install:hallmark" { return "Anti-AI-slop design skill via npx skills (-g for user/global scope; project dir without -g)." }
     "install:no-mistakes" { return "Git push gate with AI validation. Installs the upstream binary; project scope also runs no-mistakes init in the project." }
@@ -171,7 +178,7 @@ function Select-Menu {
     [string[]]$Items,
     [string[]]$Checked = @(),
     [string]$Title,
-    [ValidateSet("", "host", "install")][string]$LabelKind = ""
+    [ValidateSet("", "host", "scope", "install")][string]$LabelKind = ""
   )
   if ($Items.Count -eq 0) { return @() }
   $cursor = 0
@@ -211,7 +218,43 @@ function Select-Menu {
   return @($Items[$cursor])
 }
 
+function Resolve-ProjectDir {
+  $candidate = if ($ProjectDir) { $ProjectDir } else { (Get-Location).Path }
+  if (-not (Test-Path $candidate -PathType Container)) {
+    throw "project scope requires an existing directory (use -ProjectDir or run from the project root)"
+  }
+  $script:ProjectDir = (Resolve-Path $candidate).Path
+}
+
+# Scope is the first interactive question. Host detection already ran above;
+# local is offered only when Claude Code is among the detected hosts.
+function Select-Scope {
+  if ($script:ScopeExplicit) {
+    if ($Scope -eq "local" -and $Detected -notcontains "claude") {
+      throw "-Scope local requires Claude Code to be installed."
+    }
+    return $Scope
+  }
+  if ([Console]::IsInputRedirected -or $Yes -or $No) { return "user" }
+  $items = @("user", "project")
+  if ($Detected -contains "claude") { $items += "local" }
+  return @(Select-Menu -Mode single -Items $items -Title "Select install scope:" -LabelKind scope)[0]
+}
+
+$script:Scope = Select-Scope
+$script:ProjectDir = $null
+if ($script:Scope -eq "project") { Resolve-ProjectDir }
+
+# After scope: only offer detected hosts compatible with that scope.
+# local → Claude only; user/project → every detected host.
 function Select-Host {
+  if ($script:Scope -eq "local") {
+    if ($Detected -notcontains "claude") { throw "-Scope local requires Claude Code to be installed." }
+    if ($Cli -and $Cli -ne "claude") {
+      throw "-Scope local is only valid when Claude is the sole selected host."
+    }
+    return @("claude")
+  }
   if ($Cli) {
     if ($Cli -eq "all") { return $Detected }
     if ($Detected -notcontains $Cli) { throw "Requested CLI is not installed: $Cli" }
@@ -225,31 +268,6 @@ function Select-Host {
 }
 
 $Targets = @(Select-Host)
-
-function Resolve-ProjectDir {
-  $candidate = if ($ProjectDir) { $ProjectDir } else { (Get-Location).Path }
-  if (-not (Test-Path $candidate -PathType Container)) {
-    throw "project scope requires an existing directory (use -ProjectDir or run from the project root)"
-  }
-  $script:ProjectDir = (Resolve-Path $candidate).Path
-}
-
-function Select-Scope {
-  if ($script:ScopeExplicit) {
-    if ($Scope -eq "local" -and ($Targets.Count -ne 1 -or $Targets[0] -ne "claude")) {
-      throw "-Scope local is only valid when Claude is the sole selected host."
-    }
-    return $Scope
-  }
-  if ([Console]::IsInputRedirected -or $Yes -or $No) { return "user" }
-  $items = @("user", "project")
-  if ($Targets.Count -eq 1 -and $Targets[0] -eq "claude") { $items += "local" }
-  return @(Select-Menu -Mode single -Items $items -Title "Select install scope:")[0]
-}
-
-$script:Scope = Select-Scope
-$script:ProjectDir = $null
-if ($script:Scope -eq "project") { Resolve-ProjectDir }
 
 function Get-OpenCodeBase {
   if ($script:Scope -eq "project") { return Join-Path $script:ProjectDir ".opencode" }

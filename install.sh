@@ -40,6 +40,8 @@ Usage: install.sh [--yes|--no] [--dry-run]
                   [--scope user|project|local] [--project-dir <path>]
                   [--user|--project|--local]
 
+Interactively: scope first, then detected hosts compatible with that scope,
+then a checklist of modules compatible with scope + host.
 --yes/--no choose checklist contents; --cli chooses target hosts.
 --cli agent is shown as agent/cursor and installs for both Cursor IDE and Agent CLI.
 --version pins the GitHub release tag to stage (e.g. v2.0.0); default is latest.
@@ -259,7 +261,57 @@ select_menu() {
   if [ "$MENU_MODE" = multi ]; then MENU_RESULT=$(echo $checked); else MENU_RESULT=$(word_at "$MENU_ITEMS" "$cursor"); fi
 }
 
+resolve_project_dir() {
+  candidate=${PROJECT_DIR:-$(pwd)}
+  [ -d "$candidate" ] || die "project scope requires an existing directory (use --project-dir or run from the project root)"
+  # pwd -P matches Node realpathSync on macOS (/var -> /private/var); plain pwd is the fallback.
+  if PROJECT_DIR=$(CDPATH= cd -- "$candidate" && pwd -P 2>/dev/null); then
+    :
+  else
+    PROJECT_DIR=$(CDPATH= cd -- "$candidate" && pwd) || die "could not resolve project directory: $candidate"
+  fi
+}
+
+# Scope is the first interactive question. Host detection already ran above;
+# local is offered only when Claude Code is among the detected hosts.
+select_scope() {
+  if [ -n "$SCOPE_EXPLICIT" ]; then
+    if [ "$SCOPE" = local ]; then
+      has_word "$detected_clis" claude || die '--scope local requires Claude Code to be installed'
+    fi
+    return
+  fi
+  if [ -n "$ASSUME" ] || ! tty_available; then
+    SCOPE=user
+    return
+  fi
+  items='user project'
+  has_word "$detected_clis" claude && items='user project local'
+  MENU_MODE=single; MENU_TITLE='Select install scope:'; MENU_ITEMS=$items; MENU_CHECKED=; MENU_LABEL_KIND=scope
+  select_menu
+  SCOPE=$MENU_RESULT
+}
+select_scope
+if [ "$SCOPE" = project ]; then
+  resolve_project_dir
+  echo "install.sh: project scope → $PROJECT_DIR"
+elif [ -n "$PROJECT_DIR" ]; then
+  die '--project-dir is only valid with --scope project'
+fi
+
+# After scope: only offer detected hosts compatible with that scope.
+# local → Claude only; user/project → every detected host.
 select_cli() {
+  if [ "$SCOPE" = local ]; then
+    has_word "$detected_clis" claude || die '--scope local requires Claude Code to be installed'
+    if [ -n "$CLI_REQUEST" ]; then
+      if [ "$CLI_REQUEST" = all ] || [ "$CLI_REQUEST" != claude ]; then
+        die '--scope local is only valid when Claude is the sole selected host'
+      fi
+    fi
+    CLI=claude
+    return
+  fi
   if [ -n "$CLI_REQUEST" ]; then
     if [ "$CLI_REQUEST" = all ]; then CLI="$detected_clis"; else
       has_word "$detected_clis" "$CLI_REQUEST" || die "requested CLI is not installed: $CLI_REQUEST"
@@ -276,42 +328,6 @@ select_cli() {
   [ "$MENU_RESULT" = all ] && CLI=$detected_clis || CLI=$MENU_RESULT
 }
 select_cli
-
-resolve_project_dir() {
-  candidate=${PROJECT_DIR:-$(pwd)}
-  [ -d "$candidate" ] || die "project scope requires an existing directory (use --project-dir or run from the project root)"
-  # pwd -P matches Node realpathSync on macOS (/var -> /private/var); plain pwd is the fallback.
-  if PROJECT_DIR=$(CDPATH= cd -- "$candidate" && pwd -P 2>/dev/null); then
-    :
-  else
-    PROJECT_DIR=$(CDPATH= cd -- "$candidate" && pwd) || die "could not resolve project directory: $candidate"
-  fi
-}
-
-select_scope() {
-  if [ -n "$SCOPE_EXPLICIT" ]; then
-    if [ "$SCOPE" = local ] && [ "$CLI" != claude ]; then
-      die '--scope local is only valid when Claude is the sole selected host'
-    fi
-    return
-  fi
-  if [ -n "$ASSUME" ] || ! tty_available; then
-    SCOPE=user
-    return
-  fi
-  items='user project'
-  [ "$CLI" = claude ] && items='user project local'
-  MENU_MODE=single; MENU_TITLE='Select install scope:'; MENU_ITEMS=$items; MENU_CHECKED=; MENU_LABEL_KIND=scope
-  select_menu
-  SCOPE=$MENU_RESULT
-}
-select_scope
-if [ "$SCOPE" = project ]; then
-  resolve_project_dir
-  echo "install.sh: project scope → $PROJECT_DIR"
-elif [ -n "$PROJECT_DIR" ]; then
-  die '--project-dir is only valid with --scope project'
-fi
 
 opencode_base() {
   if [ "$SCOPE" = project ]; then printf '%s\n' "$PROJECT_DIR/.opencode"
