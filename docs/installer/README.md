@@ -30,15 +30,15 @@ stages the working tree instead (dev mode).
 `--cli`/`-Cli` selects hosts. `--yes`/`-Yes` selects every compatible checklist
 item; `--no`/`-No` selects only harness. With several detected CLIs and no usable
 terminal, `--cli` is required. Interactively, install scope is asked first
-(`user` / `project`, plus `local` when Claude is detected), then only detected
-hosts compatible with that scope, then the plugin checklist of modules
-compatible with the selected scope and host. All menus move with Up/Down (the
-host menu also accepts numbers) and confirm with Enter; in the checklist, Space
-toggles the highlighted item, `a` selects or clears all (harness starts checked
-but is toggleable), and `q` cancels. Each option shows a dim description on the
-line below its name. Menus repaint in place on the alternate screen, so
-navigation never duplicates lines and the terminal mode is always restored on
-exit.
+(`user` / `project` only), then only detected hosts compatible with that scope,
+then the plugin checklist of modules compatible with the selected scope and
+host. `--scope local` / `-Scope local` remains a Claude-only CLI flag and is
+not shown in the scope menu. All menus move with Up/Down (the host menu also
+accepts numbers) and confirm with Enter; in the checklist, Space toggles the
+highlighted item, `a` selects or clears all (harness starts checked but is
+toggleable), and `q` cancels. Each option shows a dim description on the line
+below its name. Menus repaint in place on the alternate screen, so navigation
+never duplicates lines and the terminal mode is always restored on exit.
 
 OpenCode detection checks `PATH` plus the official installer's user binary
 location (`~/.opencode/bin`), so it remains selectable before the current shell
@@ -48,12 +48,12 @@ reloads its startup file.
 `--user`/`--project`/`--local` (or `-User`/`-Project`/`-Local`) aliases choose
 where assets land. Default is `user` when scope is omitted on a non-interactive
 run (`--yes`/`-Yes`, `--no`/`-No`, or no TTY). Interactively, the scope menu is
-the first question; host selection follows and is constrained by that scope
-(`local` forces Claude). `project` writes under `--project-dir` (default: current
-directory) for OpenCode (`.opencode/`), Pi (`.agents/skills/`), Cursor
-(`.cursor/plugins/local/` plus copied `.cursor/skills/`), Claude skills (`.claude/skills/`), and Claude plugins
-(`--scope project`). `local` requires Claude to be installed and is only valid
-when Claude is the sole selected host.
+the first question (`user` vs `project`); host selection follows. `project`
+writes under `--project-dir` (default: current directory) for OpenCode
+(`.opencode/`), Pi (`.agents/skills/`), Cursor (`.cursor/plugins/local/` plus
+copied `.cursor/skills/`), Claude skills (`.claude/skills/`), and Claude plugins
+(`--scope project`). `local` is Claude-only via flag (not a menu option) and
+requires Claude to be the sole selected host.
 User-only modules (`status-line`, `shared-config`, `treehouse`) are hidden from
 the checklist and skipped under `project` scope. `hallmark` uses `npx skills add`
 with `-g` for user/global scope, and without `-g` (in `--project-dir`) for
