@@ -11,6 +11,13 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [3.3.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v3.2.1...v3.3.0) (2026-07-18)
+
+
+### Features
+
+* **installer:** ask scope before host and filter compatible options ([58d70f4](https://github.com/vinicius91carvalho/harness-engineering/commit/58d70f44f9e6669878e328cfc8b1e25fbf9d60a5))
+
 ### [3.2.1](https://github.com/vinicius91carvalho/harness-engineering/compare/v3.2.0...v3.2.1) (2026-07-17)
 
 
