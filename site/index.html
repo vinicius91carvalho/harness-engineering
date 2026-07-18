@@ -244,13 +244,14 @@ claude --version  # or: codex --version / opencode --version / pi --version</cod
         <section class="topic" id="install">
           <p class="step">Step 1</p>
           <h2>Install the harness</h2>
-          <p>Run once <strong>in a terminal</strong> on the machine that holds the Git repository. The checklist keeps <code>harness</code> selected by default.</p>
+          <p>Run once <strong>in a terminal</strong> on the machine that holds the Git repository.</p>
           <p><strong>v3.0 is a clean break</strong> from 2.x: remove the previous plugin/skills install, then install fresh. There is no mid-flight migration. Control modules live only under <code>skills/supervisor/lib/</code>.</p>
           <pre><code>curl -sSL https://raw.githubusercontent.com/vinicius91carvalho/harness-engineering/main/install.sh | sh</code></pre>
           <p>The curl one-liner fetches the installer from <code>main</code>, then stages the <strong>latest GitHub Release tag</strong>.
-            Override with <code>VERSION=vX.Y.Z</code> or <code>--version vX.Y.Z</code> (for example <code>v3.0.0</code>).
+            Override with <code>VERSION=vX.Y.Z</code>, <code>--version vX.Y.Z</code>, or <code>HARNESS_INSTALL_REF=vX.Y.Z</code> (for example <code>v3.0.0</code>).
             A local checkout of this repository installs from the working tree.</p>
-          <p>Interactively the installer asks for install scope first (<code>user</code> global vs <code>project</code> folder; <code>local</code> when Claude is detected), then offers only detected hosts compatible with that scope, then a checklist of compatible modules. Requires <code>jq</code> (not auto-installed).</p>
+          <p>Interactively the installer asks for install scope first (<code>user</code> global vs <code>project</code> folder; <code>local</code> when Claude is detected), then offers only detected hosts compatible with that scope, then an arrow-key checklist of modules compatible with the selected scope and host (<code>harness</code> pre-checked, toggleable). <code>--scope</code> / <code>--project-dir</code> skip the scope menu; <code>--cli</code> skips the host menu; <code>--yes</code> / <code>--no</code> select all compatible modules or harness only when non-interactive. User-only modules (<code>status-line</code>, <code>shared-config</code>, <code>treehouse</code>) are skipped for project scope. Requires <code>jq</code> (not auto-installed).</p>
+          <p>For Cursor, harness lands under <code>.cursor/plugins/local/harness/</code> and copies each skill into <code>.cursor/skills/harness-*</code> so the Agent CLI discovers slash commands.</p>
           <p>Native Windows users can run <a href="https://github.com/vinicius91carvalho/harness-engineering/blob/main/install.ps1"><code>install.ps1</code></a>. Re-running either installer refreshes installed content safely.</p>
           <div class="output"><strong>Verify</strong><code>node --version</code><code>claude --version</code><code>codex --version</code><code>opencode --version</code><code>pi --version</code></div>
         </section>

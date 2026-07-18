@@ -121,6 +121,12 @@ grep -Fq 'latest GitHub Release tag' "$HTML"
 # Installer interactive order: scope first, then compatible hosts/modules
 grep -Fq 'asks for install scope first' "$README"
 grep -Fq 'asks for install scope first' "$HTML"
+grep -Fq 'compatible with the selected scope and host' "$README"
+grep -Fq 'compatible with the selected scope and host' "$HTML"
+grep -Fq 'User-only modules' "$README"
+grep -Fq 'User-only modules' "$HTML"
+grep -Fq 'HARNESS_INSTALL_REF' "$README"
+grep -Fq 'HARNESS_INSTALL_REF' "$HTML"
 
 # v3 clean break surfaced on README and site
 grep -Fq 'v3.0 is a clean break' "$README"

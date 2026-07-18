@@ -210,9 +210,10 @@ The script resolves the latest `vX.Y.Z` release tag (or your pin via `--version`
 A local checkout of this repository installs from the working tree instead (dev mode).
 
 Interactively the installer asks for install scope first (`user` global vs `project` folder; `local` when Claude is detected), then offers only detected hosts compatible with that scope, then a checklist of modules compatible with the selected scope and host.
+All three steps use arrow-key menus: scope, then host (`all` when multiple hosts are detected; auto-selected when only one), then the module checklist (Space toggles, `a` selects/clears all, `q` cancels; `harness` starts checked).
+`--scope` / `--project-dir` (PowerShell: `-Scope` / `-ProjectDir`) skip the scope menu; `--cli` / `-Cli` skips the host menu.
+`--yes` / `-Yes` selects every compatible checklist item; `--no` / `-No` selects only `harness`. Without a TTY (or with `--yes` / `--no`), scope defaults to `user` and you must pass `--cli` when more than one host is detected.
 For Cursor, harness lands as a local plugin under `.cursor/plugins/local/harness/` (IDE) and copies each skill into `.cursor/skills/` as real `harness-*` directories (not symlinks) so the `agent` CLI slash menu can see `/harness-supervisor` and the rest.
-`--scope` / `--project-dir` (PowerShell: `-Scope` / `-ProjectDir`) skip the scope menu.
-Arrow-key checklist: keep `harness` checked; add MCP or extras if you want them.
 User-only modules (`status-line`, `shared-config`, `treehouse`) are skipped for project scope.
 The optional status line reads the CLI payload once per render, shows 5h and 7d renew countdowns when reset timestamps are present, and only enumerates linked Git worktrees when the repo actually has a worktree registry.
 Windows: [`install.ps1`](install.ps1). Details: [installer docs](docs/installer/README.md).
@@ -456,7 +457,7 @@ uv tool uninstall omnigent 2>/dev/null || true
 | [Complete guide](https://vinicius91carvalho.github.io/harness-engineering/) | Full workflow, examples, role routing |
 | [CONTEXT.md](CONTEXT.md) | Ubiquitous language + bounded contexts |
 | [Plugins](docs/plugins.md) | Optional integrations |
-| [Installer](docs/installer/README.md) | Flags and dry runs |
+| [Installer](docs/installer/README.md) | Scope, host selection, flags, and dry runs |
 | [Architecture decisions](docs/adr/) | Why the workflow is designed this way |
 
 Feedback welcome via [issues](https://github.com/vinicius91carvalho/harness-engineering/issues).

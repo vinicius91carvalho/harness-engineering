@@ -4,7 +4,7 @@
 
 Everything below is a row in the installer's checklist.
 Toggle whatever you want and confirm once - only `harness` is pre-checked.
-The installer only shows plugins compatible with your detected CLI and selected install scope (`user` or `project`).
+The installer asks for install scope first (`user` / `project`, plus `local` when Claude is detected), then host, then shows only plugins compatible with that scope and host.
 User-only modules (`status-line`, `shared-config`, `treehouse`) are hidden under project scope.
 
 | Plugin | CLI Support | Namespace | Source | What it does |
