@@ -11,6 +11,18 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [3.4.0](https://github.com/vinicius91carvalho/harness-engineering/compare/v3.3.1...v3.4.0) (2026-07-22)
+
+
+### Features
+
+* **supervisor:** arm and disarm ops-cron with workflow lifecycle ([5f58afc](https://github.com/vinicius91carvalho/harness-engineering/commit/5f58afcaec2e2aa0e5afad8fa3f99aff10beade6))
+
+
+### Documentation
+
+* align README and site with scope-first installer flow ([494e61b](https://github.com/vinicius91carvalho/harness-engineering/commit/494e61b7a8d55ce984039648165a974cb7e3ffcd))
+
 ### [3.3.1](https://github.com/vinicius91carvalho/harness-engineering/compare/v3.3.0...v3.3.1) (2026-07-18)
 
 
