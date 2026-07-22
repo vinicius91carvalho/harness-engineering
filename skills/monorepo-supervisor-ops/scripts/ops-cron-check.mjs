@@ -4,7 +4,8 @@
  *
  * Unlike Cursor Agent `/loop` (chat may stay idle), this runs under systemd/cron,
  * calls harness-control fleet-snapshot (+ status for deep checks), writes a durable
- * verdict, always desktop-notifies when --notify is set, and exits non-zero on
+ * verdict, desktop-notifies on --notify only when a workflow is active or needs
+ * attention (never heartbeat-spam complete/idle fleets), and exits non-zero on
  * hard alerts.
  *
  * usage:
@@ -20,6 +21,7 @@ import { existsSync, mkdirSync, appendFileSync, writeFileSync, readFileSync, rea
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { isWorkerSideChannelArtifact } from '../../generator/lib/worker-outcome.mjs'
+import { fleetWorkflowActive, remainingFromProgress } from './workflow-active.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const SILENT_MS = Math.max(60_000, Number(process.env.HARNESS_OPS_SILENT_MS || 600_000))
@@ -74,13 +76,6 @@ function runControl(control, args, env) {
     maxBuffer: 20 * 1024 * 1024,
   })
   return r
-}
-
-function remainingFromProgress(progress = {}) {
-  const total = Number(progress.total || 0)
-  const integrated = Number(progress.integrated || 0)
-  if (progress.remaining != null) return Math.max(0, Number(progress.remaining) || 0)
-  return Math.max(0, total - integrated)
 }
 
 function ageMs(isoOrEpoch) {
@@ -373,13 +368,16 @@ function main() {
   const errors = evaluations.flatMap((e) => e.alerts.filter((a) => a.severity === 'error').map((a) => ({ project: e.id, ...a })))
   const warns = evaluations.flatMap((e) => e.alerts.filter((a) => a.severity === 'warn').map((a) => ({ project: e.id, ...a })))
   const ok = errors.length === 0
+  const attention = !ok || warns.length > 0
+  const workflowActive = fleetWorkflowActive(fleet, filtered)
   const summary = humanSummary(evaluations, errors, warns)
   const verdict = {
     at: new Date().toISOString(),
     repo,
     control,
     ok,
-    attention: !ok || warns.length > 0,
+    attention,
+    workflowActive,
     summary,
     errorCount: errors.length,
     warnCount: warns.length,
@@ -397,8 +395,8 @@ function main() {
   writeFileSync(textPath, `${verdict.at} ${summary}\n${[...errors, ...warns].map((a) => `- ${a.severity} ${a.project} ${a.code}: ${a.message}`).join('\n')}\n`)
   appendFileSync(logPath, `${JSON.stringify(verdict)}\n`)
 
-  // Always notify when --notify so the host proves the cron is alive.
-  if (args.notify) {
+  // Notify only for live workflows or attention — never idle "Harness Ok" heartbeats.
+  if (args.notify && (workflowActive || attention)) {
     const urgency = !ok ? 'critical' : warns.length ? 'normal' : 'low'
     notifyDesktop(`Harness ${ok ? (warns.length ? 'warn' : 'ok') : 'FAIL'}`, summary, urgency)
   }

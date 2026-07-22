@@ -17,6 +17,8 @@ supervisor_common_init() {
   supervisor_common_write_claude_stub "$TMP/bin/claude"
   export ROOT TMP NODE CONTROL
   export SUPERVISOR_PATH="$TMP/bin:$(dirname "$NODE"):/usr/bin:/bin"
+  # Never arm the host systemd ops-cron from fixture repos.
+  export HARNESS_OPS_CRON=0
 }
 
 supervisor_common_write_claude_stub() {

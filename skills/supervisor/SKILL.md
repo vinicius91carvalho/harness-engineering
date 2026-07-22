@@ -341,16 +341,24 @@ When Run State is terminal, the next tick clears the worker row
 | Judgment LLM | `--invoke-agent` (`HARNESS_WAKE_AGENT`) | Only when Wake Triage `shouldWake` |
 | Cursor `/harness-supervisor` chat | Optional operator overlay | Manual / status questions |
 
-Do **not** keep a chat `/loop` that polls `status`. Arm instead:
+Do **not** keep a chat `/loop` that polls `status`. The process supervisor owns
+the durable host heartbeat:
 
-1. `harness-control run` (process tick — admission/recovery + GR evidence reopen)
-2. `install-ops-cron.sh --repo "$REPO" --notify --invoke-agent` → `ops-remediate` +
-   `wake-control-host.mjs` (acks fold/absorb; desktop-notifies; invokes judgment
-   agent only when `shouldWake`; dedupes spam wake kinds)
+1. `harness-control start` / `run` **arms** the systemd ops-cron timer
+   (`install-ops-cron.sh --notify --invoke-agent` against the Git top-level).
+2. `run_completed` / operator `stop` / abort **disarms** it only when the whole
+   fleet is idle (`maybeDisableOpsCron` + `disable-ops-cron.sh`). Sibling
+   supervisors still running keep the timer.
+3. Each ops-cron tick runs `ops-remediate` + `wake-control-host.mjs` (acks
+   fold/absorb; desktop-notifies; invokes judgment only when `shouldWake`).
 
-**Before standing down from chat**, verify: supervisor live, ops timer has
-`--invoke-agent`, latest `.git/harness-control/wake-control-host.jsonl` shows
-recent brief/invoke, and briefs are not falsely “nearly done” while GR is owed.
+Opt out with `HARNESS_OPS_CRON=0`. Manual install/disable scripts remain for
+recovery; prefer the supervisor lifecycle.
+
+**Before standing down from chat**, verify: supervisor live, ops timer armed
+(`systemctl --user is-active harness-ops-cron.timer`), latest
+`.git/harness-control/wake-control-host.jsonl` shows recent brief/invoke, and
+briefs are not falsely “nearly done” while GR is owed.
 
 Wake kinds include stuck workers, unrepaired empty-fleet / dead-runtime,
 `input_required`, quota, `goal_defects`, **`goal_review_failed`**, and anomaly

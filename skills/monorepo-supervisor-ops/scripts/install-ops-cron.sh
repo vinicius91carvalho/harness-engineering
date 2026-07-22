@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Install a systemd --user timer that runs ops-remediate.mjs every N minutes
 # (remediate + check + event-driven Control Host wake bridge).
+# Idle/complete fleets short-circuit inside ops-remediate (no notify spam).
+# Disable the timer when the plan is done: systemctl --user disable --now <unit>.timer
 #
 # usage:
 #   bash install-ops-cron.sh --repo /path/to/project [--project root] [--minutes 5] [--notify] [--invoke-agent]

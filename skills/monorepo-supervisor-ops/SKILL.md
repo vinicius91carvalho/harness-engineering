@@ -880,27 +880,33 @@ loop is armed. Truth model:
 
 ## Host ops cron (systemd) — remediate + event-driven wake
 
-For unattended runs, install the **systemd user timer** that runs
-`ops-remediate.mjs` (not a Cursor `/loop`). It must **auto-fix** host stalls,
-run the Control Host wake bridge, and escalate when it cannot — never wait for
-the operator to ping chat.
+For unattended runs, the **process supervisor** arms/disarms the systemd user
+timer (not a Cursor `/loop`, not a manual forever-on cron):
+
+- `harness-control start` / `run` → `ensureOpsCron` → `install-ops-cron.sh`
+  (`--notify --invoke-agent` against the Git top-level)
+- `run_completed` / `stop` / abort → `maybeDisableOpsCron` →
+  `disable-ops-cron.sh` only when **every** fleet project is idle/complete
+
+It must **auto-fix** host stalls, run the Control Host wake bridge, and
+escalate when it cannot — never wait for the operator to ping chat. Opt out
+with `HARNESS_OPS_CRON=0`. Manual scripts remain for recovery only:
 
 ```bash
-# From harness-engineering (or ~/.agents after sync).
-# Representative unattended profile: notify + invoke-agent on judgment wakes.
+# Recovery / one-off (prefer supervisor lifecycle above).
 bash skills/monorepo-supervisor-ops/scripts/install-ops-cron.sh \
   --repo /path/to/monorepo \
-  --project root \
   --minutes 5 \
   --notify \
   --invoke-agent
+bash skills/monorepo-supervisor-ops/scripts/disable-ops-cron.sh
 
 # Confirm unit pins agent (Hard rule 14):
 #   systemctl --user cat harness-ops-cron.service | rg 'HARNESS_WAKE_AGENT|Environment=PATH'
 
 # Manual one-shot (remediate + check + wake bridge):
 node skills/monorepo-supervisor-ops/scripts/ops-remediate.mjs \
-  --repo /path/to/monorepo --project root --notify --wake-host
+  --repo /path/to/monorepo --notify --wake-host
 
 # Wake bridge only (progress brief + judgment notify):
 node skills/monorepo-supervisor-ops/scripts/wake-control-host.mjs \
@@ -911,11 +917,19 @@ node ~/.agents/skills/harness-supervisor/scripts/harness-control.mjs \
   remediate --repo /path/to/monorepo
 ```
 
-Every tick:
+**Idle fleets stay quiet (2026-07-22):** supervisor lifecycle disarms the timer
+when the fleet is complete; additionally `ops-remediate` takes a cheap
+`fleet-snapshot` first and exits 0 when idle (no remediate/notify/wake).
+`ops-cron-check --notify` also skips "Harness Ok … w=0" heartbeats. Leaving a
+`--notify` timer armed after `run_completed` used to spam desktop every 5
+minutes — treat that as a defect (supervisor must disarm; ops tick must no-op).
+
+Every active-workflow tick:
 1. `harness-control remediate` — clear stale `index.lock`, release sibling
    complete/idle `goal-review` (and other unbacked) governor reservations that
    starve the blocker project, write `ops-escalate.json` after repeated misses.
-2. `ops-cron-check` — durable verdict + desktop notify every tick.
+2. `ops-cron-check` — durable verdict + desktop notify when workflow/attention
+   is active (not idle heartbeats).
 3. `wake-control-host.mjs` — journal consumer `control-host-wake`; ack
    fold/absorb with zero LLM tokens; desktop-notify / optional `--invoke-agent`
    only when Wake Triage `shouldWake`. After `--invoke-agent`, ack only when
@@ -931,9 +945,10 @@ Artifacts (under the shared Git dir):
 - `.git/harness-control/ops-escalate.json` (transient escalation marker)
 - `.git/harness-control/wake-control-host.jsonl`
 
-Exit codes: `0` = healthy enough, `1` = attention/escalation, `2` = tool failure.
-Unit uses `SuccessExitStatus=1`. With `--notify`, desktop notify fires **every**
-tick. Integration auto-retry guidance is **MERGE/IV ONLY** (no re-coding).
+Exit codes: `0` = healthy enough (also idle skip), `1` = attention/escalation,
+`2` = tool failure. Unit uses `SuccessExitStatus=1`. With `--notify`, desktop
+notify fires only on active-workflow or attention ticks. Integration auto-retry
+guidance is **MERGE/IV ONLY** (no re-coding).
 
 ### CauseFlow unattended ops profile (durable)
 
@@ -944,8 +959,8 @@ For `/home/vinicius/projects/causeflow-ai` root OSS plan:
 | Integration branch | `plan/opensource-docker` |
 | Ops / coding host | `--host agent` |
 | Approved swap override | `HARNESS_MAX_SWAP_USED_RATIO=0.6` (operator-approved; default 0.2) |
-| systemd timer | `harness-ops-cron.timer` |
-| Cron flags | `--wake-host --notify --invoke-agent` |
+| systemd timer | `harness-ops-cron.timer` (armed by `harness-control start`/`run`) |
+| Cron flags | `--wake-host --notify --invoke-agent` (supervisor lifecycle default) |
 | Control | `~/.agents/skills/harness-supervisor/scripts/harness-control.mjs` (after sync) |
 
 Export the swap override for **both** `harness-control run` and the systemd
@@ -973,8 +988,9 @@ journalctl --user -u harness-ops-cron.service -n 50 --no-pager
 cat "$(git -C /path/to/monorepo rev-parse --git-common-dir)/harness-control/ops-cron-last.json"
 ```
 
-Stop when the plan is done:
+Stop when the plan is done (supervisor should already disarm; manual fallback):
 
 ```bash
-systemctl --user disable --now harness-ops-cron.timer
+bash skills/monorepo-supervisor-ops/scripts/disable-ops-cron.sh
+# or: systemctl --user disable --now harness-ops-cron.timer
 ```

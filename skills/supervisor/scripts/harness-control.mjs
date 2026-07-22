@@ -46,6 +46,8 @@ const CONTROL_MODULES = new Set([
   'runtime-view.mjs',
   'supervisor-preflight.mjs',
   'runtime-layout.mjs',
+  'ops-cron-lifecycle.mjs',
+  'workflow-active.mjs',
 ])
 /** Load control modules from supervisor/lib; shared execution primitives from generator/lib. */
 async function importLib(name) {
@@ -172,6 +174,54 @@ async function executePreflight({ repair = true, config = null } = {}) {
       evidenceGuidanceExcerpt,
     },
   })
+}
+
+/** Arm host ops-cron when a supervisor workflow starts (best-effort). */
+async function ensureOpsCronArmed() {
+  try {
+    const { ensureOpsCron } = await importLib('ops-cron-lifecycle.mjs')
+    const result = ensureOpsCron({
+      gitRoot: topology.gitRoot,
+      commonGit,
+      scriptFile,
+      env: process.env,
+      spawnSync,
+    })
+    if (!result.skipped && !result.ok) {
+      process.stderr.write(
+        `harness-control: ops-cron ensure failed (${result.reason}): ${(result.stderr || result.stdout || '').trim()}\n`,
+      )
+    }
+    return result
+  } catch (error) {
+    process.stderr.write(`harness-control: ops-cron ensure error: ${error.message}\n`)
+    return { ok: false, skipped: true, reason: 'error', error: error.message }
+  }
+}
+
+/** Disarm host ops-cron only when the whole fleet is idle/complete. */
+async function maybeDisableOpsCronIdle(stateOverride = null) {
+  try {
+    const { maybeDisableOpsCron } = await importLib('ops-cron-lifecycle.mjs')
+    const state = stateOverride || await readJson(stateFile, {})
+    const fleet = await buildFleetSnapshotForRepo(state)
+    const result = maybeDisableOpsCron({
+      fleet,
+      commonGit,
+      scriptFile,
+      env: process.env,
+      spawnSync,
+    })
+    if (!result.skipped && !result.ok) {
+      process.stderr.write(
+        `harness-control: ops-cron disable failed (${result.reason}): ${(result.stderr || result.stdout || '').trim()}\n`,
+      )
+    }
+    return result
+  } catch (error) {
+    process.stderr.write(`harness-control: ops-cron disable error: ${error.message}\n`)
+    return { ok: false, skipped: true, reason: 'error', error: error.message }
+  }
 }
 
 function fatal(message, code = 2) {
@@ -856,6 +906,8 @@ class Supervisor {
       await this.save({ status: 'needs_input' })
       return
     }
+    // Direct `run` (and detached start→run) arms the durable host ops-cron.
+    await ensureOpsCronArmed()
   }
 
   async snapshot() {
@@ -963,6 +1015,8 @@ class Supervisor {
     // Mark stopping before save so supervisorPid is cleared in the complete snapshot.
     this.stopping = true
     await this.save({ status: 'complete', completedAt: new Date().toISOString() })
+    // Disarm host ops-cron when this completion leaves the whole fleet idle.
+    await maybeDisableOpsCronIdle(this.state)
   }
 
   async inspectStuckWorkers(runStates = null) {
@@ -1436,6 +1490,7 @@ class Supervisor {
         this.stopping = true
         await atomicJson(controlFile, { status: 'stopped', at: new Date().toISOString() })
         await this.save({ status: 'stopped', stoppedAt: new Date().toISOString() })
+        await maybeDisableOpsCronIdle(this.state)
       } else if (response.action === 'pause') {
         await atomicJson(controlFile, { status: 'paused', at: new Date().toISOString() })
         await this.save({ status: 'paused' })
@@ -2586,7 +2641,9 @@ async function start() {
     await updateSupervisorLock(token, acquired?.fenceGeneration || 1, 'starting', child.pid)
     const latest = await readJson(stateFile, {})
     await atomicJson(stateFile, { ...latest, repo, supervisorPid: child.pid, supervisorHost: hostname() })
-    process.stdout.write(`${JSON.stringify({ started: true, pid: child.pid, stateFile, eventFile, preflight })}\n`)
+    // Parent `start` arms ops-cron even before the child `run` initializes.
+    const opsCron = await ensureOpsCronArmed()
+    process.stdout.write(`${JSON.stringify({ started: true, pid: child.pid, stateFile, eventFile, preflight, opsCron })}\n`)
   } catch (error) {
     await releaseSupervisorLock(token)
     throw error
@@ -2681,6 +2738,15 @@ async function setStatus(status) {
   }
   await atomicJson(controlFile, { status, at: new Date().toISOString() })
   if (status === 'stopped' && state.supervisorHost === hostname() && processAlive(state.supervisorPid)) process.kill(state.supervisorPid, 'SIGTERM')
+  // Operator stop: disarm when no sibling workflow remains (best-effort; child
+  // completeGoal/abort paths also call this after state is terminal).
+  if (status === 'stopped') {
+    await maybeDisableOpsCronIdle({
+      ...state,
+      status: 'stopped',
+      supervisorPid: null,
+    })
+  }
   process.stdout.write(`${JSON.stringify({ status })}\n`)
 }
 

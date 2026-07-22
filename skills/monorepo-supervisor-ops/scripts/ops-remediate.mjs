@@ -3,6 +3,7 @@
  * Durable ops heartbeat: check fleet health, auto-remediate host stalls, escalate.
  *
  * Intended for systemd --user timers. Does not depend on Cursor chat being awake.
+ * Idle/complete fleets short-circuit with exit 0 (no notify, no remediate, no wake).
  *
  * usage:
  *   node ops-remediate.mjs --repo /path/to/project [--project root] [--notify]
@@ -12,6 +13,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { fleetWorkflowActive } from './workflow-active.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -68,6 +70,21 @@ function main() {
   const wakeScript = join(here, 'wake-control-host.mjs')
   const env = { ...process.env }
 
+  // 0) Cheap fleet gate — complete/idle fleets must not notify or churn.
+  const snap = run(process.execPath, [control, 'fleet-snapshot', '--repo', repo], env)
+  if (snap.status === 0) {
+    let fleet = null
+    try { fleet = JSON.parse(snap.stdout || '{}') } catch { fleet = null }
+    const projects = Array.isArray(fleet?.projects) ? fleet.projects : []
+    const filtered = args.project
+      ? projects.filter((p) => String(args.project).split(',').map((s) => s.trim()).includes(p.id))
+      : projects
+    if (fleet && filtered.length > 0 && !fleetWorkflowActive(fleet, filtered)) {
+      process.stdout.write('ops-remediate: idle fleet — skipping (no active workflow)\n')
+      process.exit(0)
+    }
+  }
+
   // 1) Auto-remediate first (free slots / clear locks), then check.
   const remediateArgs = [control, 'remediate', '--repo', repo, '--host', process.env.HARNESS_HOST || 'agent']
   const rem = run(process.execPath, remediateArgs, env)
@@ -76,7 +93,7 @@ function main() {
     process.stderr.write(rem.stderr || `remediate exit ${rem.status}\n`)
   }
 
-  // 2) Health check (+ optional desktop notify every tick).
+  // 2) Health check (+ optional desktop notify when workflow/attention active).
   const checkArgs = [checkScript, '--repo', repo]
   if (args.project) checkArgs.push('--project', args.project)
   if (args.notify) checkArgs.push('--notify')

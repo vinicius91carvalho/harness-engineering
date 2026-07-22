@@ -4129,3 +4129,99 @@ test('control-beacon worker without pid and without live run-state is not live',
   assert.equal(liveWorker.liveWorkerCount, 1)
   assert.equal(stopAllowed('soft', liveWorker).allowed, false)
 })
+
+test('workflow-active: complete fleet is idle; live supervisor is active', async () => {
+  const {
+    fleetWorkflowActive,
+    projectWorkflowActive,
+  } = await import('../skills/supervisor/lib/workflow-active.mjs')
+  assert.equal(projectWorkflowActive({
+    id: 'core', status: 'complete', supervisorLive: false, workers: 0,
+    progress: { total: 61, integrated: 61 },
+  }), false)
+  assert.equal(projectWorkflowActive({
+    id: 'core', status: 'running', supervisorLive: true, workers: 0,
+    progress: { total: 10, integrated: 3 },
+  }), true)
+  assert.equal(fleetWorkflowActive({
+    projects: [
+      { id: 'core', status: 'complete', supervisorLive: false, workers: 0, progress: { total: 1, integrated: 1 } },
+      { id: 'web', status: 'complete', supervisorLive: false, workers: 0, progress: { total: 1, integrated: 1 } },
+    ],
+  }), false)
+  assert.equal(fleetWorkflowActive({
+    wakeTriage: { shouldWake: true },
+    projects: [
+      { id: 'core', status: 'complete', supervisorLive: false, workers: 0, progress: { total: 1, integrated: 1 } },
+    ],
+  }), true)
+})
+
+test('ops-cron-lifecycle: ensure/disable are gated and use install/disable scripts', async () => {
+  const {
+    opsCronEnabled,
+    ensureOpsCron,
+    maybeDisableOpsCron,
+    resolveOpsCronScript,
+  } = await import('../skills/supervisor/lib/ops-cron-lifecycle.mjs')
+  assert.equal(opsCronEnabled({ HARNESS_OPS_CRON: '0' }), false)
+  assert.equal(opsCronEnabled({ HARNESS_OPS_CRON: '1' }), true)
+
+  const scriptFile = fileURLToPath(new URL('../skills/supervisor/scripts/harness-control.mjs', import.meta.url))
+  const install = resolveOpsCronScript('install', { scriptFile })
+  const disable = resolveOpsCronScript('disable', { scriptFile })
+  assert.ok(install && existsSync(install), 'install-ops-cron.sh resolved')
+  assert.ok(disable && existsSync(disable), 'disable-ops-cron.sh resolved')
+
+  const skipped = ensureOpsCron({
+    gitRoot: '/tmp/unused',
+    scriptFile,
+    env: { ...process.env, HARNESS_OPS_CRON: '0' },
+    spawnSync: () => { throw new Error('should not spawn') },
+  })
+  assert.equal(skipped.skipped, true)
+  assert.equal(skipped.reason, 'disabled')
+
+  const calls = []
+  const armed = ensureOpsCron({
+    gitRoot: '/tmp/demo-repo',
+    commonGit: mkdtempSync(join(tmpdir(), 'ops-cron-git-')),
+    scriptFile,
+    env: { ...process.env, HARNESS_OPS_CRON: '1', HARNESS_OPS_CRON_UNIT: 'harness-ops-cron-test' },
+    spawnSync: (cmd, args) => {
+      calls.push({ cmd, args })
+      if (cmd === 'systemctl' && args?.[0] === '--version') return { status: 0, stdout: 'systemd' }
+      return { status: 0, stdout: 'installed' }
+    },
+  })
+  assert.equal(armed.ok, true)
+  assert.equal(armed.reason, 'armed')
+  assert.ok(calls.some((c) => c.cmd === 'bash' && c.args?.[0] === install))
+
+  const keep = maybeDisableOpsCron({
+    fleet: {
+      projects: [{ id: 'core', status: 'running', supervisorLive: true, workers: 1, progress: { total: 2, integrated: 0 } }],
+    },
+    env: { ...process.env, HARNESS_OPS_CRON: '1' },
+    spawnSync: () => { throw new Error('should not disable while active') },
+  })
+  assert.equal(keep.skipped, true)
+  assert.equal(keep.reason, 'workflow-active')
+
+  const disableCalls = []
+  const idle = maybeDisableOpsCron({
+    fleet: {
+      projects: [{ id: 'core', status: 'complete', supervisorLive: false, workers: 0, progress: { total: 2, integrated: 2 } }],
+    },
+    scriptFile,
+    env: { ...process.env, HARNESS_OPS_CRON: '1', HARNESS_OPS_CRON_UNIT: 'harness-ops-cron-test' },
+    spawnSync: (cmd, args) => {
+      disableCalls.push({ cmd, args })
+      if (cmd === 'systemctl' && args?.[0] === '--version') return { status: 0, stdout: 'systemd' }
+      return { status: 0, stdout: 'disabled' }
+    },
+  })
+  assert.equal(idle.skipped, false)
+  assert.equal(idle.reason, 'disarmed')
+  assert.ok(disableCalls.some((c) => c.cmd === 'bash' && c.args?.[0] === disable))
+})
